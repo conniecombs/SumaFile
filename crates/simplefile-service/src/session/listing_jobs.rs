@@ -371,17 +371,35 @@ fn spawn_revalidate(context: ListingContext, view_id: String, folder: String) {
 /// A watched path changed: update the views of its folder and tell the host
 /// which rows moved. Runs on the watcher's own thread; full-folder storm
 /// refreshes dispatch onto `scheduler` so the watcher thread never blocks.
-pub(super) fn apply_file_change(
+///
+/// The entry is read from the disk only when the change does not say what
+/// it is now: the watcher's extended change records carry it.
+pub(super) fn apply_watch_change(
     views: &ListingViews,
     cache: &SessionCache,
     events: &EventSink,
     runtime: &tokio::runtime::Handle,
     scheduler: &crate::scheduler::BlockingScheduler,
-    path: &str,
+    change: &crate::watcher::WatchChange,
 ) {
-    let changes = views.apply_path_change(path, |changed| {
-        simplefile_core::file_ops::get_entry_info_simple(changed).ok()
-    });
+    use crate::watcher::EntryNow;
+    let lookup = |changed: &str| match &change.now {
+        EntryNow::Is(entry) => Some(entry.as_ref().clone()),
+        EntryNow::Gone => None,
+        EntryNow::Unknown => simplefile_core::file_ops::get_entry_info_simple(changed).ok(),
+    };
+    let path = change.event.path.as_str();
+    let mut changes = match &change.renamed_from {
+        Some(from) => views.apply_path_rename(from, path, lookup),
+        None => views.apply_path_change(path, lookup),
+    };
+    if change.event.kind == simplefile_core::models::FileChangeEvent::GONE {
+        // The folder is no longer there to be read again; its views keep
+        // their rows until the host leaves it, and are not opened from
+        // those rows again.
+        changes.refresh.clear();
+        views.mark_folder_gone(path);
+    }
     for delta in &changes.deltas {
         events.emit_listing_view_delta(delta);
     }

@@ -92,6 +92,65 @@ fn build_file_entry(
     })
 }
 
+/// What a change record of the folder watcher says about an entry: the
+/// values `ReadDirectoryChangesExW` reports with each change, so the entry
+/// need not be opened to learn them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WatchedEntryFacts {
+    /// The `dwFileAttributes` value.
+    pub attributes: u32,
+    pub size: u64,
+    pub modified: Option<std::time::SystemTime>,
+    pub created: Option<std::time::SystemTime>,
+    pub accessed: Option<std::time::SystemTime>,
+}
+
+/// The entry [`get_file_entry`] would build for `path`, from the facts a
+/// change record carries. `None` for a reparse point (a symlink, a junction,
+/// a cloud placeholder): what it points to is not in the record, so the
+/// caller reads the entry itself.
+pub fn file_entry_from_watched_facts(path: &Path, facts: &WatchedEntryFacts) -> Option<FileEntry> {
+    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x0000_0010;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    if facts.attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return None;
+    }
+
+    let name = path.file_name()?.to_string_lossy().to_string();
+    let is_dir = facts.attributes & FILE_ATTRIBUTE_DIRECTORY != 0;
+    let extension = if is_dir {
+        String::new()
+    } else {
+        path.extension()
+            .map(|e| e.to_string_lossy().to_string())
+            .unwrap_or_default()
+    };
+    let (is_hidden, is_system) = hidden_system_from_attrs(&name, facts.attributes);
+    let time_or_empty =
+        |time: Option<std::time::SystemTime>| time.map(format_system_time).unwrap_or_default();
+    Some(FileEntry {
+        name,
+        path: path.to_string_lossy().to_string(),
+        is_dir,
+        is_symlink: false,
+        is_hidden,
+        is_system,
+        // A folder has no size of its own, as in an enumeration.
+        size: if is_dir { 0 } else { facts.size },
+        modified: facts
+            .modified
+            .map(format_system_time)
+            .unwrap_or_else(|| String::from("-")),
+        extension,
+        permissions: None,
+        symlink_target: None,
+        git_status: None,
+        created: time_or_empty(facts.created),
+        accessed: time_or_empty(facts.accessed),
+        attributes: crate::file_attributes::attribute_letters(facts.attributes),
+    })
+}
+
 /// Explorer's attribute letters for `meta`: the Windows attributes, or `R`
 /// for a read-only file elsewhere.
 fn attribute_letters_of(meta: &fs::Metadata) -> String {
@@ -600,6 +659,75 @@ mod tests {
         ));
         fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    /// The watcher builds a row from what a change record says instead of
+    /// opening the entry: the two must agree, field for field.
+    #[cfg(windows)]
+    #[test]
+    fn an_entry_built_from_watched_facts_is_the_entry_read_from_the_disk() {
+        use std::os::windows::fs::MetadataExt;
+        let dir = test_temp_dir("watched-facts");
+        let file = dir.join("Report.Final.TXT");
+        fs::write(&file, b"twelve bytes").unwrap();
+        let dotfile = dir.join(".settings");
+        fs::write(&dotfile, b"").unwrap();
+        let folder = dir.join("Folder.d");
+        fs::create_dir(&folder).unwrap();
+        let mut permissions = fs::metadata(&file).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&file, permissions.clone()).unwrap();
+
+        for path in [&file, &dotfile, &folder] {
+            let meta = fs::symlink_metadata(path).unwrap();
+            let facts = super::WatchedEntryFacts {
+                attributes: meta.file_attributes(),
+                size: meta.file_size(),
+                modified: meta.modified().ok(),
+                created: meta.created().ok(),
+                accessed: meta.accessed().ok(),
+            };
+            let built = super::file_entry_from_watched_facts(path, &facts).unwrap();
+            let read = super::get_file_entry(path).unwrap();
+            assert_eq!(
+                serde_json::to_string(&built).unwrap(),
+                serde_json::to_string(&read).unwrap(),
+                "{}",
+                path.display()
+            );
+        }
+
+        // A reparse point is left to be read: the facts do not say what it points to.
+        let link = super::WatchedEntryFacts {
+            attributes: 0x0000_0400 | 0x0000_0010,
+            size: 0,
+            modified: None,
+            created: None,
+            accessed: None,
+        };
+        assert!(super::file_entry_from_watched_facts(&dir.join("link"), &link).is_none());
+        // No time at all reads as the dash and the blanks an unreadable time gives.
+        let bare = super::WatchedEntryFacts {
+            attributes: 0x20,
+            size: 3,
+            modified: None,
+            created: None,
+            accessed: None,
+        };
+        let entry = super::file_entry_from_watched_facts(&dir.join("bare.bin"), &bare).unwrap();
+        assert_eq!(
+            ("-", "", ""),
+            (
+                entry.modified.as_str(),
+                entry.created.as_str(),
+                entry.accessed.as_str()
+            )
+        );
+
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(false);
+        fs::set_permissions(&file, permissions).unwrap();
+        remove_temp_dir(&dir);
     }
 
     #[test]

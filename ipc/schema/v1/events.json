@@ -13,6 +13,8 @@
     "file-change": {
       "params": "FileChangeEvent",
       "source": "crates/simplefile-service/src/watcher.rs",
+      "kindValues": ["create", "modify", "remove", "rename", "gone"],
+      "notes": "Batched: told 150 ms after the last change of a batch, 500 ms after its first at the latest. A rename is told for the new name and then for the old one. gone and a folder-level modify carry the watched folder's own path.",
       "binaryFrameTag": 6
     },
     "operation-progress": {

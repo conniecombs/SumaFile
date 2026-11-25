@@ -177,7 +177,7 @@ Open findings from the
 | M9 | See Transfers: the unjournaled replace swap. |
 | M15 | See Search: the final reply repeats the hits, sorted. |
 | M19 | FTP transfers make more round trips than needed. This now belongs to the remote plugin. |
-| L2 | Blocking filesystem calls and the watcher's setup and teardown run on the async runtime. |
+| L2 | Blocking filesystem calls run on the async runtime. The watcher's half of this finding is closed: its folders are opened and let go on its own thread, and the session awaits the answer. |
 | L3 | The pipe's access control list is applied after the pipe is created. |
 | L5 | See Transfers: same-volume detection and unsaved learning. |
 | L8 | A file opened from inside an archive is extracted to a temporary file that may be removed before the launched program has read it. |

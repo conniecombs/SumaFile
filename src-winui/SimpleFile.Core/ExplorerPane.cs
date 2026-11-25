@@ -64,6 +64,12 @@ public sealed class ExplorerPane
     /// </summary>
     internal List<ListingViewDelta> PendingListingDeltas { get; } = [];
 
+    /// <summary>
+    /// The entries of this pane's folder that were renamed from outside since the window last asked: what the
+    /// window holds by path (its selected rows) follows them. Under the workspace gate.
+    /// </summary>
+    internal List<PathRename> RenamedPaths { get; } = [];
+
     /// <summary>The rows the folder shows: every row of the service's view, including those not read yet.</summary>
     public int TotalEntryCount => Listing is { } listing ? Math.Max(listing.Total, Entries.Count) : Entries.Count;
 
@@ -433,6 +439,12 @@ public sealed class ExplorerPane
         PendingListingDeltas.AddRange(other.PendingListingDeltas);
         other.PendingListingDeltas.Clear();
         other.PendingListingDeltas.AddRange(pending);
+
+        var renamed = RenamedPaths.ToArray();
+        RenamedPaths.Clear();
+        RenamedPaths.AddRange(other.RenamedPaths);
+        other.RenamedPaths.Clear();
+        other.RenamedPaths.AddRange(renamed);
 
         ListingEpoch++;
         other.ListingEpoch++;

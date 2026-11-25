@@ -778,8 +778,54 @@ async fn listing_view_of_a_watched_folder_reports_new_and_removed_files_as_delta
     )
     .await;
     assert_eq!(vec!["b.txt"], row_names(&page["result"]));
-    let _ = call_skipping_notifications(&mut client, "unwatch_directory", 5, json!({})).await;
-    let _ = std::fs::remove_dir_all(&dir);
+
+    // A rename is one delta: the old row leaves, and the row that arrives
+    // says which name it had.
+    std::fs::rename(dir.join("b.txt"), dir.join("c.txt")).unwrap();
+    let renamed = read_message_where(&mut client, std::time::Duration::from_secs(20), is_delta)
+        .await
+        .expect("a delta for the rename");
+    let changes = renamed["params"]["changes"].as_array().unwrap();
+    assert_eq!(
+        vec!["remove", "insert"],
+        changes
+            .iter()
+            .map(|change| change["kind"].as_str().unwrap())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!("c.txt", changes[1]["entry"]["name"].as_str().unwrap());
+    assert_eq!("b.txt", changes[1]["renamed_from"].as_str().unwrap());
+    assert!(changes[0].get("renamed_from").is_none());
+
+    // The watched folder itself goes away: the host is told so.
+    std::fs::remove_file(dir.join("c.txt")).unwrap();
+    std::fs::remove_dir(&dir).unwrap();
+    let gone = read_message_where(&mut client, std::time::Duration::from_secs(20), |message| {
+        message.get("method").and_then(Value::as_str) == Some("file-change")
+            && message["params"]["kind"] == "gone"
+    })
+    .await
+    .expect("the watched folder is reported gone");
+    assert_eq!(path, gone["params"]["path"].as_str().unwrap());
+    // The view still shows the folder's rows, but the folder is not opened
+    // from them: only an enumeration says what is there now, and there is nothing.
+    let reopened = call_skipping_notifications(
+        &mut client,
+        "open_listing_view",
+        8,
+        json!({ "viewId": "primary", "path": path }),
+    )
+    .await;
+    assert!(reopened["error"]["message"].is_string(), "{reopened}");
+    let unwatched =
+        call_skipping_notifications(&mut client, "unwatch_directory", 5, json!({})).await;
+    assert!(unwatched.get("error").is_none());
+
+    // A folder that cannot be watched is an error of the request.
+    let refused =
+        call_skipping_notifications(&mut client, "watch_directory", 6, json!({ "path": path }))
+            .await;
+    assert!(refused["error"]["message"].is_string(), "{refused}");
 }
 
 /// A cached listing too old to trust blindly opens the view at once; the

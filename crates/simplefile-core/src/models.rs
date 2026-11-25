@@ -87,6 +87,11 @@ pub struct ListingViewChange {
     pub index: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry: Option<FileEntry>,
+    /// On the `insert` or `update` of an entry that was renamed inside the
+    /// folder: the name it had. The host moves what it holds for that name
+    /// (its selection) to the entry instead of dropping it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub renamed_from: Option<String>,
 }
 
 impl ListingViewChange {
@@ -95,6 +100,7 @@ impl ListingViewChange {
             kind: "remove".to_string(),
             index,
             entry: None,
+            renamed_from: None,
         }
     }
 
@@ -103,6 +109,7 @@ impl ListingViewChange {
             kind: "insert".to_string(),
             index,
             entry: Some(entry),
+            renamed_from: None,
         }
     }
 
@@ -111,6 +118,7 @@ impl ListingViewChange {
             kind: "update".to_string(),
             index,
             entry: Some(entry),
+            renamed_from: None,
         }
     }
 }
@@ -142,10 +150,21 @@ pub struct ProgressUpdate {
 }
 
 /// File system change event
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct FileChangeEvent {
     pub path: String,
-    pub kind: String, // "create", "modify", "remove", "rename"
+    /// `create`, `modify`, `remove` or `rename` for an entry of a watched
+    /// folder. `modify` with the path of a watched folder itself: more
+    /// changed there than is listed, read the folder again. `gone` with the
+    /// path of a watched folder: the folder is no longer at that path (it was
+    /// deleted, renamed or moved, or its volume left) and is no longer
+    /// watched.
+    pub kind: String,
+}
+
+impl FileChangeEvent {
+    /// The kind that reports a watched folder itself as no longer there.
+    pub const GONE: &'static str = "gone";
 }
 
 // ============================================================================

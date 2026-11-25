@@ -2,7 +2,7 @@
 //! thumbnails, and recursive folder metrics.
 //!
 //! Entries live strictly in process memory for the lifetime of the service
-//! session and are selectively invalidated on `notify` watcher events and on
+//! session and are selectively invalidated on watcher events and on
 //! mutating file/archive/trash operations.
 
 use simplefile_core::models::{

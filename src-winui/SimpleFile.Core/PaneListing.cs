@@ -67,9 +67,26 @@ internal sealed class PaneListing
         IReadOnlyList<FileEntry> entries,
         ListingViewDelta delta,
         string? selectedPath,
-        out bool selectionRemoved)
+        out bool selectionRemoved) =>
+        Apply(entries, delta, selectedPath, out selectionRemoved, out _, renames: null);
+
+    /// <summary>
+    /// As above, and follows the entries that were renamed: each is added to <paramref name="renames"/> as the path
+    /// it had and the path it has, and <paramref name="selectionRenamedTo"/> is the new path of the selected row
+    /// when it was one of them (null otherwise). A renamed row leaves and arrives in one delta; without this the
+    /// selection would be dropped with the old name.
+    /// </summary>
+    public static List<FileEntry> Apply(
+        IReadOnlyList<FileEntry> entries,
+        ListingViewDelta delta,
+        string? selectedPath,
+        out bool selectionRemoved,
+        out string? selectionRenamedTo,
+        ICollection<PathRename>? renames)
     {
         selectionRemoved = false;
+        selectionRenamedTo = null;
+        string? renamedSelection = null;
         var rows = new List<FileEntry>(entries.Count + delta.Changes.Count);
         rows.AddRange(entries);
         foreach (var change in delta.Changes)
@@ -90,6 +107,7 @@ internal sealed class PaneListing
 
                     break;
                 case ListingViewChange.Insert when change.Entry is not null:
+                    Follow(change);
                     // A row at the end of the rows held is the next row of the view: it still belongs to them.
                     if (index <= rows.Count)
                     {
@@ -103,6 +121,7 @@ internal sealed class PaneListing
 
                     break;
                 case ListingViewChange.Update when change.Entry is not null:
+                    Follow(change);
                     if (index < rows.Count)
                     {
                         rows[index] = change.Entry;
@@ -112,7 +131,25 @@ internal sealed class PaneListing
             }
         }
 
+        selectionRenamedTo = selectedPath is not null && renamedSelection is not null ? selectedPath : null;
         return rows;
+
+        // The arriving row of a rename: what is held for the path it had now belongs to the path it has. Also for
+        // a row past the rows held, which the selection may still name.
+        void Follow(ListingViewChange change)
+        {
+            if (change.RenamedFrom is not { Length: > 0 } hadPath || change.Entry is not { Path.Length: > 0 } entry)
+            {
+                return;
+            }
+
+            renames?.Add(new PathRename(hadPath, entry.Path));
+            if (selectedPath is not null && PathRules.PathsEqual(hadPath, selectedPath))
+            {
+                selectedPath = entry.Path;
+                renamedSelection = entry.Path;
+            }
+        }
     }
 
     public static List<FileEntry> Apply(IReadOnlyList<FileEntry> entries, ListingViewDelta delta) =>

@@ -19,6 +19,7 @@ internal sealed class ListingViewController
 
     /// <summary>Row changes kept while a navigation is still publishing; more than this is read again instead.</summary>
     private const int MaxPendingDeltas = 64;
+    private const int MaxRenamedPaths = 512;
 
     /// <summary>Attempts to read a page whose revision the pane has not caught up with yet.</summary>
     private const int MaxFillRetries = 40;
@@ -483,10 +484,27 @@ internal sealed class ListingViewController
 
         NamedPipeJsonClient.NormalizeListingViewDelta(listing.Path, delta);
         var complete = pane.Entries.Count >= listing.Total;
-        pane.Entries = PaneListing.Apply(pane.Entries, delta, pane.SelectedPath, out var selectionRemoved);
-        if (selectionRemoved)
+        var renames = new List<PathRename>();
+        pane.Entries = PaneListing.Apply(
+            pane.Entries, delta, pane.SelectedPath, out var selectionRemoved, out var selectionRenamedTo, renames);
+        if (selectionRenamedTo is not null)
+        {
+            pane.SelectedPath = selectionRenamedTo;
+        }
+        else if (selectionRemoved)
         {
             pane.SelectedPath = null;
+        }
+
+        if (renames.Count > 0)
+        {
+            // Kept for the window, which holds its selected rows by path. Bounded: a window that never asks (a
+            // test, a pane that is not shown) must not grow this for ever.
+            pane.RenamedPaths.AddRange(renames);
+            if (pane.RenamedPaths.Count > MaxRenamedPaths)
+            {
+                pane.RenamedPaths.RemoveRange(0, pane.RenamedPaths.Count - MaxRenamedPaths);
+            }
         }
 
         listing.Revision = delta.Revision;

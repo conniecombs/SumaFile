@@ -508,6 +508,26 @@ public sealed class DetailsFileListView : UserControl
         _updateDepth++;
     }
 
+    /// <summary>
+    /// Inside an update: the selected rows that were renamed from outside stay selected under their new paths.
+    /// The selection is kept by path across an update, so a renamed row would otherwise drop out of it.
+    /// </summary>
+    public void FollowRenames(IReadOnlyList<PathRename> renames)
+    {
+        if (renames.Count == 0 || _pendingUpdateSelectedPaths is not { Count: > 0 } selected)
+        {
+            return;
+        }
+
+        foreach (var rename in renames)
+        {
+            if (selected.Remove(rename.From))
+            {
+                selected.Add(rename.To);
+            }
+        }
+    }
+
     public void EndUpdate()
     {
         if (_updateDepth <= 0)

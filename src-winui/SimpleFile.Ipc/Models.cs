@@ -199,6 +199,15 @@ public sealed class ListingViewChange
 
     [JsonPropertyName("entry")]
     public FileEntry? Entry { get; set; }
+
+    /// <summary>
+    /// On the <c>insert</c> or <c>update</c> of an entry that was renamed inside the folder: the name it had. The
+    /// client makes it the path it had, as it does for the entry's own path, so what is held for that path (the
+    /// selection) moves to the entry.
+    /// </summary>
+    [JsonPropertyName("renamed_from")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? RenamedFrom { get; set; }
 }
 
 /// <summary>
@@ -391,9 +400,20 @@ public sealed class TuningUpdate
 
 public sealed class FileChangeEvent
 {
+    /// <summary>
+    /// The kind that reports a watched folder itself, <see cref="Path"/>, as no longer there: deleted, renamed or
+    /// moved, or its volume left. The service has stopped watching it.
+    /// </summary>
+    public const string Gone = "gone";
+
     [JsonPropertyName("path")]
     public string Path { get; set; } = "";
 
+    /// <summary>
+    /// <c>create</c>, <c>modify</c>, <c>remove</c> or <c>rename</c> for an entry of a watched folder;
+    /// <c>modify</c> with the path of a watched folder itself when more changed there than is listed; or
+    /// <see cref="Gone"/>.
+    /// </summary>
     [JsonPropertyName("kind")]
     public string Kind { get; set; } = "";
 }

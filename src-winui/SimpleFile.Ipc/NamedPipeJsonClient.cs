@@ -283,6 +283,13 @@ public sealed partial class NamedPipeJsonClient : ISimpleFileIpc
             {
                 NormalizeEntries(folderPath, [entry]);
             }
+
+            // The name the entry had becomes the path it had. A name holds no separator, so a delta that passes
+            // here twice is left as the first pass made it.
+            if (change.RenamedFrom is { Length: > 0 } hadName && hadName.IndexOfAny(['\\', '/']) < 0)
+            {
+                change.RenamedFrom = JoinEntryPath(folderPath, hadName);
+            }
         }
     }
 

@@ -128,6 +128,79 @@ internal sealed class WorkspaceNavigationController
         }
     }
 
+    /// <summary>See <see cref="ExplorerWorkspace.LeaveGoneFolderAsync"/>.</summary>
+    public async Task<IReadOnlyList<PaneId>> LeaveGoneFolderAsync(
+        ExplorerWorkspace workspace,
+        string gonePath,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        var panes = new List<PaneId>(2);
+        foreach (var pane in workspace.DualPaneEnabled ? new[] { PaneId.Primary, PaneId.Secondary } : [PaneId.Primary])
+        {
+            if (PathRules.PathsEqual(workspace.Pane(pane).Path, gonePath))
+            {
+                panes.Add(pane);
+            }
+        }
+
+        foreach (var pane in panes)
+        {
+            var state = workspace.Pane(pane);
+            // The folder itself first: one that was removed and made again (a build's output folder) is still the
+            // place to be. Then each folder above it, and the home folder when none is left (the volume went).
+            var candidate = gonePath;
+            var landed = false;
+            var showing = gonePath;
+            while (!string.IsNullOrWhiteSpace(candidate))
+            {
+                if (!PathRules.PathsEqual(state.Path, showing))
+                {
+                    // The user went somewhere else meanwhile: that is where the pane stays.
+                    landed = true;
+                    break;
+                }
+
+                var mode = ReferenceEquals(candidate, gonePath) ? HistoryMode.None : HistoryMode.ReplaceCurrent;
+                await NavigatePaneAsync(workspace, pane, candidate, mode, activate: false, cancellationToken)
+                    .ConfigureAwait(false);
+                showing = candidate;
+                if (workspace.ErrorMessage is null && PathRules.PathsEqual(state.Path, candidate))
+                {
+                    landed = true;
+                    break;
+                }
+
+                candidate = PathRules.GetParentPath(candidate);
+            }
+
+            if (!landed && !string.IsNullOrWhiteSpace(workspace.HomePath))
+            {
+                await NavigatePaneAsync(
+                        workspace, pane, workspace.HomePath, HistoryMode.ReplaceCurrent, activate: false, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            if (!PathRules.PathsEqual(state.Path, gonePath))
+            {
+                lock (workspace.Gate)
+                {
+                    workspace.SetStatusMessageCore($"\"{GoneFolderName(gonePath)}\" is no longer there.");
+                }
+
+                workspace.NotifyChanged();
+            }
+        }
+
+        return panes;
+    }
+
+    private static string GoneFolderName(string path)
+    {
+        var name = System.IO.Path.GetFileName(path.TrimEnd('\\', '/'));
+        return string.IsNullOrEmpty(name) ? path : name;
+    }
+
     public async Task NavigatePaneAsync(
         ExplorerWorkspace workspace,
         PaneId pane,

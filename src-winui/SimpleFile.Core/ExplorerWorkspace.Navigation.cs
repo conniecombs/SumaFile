@@ -64,6 +64,34 @@ public sealed partial class ExplorerWorkspace
     public IReadOnlyList<PaneId> AffectedVisiblePanes(IEnumerable<string?> affectedPaths) =>
         _navigation.AffectedVisiblePanes(this, affectedPaths);
 
+    /// <summary>
+    /// The folder at <paramref name="gonePath"/> is no longer there (the watcher said so): each visible pane that
+    /// shows it goes to the nearest folder above it that still is, as Explorer does. A folder that was removed and
+    /// made again is simply listed again. Returns the panes that showed the folder.
+    /// </summary>
+    public Task<IReadOnlyList<PaneId>> LeaveGoneFolderAsync(string gonePath, CancellationToken cancellationToken = default) =>
+        _navigation.LeaveGoneFolderAsync(this, gonePath, cancellationToken);
+
+    /// <summary>
+    /// The entries of the pane's folder that were renamed from outside since the last call, oldest first. The window
+    /// moves its selected rows along with them.
+    /// </summary>
+    public IReadOnlyList<PathRename> TakeRenamedPaths(PaneId pane)
+    {
+        lock (Gate)
+        {
+            var renamed = Pane(Normalize(pane)).RenamedPaths;
+            if (renamed.Count == 0)
+            {
+                return [];
+            }
+
+            PathRename[] taken = [.. renamed];
+            renamed.Clear();
+            return taken;
+        }
+    }
+
     public Task NavigateSpecialAsync(string command, CancellationToken cancellationToken = default) =>
         NavigateSpecialAsync(command, SidebarTarget, cancellationToken);
 

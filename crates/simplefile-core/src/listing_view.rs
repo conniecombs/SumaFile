@@ -312,6 +312,41 @@ impl ListingView {
         self.finish_delta(base_revision, changes, false)
     }
 
+    /// Records that `old_name` in the folder became `new_name`, which is now
+    /// `entry` (`None` when it is already gone again). One delta carries both
+    /// halves, and the row that arrives says which name it had, so the host
+    /// keeps its selection on it. Only for a view that
+    /// [`Self::follows_names`].
+    pub fn apply_rename(
+        &mut self,
+        old_name: &str,
+        new_name: &str,
+        entry: Option<FileEntry>,
+    ) -> ListingViewDelta {
+        let base_revision = self.revision;
+        let mut changes = Vec::new();
+        if self.paths_follow_names {
+            let old_key = fold_name(old_name);
+            let had_name = self
+                .by_name
+                .get(&old_key)
+                .and_then(|&slot| self.slots[slot as usize].as_ref())
+                .map(|slot| slot.entry.name.clone());
+            self.apply_keyed(old_key, None, &mut changes);
+            let arrived_from = changes.len();
+            self.apply_keyed(fold_name(new_name), entry, &mut changes);
+            if let Some(had_name) = had_name {
+                if let Some(arrival) = changes[arrived_from..]
+                    .iter_mut()
+                    .find(|change| change.entry.is_some())
+                {
+                    arrival.renamed_from = Some(had_name);
+                }
+            }
+        }
+        self.finish_delta(base_revision, changes, false)
+    }
+
     /// What tells two entries of the folder apart: the case-folded name in
     /// an ordinary folder, the path where names may repeat (two deleted
     /// files called `notes.txt` are two rows of the Recycle Bin).
@@ -1033,6 +1068,88 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         assert_eq!(names(&view), replay(replay(before, &same_place), &moved));
+    }
+
+    #[test]
+    fn a_rename_is_one_delta_whose_arriving_row_names_the_name_it_had() {
+        let mut view = view(sample(), ListingViewOptions::default());
+        // Archive, zeta, .hidden, alpha.TXT, beta.md, notes.txt
+        let before = names(&view);
+        let renamed = view.apply_rename("beta.md", "omega.md", Some(entry("omega.md", false, 10)));
+        assert_eq!(
+            vec![("remove", 4, None), ("insert", 5, Some("beta.md"))],
+            renamed
+                .changes
+                .iter()
+                .map(|change| (
+                    change.kind.as_str(),
+                    change.index,
+                    change.renamed_from.as_deref()
+                ))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(names(&view), replay(before, &renamed));
+        assert!(!names(&view).contains(&"beta.md".to_string()));
+
+        // Only the letter case changes: the row stays where it is and is
+        // updated, and still says which name it had.
+        let cased = view.apply_rename("omega.md", "OMEGA.md", Some(entry("OMEGA.md", false, 10)));
+        assert_eq!(
+            vec![("remove", 5, None), ("insert", 5, Some("omega.md"))],
+            cased
+                .changes
+                .iter()
+                .map(|change| (
+                    change.kind.as_str(),
+                    change.index,
+                    change.renamed_from.as_deref()
+                ))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!("OMEGA.md", names(&view)[5]);
+    }
+
+    #[test]
+    fn a_rename_of_a_name_the_view_never_had_is_an_arrival_and_one_to_nothing_a_removal() {
+        let mut view = view(sample(), ListingViewOptions::default());
+        // The old name was created and renamed before the view heard of it.
+        let arrived = view.apply_rename("draft.tmp", "final.md", Some(entry("final.md", false, 1)));
+        assert_eq!(1, arrived.changes.len());
+        assert_eq!("insert", arrived.changes[0].kind);
+        assert_eq!(None, arrived.changes[0].renamed_from);
+
+        // Renamed and then deleted within one batch: the old row leaves, nothing arrives.
+        let left = view.apply_rename("notes.txt", "notes-old.txt", None);
+        assert_eq!(1, left.changes.len());
+        assert_eq!("remove", left.changes[0].kind);
+        assert!(!names(&view).contains(&"notes.txt".to_string()));
+
+        // Nothing the view shows changed: no delta, and the revision stays.
+        let revision = view.revision();
+        let nothing = view.apply_rename("ghost-a", "ghost-b", None);
+        assert!(nothing.changes.is_empty());
+        assert_eq!(revision, view.revision());
+    }
+
+    #[test]
+    fn a_rename_onto_a_name_that_exists_replaces_that_row() {
+        let mut view = view(sample(), ListingViewOptions::default());
+        let before = names(&view);
+        // Saved by renaming a new file over the old one.
+        let replaced =
+            view.apply_rename("beta.md", "notes.txt", Some(entry("notes.txt", false, 77)));
+        assert_eq!(names(&view), replay(before, &replaced));
+        assert_eq!(
+            vec!["Archive", "zeta", ".hidden", "alpha.TXT", "notes.txt"],
+            names(&view)
+        );
+        let arrival = replaced
+            .changes
+            .iter()
+            .find(|change| change.entry.is_some())
+            .unwrap();
+        assert_eq!(Some("beta.md"), arrival.renamed_from.as_deref());
+        assert_eq!(77, arrival.entry.as_ref().unwrap().size);
     }
 
     #[test]

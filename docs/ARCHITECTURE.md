@@ -283,11 +283,42 @@ Network paths are never cached. A cached listing older than 10 s (`DIRECTORY_LIS
 shown at once and enumerated again behind the view. Watcher events and mutating commands
 invalidate the affected paths.
 
-The watcher (`watcher.rs`) follows one folder per session, without subfolders. The app points it at
-the active pane's folder with `watch_directory` and skips network paths. Changes are coalesced for
-150 ms; more than 512 pending paths collapse into one change of the folder itself. Each change is
-sent as `file-change` and applied to the open views of that folder. A folder that is not watched
-changes on screen only when the app refreshes it, as it does after its own operations.
+The watcher (`watcher.rs`, `watcher/engine.rs`, `watcher/coalesce.rs`) follows the folders of the
+visible panes, without subfolders. The app names them with `watch_directory` (`paths`) each time
+they change and skips network paths, archives and the Recycle Bin. One thread per session reads
+every watched folder from one I/O completion port; it starts with the first request and ends with
+the session. A request names the whole set: folders already watched stay watched without a gap, new
+ones are opened on that thread and the others are let go, and the session awaits the answer
+instead of waiting on a disk. A folder that cannot be watched fails the request and leaves the set
+as it was.
+
+- Each folder has one `ReadDirectoryChangesExW` request outstanding, with a 64 KB buffer. Its
+  extended records carry each entry's size, dates and attributes, so a changed row is built from
+  the record (`file_entry_from_watched_facts`) and the entry is not opened. A reparse point (a
+  link, a cloud placeholder) is still read, as the record does not say what it points to. A file
+  system without the extended records is asked in the plain form, and then every changed entry is
+  read.
+- Changes are gathered for 150 ms after the last one, 500 ms after the first at the latest. The
+  last state of each path is told, as `file-change` and as a delta of the open views of its
+  folder. The names `.tmp`, `.part`, `.crdownload`, `desktop.ini`, `Thumbs.db` and `.DS_Store`
+  are not told.
+- The two records of a rename become one change. The views get one delta for it, whose arriving
+  row carries `renamed_from` (the name it had); the app moves its selection from the old path to
+  the new one. `file-change` still names both paths, the new one first.
+- More than 512 pending paths in one folder, or a buffer the system reports as run over, become
+  one `modify` of that folder itself. The service then enumerates the folder again for its views
+  and sends what differs. Only that folder is read again.
+- A watched folder that is deleted, renamed or moved, or whose volume leaves, is told as `gone`
+  with its own path, and is no longer watched. A deleted folder fails its pending read at once. A
+  renamed or moved one keeps its handle and reports nothing about itself, so each folder is asked
+  every two seconds whether it is still at the path it was opened at. The app then shows the
+  nearest folder above that still exists (`ExplorerWorkspace.LeaveGoneFolderAsync`), or the same
+  folder again when it was removed and made again. The views of a gone folder keep their rows,
+  but the next open of each enumerates (`ListingViews::mark_folder_gone`): the rows are not
+  shown again as they are, and are not handed to the cache.
+
+A folder that is not watched changes on screen only when the app refreshes it, as it does after
+its own operations.
 `list_directory`, which streams a whole folder in chunks, remains for backends without views.
 
 ## On-demand column values

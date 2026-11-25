@@ -170,6 +170,13 @@ run folder by hand.
   switch for a Markdown file and none for plain text, steps with Right, zooms
   a picture with + and - and fits it again with 0, and closes on Space (the
   `quick-look` scenario).
+- A folder that changes from outside while a pane shows it (the
+  `live-folder-changes` scenario): a new file is one new row; a selected
+  row that is renamed stays selected, in the Details view and in the List
+  view; 700 files made at once are all shown and all gone again after they
+  are deleted; a pane whose folder is deleted or renamed goes to the folder
+  above it; and a folder that is removed and made again stays open, shows
+  its new contents and is followed again.
 - The conflict dialog's cards show a thumbnail for a picture and none for a
   text file, and "Make the sidebar wider" and "narrower" move the sidebar by
   one step.

@@ -30,6 +30,11 @@ struct Registry {
     /// The newest open that is enumerating a folder for each view id.
     opening: HashMap<String, u64>,
     last_ticket: u64,
+    /// The views whose folder the watcher reported as gone. Their rows are
+    /// of a folder that is no longer there, or of one that has since been
+    /// made anew under the same path: they are neither shown again without
+    /// an enumeration nor handed to the cache.
+    gone: std::collections::HashSet<String>,
 }
 
 /// Marks one open of a view. A pane that navigates twice in quick succession
@@ -93,9 +98,10 @@ impl ListingViews {
             return None;
         }
         registry.opening.remove(view_id);
+        let was_gone = registry.gone.remove(view_id);
         let replaced = registry.views.insert(view_id.to_string(), view);
         let left_behind = replaced
-            .filter(|old| old.is_cacheable() && !same_folder(old.path(), &page.path))
+            .filter(|old| !was_gone && old.is_cacheable() && !same_folder(old.path(), &page.path))
             .map(ListingView::into_raw_listing);
         Some((page, left_behind))
     }
@@ -121,12 +127,31 @@ impl ListingViews {
         page_rows: u32,
     ) -> Option<ListingViewPage> {
         let mut registry = self.lock();
+        if registry.gone.contains(view_id) {
+            // Its folder went away: only an enumeration says what is there now.
+            return None;
+        }
         let view = registry.views.get_mut(view_id)?;
         if !same_folder(view.path(), path) {
             return None;
         }
         view.set_options(options);
         Some(view.page(0, clamp_page_rows(page_rows)))
+    }
+
+    /// The watcher reported the folder at `path` as gone. Its views keep
+    /// their rows for the pane that still shows them, but the next open of
+    /// each enumerates, also of the same path: the folder may be there
+    /// again, as another folder.
+    pub fn mark_folder_gone(&self, path: &str) {
+        let mut registry = self.lock();
+        let views: Vec<String> = registry
+            .views
+            .iter()
+            .filter(|(_, view)| same_folder(view.path(), path))
+            .map(|(view_id, _)| view_id.clone())
+            .collect();
+        registry.gone.extend(views);
     }
 
     pub fn range(&self, view_id: &str, offset: u32, count: u32) -> Result<ListingViewPage, String> {
@@ -159,16 +184,21 @@ impl ListingViews {
         if !same_folder(view.path(), path) {
             return None;
         }
-        Some(view.replace_entries(entries))
+        let delta = view.replace_entries(entries);
+        // Enumerated again: the rows are those of the folder that is there now.
+        registry.gone.remove(view_id);
+        Some(delta)
     }
 
     /// Closes the view. The entries it held come back when the cache may
     /// keep them (an ordinary local folder).
     pub fn close(&self, view_id: &str) -> Option<DirectoryListing> {
-        self.lock()
+        let mut registry = self.lock();
+        let was_gone = registry.gone.remove(view_id);
+        registry
             .views
             .remove(view_id)
-            .filter(ListingView::is_cacheable)
+            .filter(|view| !was_gone && view.is_cacheable())
             .map(ListingView::into_raw_listing)
     }
 
@@ -177,6 +207,7 @@ impl ListingViews {
         let mut registry = self.lock();
         registry.views.clear();
         registry.opening.clear();
+        registry.gone.clear();
     }
 
     /// Applies a change of `path` to the views of its folder. `lookup` reads
@@ -214,6 +245,56 @@ impl ListingViews {
                     if !delta.changes.is_empty() || delta.reset {
                         changes.deltas.push(delta);
                     }
+                }
+            }
+        }
+        changes
+    }
+
+    /// Applies the rename of `from` to `to`, two names of one folder, to the
+    /// views of that folder: one delta each, whose arriving row says which
+    /// name it had. `lookup` reads what `to` is now. A view of either path
+    /// itself (a renamed folder that is open) is asked to refresh.
+    pub fn apply_path_rename(
+        &self,
+        from: &str,
+        to: &str,
+        lookup: impl Fn(&str) -> Option<FileEntry>,
+    ) -> ViewChanges {
+        let folder_and_name = |path: &str| {
+            let path = Path::new(path);
+            path.parent().zip(path.file_name()).map(|(folder, name)| {
+                (
+                    folder.to_string_lossy().to_string(),
+                    name.to_string_lossy().to_string(),
+                )
+            })
+        };
+        let (Some((from_folder, from_name)), Some((to_folder, to_name))) =
+            (folder_and_name(from), folder_and_name(to))
+        else {
+            return self.apply_path_change(to, lookup);
+        };
+        if !same_folder(&from_folder, &to_folder) {
+            // A move between folders is a removal there and an arrival here.
+            return self.apply_path_change(to, lookup);
+        }
+
+        let mut changes = ViewChanges::default();
+        let mut registry = self.lock();
+        let mut current: Option<Option<FileEntry>> = None;
+        for (view_id, view) in registry.views.iter_mut() {
+            if same_folder(view.path(), to) || same_folder(view.path(), from) {
+                changes.refresh.push(view_id.clone());
+            } else if same_folder(view.path(), &to_folder) {
+                if !view.follows_names() {
+                    changes.refresh.push(view_id.clone());
+                    continue;
+                }
+                let entry = current.get_or_insert_with(|| lookup(to)).clone();
+                let delta = view.apply_rename(&from_name, &to_name, entry);
+                if !delta.changes.is_empty() || delta.reset {
+                    changes.deltas.push(delta);
                 }
             }
         }
@@ -527,6 +608,148 @@ mod tests {
 
         let unseen = views.apply_path_change(r"C:\work\ghost.txt", |_| None);
         assert!(unseen.deltas.is_empty() && unseen.refresh.is_empty());
+    }
+
+    #[test]
+    fn a_rename_reaches_the_views_of_its_folder_as_one_delta_each() {
+        let views = ListingViews::default();
+        for (view_id, folder) in [("primary", r"C:\work"), ("secondary", r"C:\WORK")] {
+            open_now(
+                &views,
+                view_id,
+                listing(folder, &["a.txt", "m.txt"]),
+                true,
+                ListingViewOptions::default(),
+                0,
+            );
+        }
+        // A view of the renamed folder itself, and one of somewhere else.
+        open_now(
+            &views,
+            "inside",
+            listing(r"C:\work\a.txt", &[]),
+            true,
+            ListingViewOptions::default(),
+            0,
+        );
+        open_now(
+            &views,
+            "tab",
+            listing(r"C:\elsewhere", &["a.txt"]),
+            true,
+            ListingViewOptions::default(),
+            0,
+        );
+
+        let looked_up = std::cell::Cell::new(0);
+        let renamed = views.apply_path_rename(r"C:\work\a.txt", r"C:\work\z.txt", |path| {
+            looked_up.set(looked_up.get() + 1);
+            assert_eq!(r"C:\work\z.txt", path);
+            Some(entry("z.txt", 9))
+        });
+        // Read once, however many views show the folder.
+        assert_eq!(1, looked_up.get());
+        assert_eq!(vec!["inside".to_string()], renamed.refresh);
+        let mut touched: Vec<&str> = renamed
+            .deltas
+            .iter()
+            .map(|delta| delta.view_id.as_str())
+            .collect();
+        touched.sort();
+        assert_eq!(vec!["primary", "secondary"], touched);
+        for delta in &renamed.deltas {
+            let arrival = delta
+                .changes
+                .iter()
+                .find(|change| change.entry.is_some())
+                .expect("the new name arrives");
+            assert_eq!(Some("a.txt"), arrival.renamed_from.as_deref());
+            assert_eq!(2, delta.changes.len());
+        }
+        assert_eq!(
+            vec!["m.txt", "z.txt"],
+            names(&views.range("primary", 0, 10).unwrap())
+        );
+        assert_eq!(1, views.range("tab", 0, 10).unwrap().total);
+
+        // Two paths that are not names of one folder: the arrival alone.
+        let moved = views.apply_path_rename(r"C:\elsewhere\x.txt", r"C:\work\x.txt", |_| {
+            Some(entry("x.txt", 1))
+        });
+        assert!(moved
+            .deltas
+            .iter()
+            .flat_map(|delta| &delta.changes)
+            .all(|change| change.renamed_from.is_none()));
+        assert_eq!(3, views.range("primary", 0, 10).unwrap().total);
+    }
+
+    #[test]
+    fn the_views_of_a_folder_that_is_gone_are_not_shown_again_or_cached_without_an_enumeration() {
+        let views = ListingViews::default();
+        for view_id in ["primary", "secondary", "tab"] {
+            open_now(
+                &views,
+                view_id,
+                listing(r"C:\work\out", &["old.txt"]),
+                true,
+                ListingViewOptions::default(),
+                0,
+            );
+        }
+        open_now(
+            &views,
+            "elsewhere",
+            listing(r"C:\other", &["a.txt"]),
+            true,
+            ListingViewOptions::default(),
+            0,
+        );
+        views.mark_folder_gone(r"C:\WORK\out\");
+
+        // The rows stay for the pane that still shows them.
+        assert_eq!(1, views.range("primary", 0, 10).unwrap().total);
+        // But the folder is not opened from them, under whatever order.
+        assert!(views
+            .reconfigure("primary", r"C:\work\out", ListingViewOptions::default(), 0)
+            .is_none());
+        assert!(views
+            .reconfigure("elsewhere", r"C:\other", ListingViewOptions::default(), 0)
+            .is_some());
+
+        // Navigating away does not hand the rows to the cache; an enumeration
+        // of the folder (it was made again) makes the view good again.
+        let ticket = views.begin_open("primary");
+        let (_, left_behind) = views
+            .open(
+                "primary",
+                ticket,
+                listing(r"C:\work", &["out"]),
+                true,
+                ListingViewOptions::default(),
+                0,
+            )
+            .unwrap();
+        assert!(left_behind.is_none());
+        assert!(views
+            .reconfigure("primary", r"C:\work", ListingViewOptions::default(), 0)
+            .is_some());
+
+        views
+            .refresh("secondary", r"C:\work\out", vec![entry("new.txt", 1)])
+            .unwrap();
+        let page = views
+            .reconfigure(
+                "secondary",
+                r"C:\work\out",
+                ListingViewOptions::default(),
+                0,
+            )
+            .expect("an enumerated view shows its folder again");
+        assert_eq!(vec!["new.txt"], names(&page));
+
+        assert!(views.close("tab").is_none());
+        assert!(views.close("elsewhere").is_some());
     }
 
     #[test]

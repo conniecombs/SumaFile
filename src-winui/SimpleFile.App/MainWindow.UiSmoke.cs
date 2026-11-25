@@ -137,6 +137,9 @@ public sealed partial class MainWindow
             await CheckpointAsync("quick-look");
             await SmokeQuickLookAsync(results, root);
 
+            await CheckpointAsync("live-folder-changes");
+            await SmokeLiveFolderChangesAsync(results, root);
+
             // With -PointerInput, the panes' gestures that only a real mouse makes.
             if (SmokePointerInput)
             {

@@ -158,7 +158,8 @@ uninstalling, or remove those entries in Credential Manager. Settings in
 - Persistent pane-local filter counts, Clear filter, and search result banners
   with Return to folder
 - Marquee selection, multi-selection, type-ahead selection, and live directory
-  refresh
+  refresh: a file renamed elsewhere stays selected, and a pane whose folder is
+  deleted or renamed elsewhere goes to the folder above it
 - Recycle Bin as a browsable location with restore, permanent delete, and empty
   actions
 - Status bar with the item count and the selection's count and size, shown

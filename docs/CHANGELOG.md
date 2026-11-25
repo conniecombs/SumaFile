@@ -90,6 +90,32 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 - The highlight of a pane's border is cleared when a drag that started in
   the Details view ends outside the panes.
 
+### Folders that change while they are shown
+
+- The part of the file service that notices changes in the folders shown
+  was rewritten on Windows' own change notifications; the `notify` library
+  is no longer used. One thread follows both panes, and going to another
+  folder no longer stops and restarts it.
+- A file that is renamed outside SumaFile keeps its selection. The row
+  used to be removed and added again under the new name, which dropped it
+  from the selection.
+- When the folder a pane shows is deleted, renamed or moved elsewhere, or
+  its drive is taken out, the pane goes to the nearest folder above it
+  that still exists and the status bar says the folder is no longer
+  there. It used to keep showing the old rows. A folder that is removed
+  and made again at once, as a build does with its output folder, stays
+  open and shows the new contents. A deletion is noticed at once; a rename
+  or a move within two seconds.
+- When so much changes at once that Windows cannot list every change, the
+  folder is read again. Such a burst used to end the watching of that
+  folder without a word, and the pane then stayed as it was until it was
+  refreshed by hand.
+- A burst of more than 512 changes in one pane's folder reads that folder
+  again once. It used to read both panes' folders, and each of them twice.
+- A changed row shows its new size, dates and attributes without the file
+  being opened again: Windows reports them with the change. On drives
+  that do not (some network and FAT volumes) the file is read as before.
+
 ### Quick Look, dialogs and accessibility
 
 - Quick Look shows where the item is among the pane's files beside its

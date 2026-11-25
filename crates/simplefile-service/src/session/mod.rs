@@ -225,23 +225,22 @@ where
                     let views_for_watch = views.clone();
                     let runtime = tokio::runtime::Handle::current();
                     let scheduler_for_watch = scheduler.clone();
-                    let result = crate::watcher::watch_directories(
-                        paths,
-                        &mut watcher_state,
-                        move |change| {
-                            cache_for_watch.invalidate_path(&change.path);
-                            events.emit_file_change(&change);
-                            listing_jobs::apply_file_change(
+                    // The folders are opened on the watcher's own thread: the
+                    // answer is awaited, so no runtime worker waits on a disk.
+                    let watching =
+                        crate::watcher::start_watch(paths, &mut watcher_state, move |change| {
+                            cache_for_watch.invalidate_path(&change.event.path);
+                            events.emit_file_change(&change.event);
+                            listing_jobs::apply_watch_change(
                                 &views_for_watch,
                                 &cache_for_watch,
                                 &events,
                                 &runtime,
                                 &scheduler_for_watch,
-                                &change.path,
+                                &change,
                             );
-                        },
-                    );
-                    let response = match result {
+                        });
+                    let response = match watching.done().await {
                         Ok(()) => JsonRpcResponse::result(id, Value::Null),
                         Err(message) => JsonRpcResponse::application_error(id, message),
                     };

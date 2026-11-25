@@ -46,6 +46,10 @@ public sealed partial class MainWindow : Window
     private IDisposable? _fileChangeSubscription;
     private string? _watchTargetPath;
     private string? _watchedPath;
+
+    // How many watch requests the service has answered with success: the UI smoke waits on it before it changes
+    // a folder from outside.
+    private int _watchesEstablished;
     private readonly SemaphoreSlim _watchGate = new(1, 1);
     private readonly SemaphoreSlim _transferPromptGate = new(1, 1);
     private int _watchRequestToken;
@@ -549,6 +553,59 @@ public sealed partial class MainWindow : Window
         SyncFromWorkspace();
     }
 
+    /// <summary>
+    /// The new paths of the list's selected rows that were renamed from outside; null when none was. Asked before
+    /// the rows are replaced, while the list still has the rows under their old paths.
+    /// </summary>
+    private static HashSet<string>? RenamedSelection(ListView list, IReadOnlyList<PathRename> renames)
+    {
+        if (renames.Count == 0 || list.SelectedItems.Count == 0)
+        {
+            return null;
+        }
+
+        var selected = new HashSet<string>(list.SelectedItems.OfType<FileRow>().Select(row => row.Path), PathRules.PathComparer);
+        var renamed = new HashSet<string>(PathRules.PathComparer);
+        foreach (var rename in renames)
+        {
+            // In the order they happened: a row renamed twice is followed to its last name.
+            if (selected.Remove(rename.From))
+            {
+                selected.Add(rename.To);
+                renamed.Remove(rename.From);
+                renamed.Add(rename.To);
+            }
+        }
+
+        return renamed.Count > 0 ? renamed : null;
+    }
+
+    /// <summary>Selects the rows at <paramref name="paths"/>, after the rows were replaced.</summary>
+    private static void SelectRenamedRows(ListView list, IEnumerable<FileRow> rows, HashSet<string>? paths)
+    {
+        if (paths is null)
+        {
+            return;
+        }
+
+        foreach (var row in rows)
+        {
+            if (!paths.Contains(row.Path) || list.SelectedItems.Contains(row))
+            {
+                continue;
+            }
+
+            if (list.SelectionMode == ListViewSelectionMode.Single)
+            {
+                list.SelectedItem = row;
+            }
+            else
+            {
+                list.SelectedItems.Add(row);
+            }
+        }
+    }
+
     private void StopWorkspaceSyncTimer()
     {
         _workspaceSyncTimer?.Stop();
@@ -582,9 +639,14 @@ public sealed partial class MainWindow : Window
             : null;
         try
         {
+            // A row that was renamed from outside is a new row under a new path. Both lists keep it selected: the
+            // Details list holds its selection by path, the other views' list by row.
+            var primaryRenames = _workspace.TakeRenamedPaths(PaneId.Primary);
+            var primaryRenamed = RenamedSelection(PrimaryFileList, primaryRenames);
             PrimaryDetailsFileList.BeginUpdate();
             try
             {
+                PrimaryDetailsFileList.FollowRenames(primaryRenames);
                 ReplaceIfChanged(
                     PrimaryFiles,
                     (_search?.IsActiveForPane(PaneId.Primary) == true
@@ -597,12 +659,17 @@ public sealed partial class MainWindow : Window
                 PrimaryDetailsFileList.EndUpdate();
             }
 
+            SelectRenamedRows(PrimaryFileList, PrimaryFiles, primaryRenamed);
+
             var secondaryActive = _workspace.DualPaneEnabled || _search?.IsActiveForPane(PaneId.Secondary) == true;
             if (secondaryActive)
             {
+                var secondaryRenames = _workspace.TakeRenamedPaths(PaneId.Secondary);
+                var secondaryRenamed = RenamedSelection(SecondaryFileList, secondaryRenames);
                 SecondaryDetailsFileList.BeginUpdate();
                 try
                 {
+                    SecondaryDetailsFileList.FollowRenames(secondaryRenames);
                     ReplaceIfChanged(
                         SecondaryFiles,
                         (_search?.IsActiveForPane(PaneId.Secondary) == true
@@ -614,6 +681,8 @@ public sealed partial class MainWindow : Window
                 {
                     SecondaryDetailsFileList.EndUpdate();
                 }
+
+                SelectRenamedRows(SecondaryFileList, SecondaryFiles, secondaryRenamed);
             }
             else if (SecondaryFiles.Count > 0)
             {
@@ -1284,6 +1353,7 @@ public sealed partial class MainWindow : Window
             }
 
             await _workspace.FileOps.WatchDirectoriesAsync(paths);
+            _watchesEstablished++;
             if (token == _watchRequestToken
                 && string.Equals(targetSignature, _watchTargetPath, StringComparison.OrdinalIgnoreCase))
             {
@@ -1322,6 +1392,12 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
+            if (string.Equals(change.Kind, FileChangeEvent.Gone, StringComparison.Ordinal))
+            {
+                _ = LeaveGoneFolderAsync(change.Path);
+                return;
+            }
+
             if (!string.IsNullOrEmpty(_previewPresenter.CurrentPath)
                 && string.Equals(change.Path, _previewPresenter.CurrentPath, StringComparison.OrdinalIgnoreCase))
             {
@@ -1348,15 +1424,48 @@ public sealed partial class MainWindow : Window
                 : $"{change.Kind}: {name}");
 
             // A pane whose rows follow the service's view of the changed folder is told which rows moved by the
-            // view itself: listing the folder again would only repeat that.
+            // view itself: listing the folder again would only repeat that. The same holds for a change of the
+            // pane's own folder ("more changed here than is listed"): the service reads the folder again for its
+            // view and sends what differs.
             var changedFolder = PathRules.GetParentPath(change.Path);
-            if (affectedPanes.All(pane => _workspace.FollowsListingView(pane, changedFolder)))
+            if (affectedPanes.All(pane =>
+                    _workspace.FollowsListingView(pane, changedFolder) || _workspace.FollowsListingView(pane, change.Path)))
             {
                 return;
             }
 
             ScheduleInPlaceRefresh(affectedPaths);
         });
+    }
+
+    /// <summary>
+    /// A watched folder is no longer there: it was deleted, renamed or moved from outside, or its drive was taken
+    /// out. The panes that show it go to the nearest folder that still exists, and the service is asked again for
+    /// what the panes show now, as it let the folder go.
+    /// </summary>
+    private async Task LeaveGoneFolderAsync(string path)
+    {
+        if (_workspace is not { } workspace)
+        {
+            return;
+        }
+
+        try
+        {
+            FileListThumbnailHost.InvalidatePaths([path]);
+            ShellIconLoader.InvalidatePath(path);
+            await workspace.LeaveGoneFolderAsync(path);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            SetStatusText(exception.Message);
+        }
+        finally
+        {
+            // Also for a pane that stayed where it was (the folder was made again): its watch ended with the old one.
+            _watchTargetPath = null;
+            QueueWatchActiveDirectory();
+        }
     }
 
     private static IReadOnlyList<string> FileChangeAffectedPaths(string path)

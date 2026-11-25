@@ -53,9 +53,9 @@
     },
     "ListingViewChange": {
       "source": "crates/simplefile-core/src/models.rs",
-      "fields": ["kind", "index", "entry"],
-      "optional": ["entry"],
-      "notes": "kind is remove, insert or update. index is the row after the changes before this one in the same delta."
+      "fields": ["kind", "index", "entry", "renamed_from"],
+      "optional": ["entry", "renamed_from"],
+      "notes": "kind is remove, insert or update. index is the row after the changes before this one in the same delta. renamed_from, on the insert or update of an entry that was renamed inside the folder, is the name it had: the host moves its selection from that name to the entry."
     },
     "ListingViewDelta": {
       "source": "crates/simplefile-core/src/models.rs",
@@ -67,7 +67,8 @@
     },
     "FileChangeEvent": {
       "source": "crates/simplefile-core/src/models.rs",
-      "fields": ["path", "kind"]
+      "fields": ["path", "kind"],
+      "notes": "kind is create, modify, remove or rename for an entry of a watched folder. modify with the path of a watched folder itself: more changed there than is listed, read the folder again. gone with the path of a watched folder: it is no longer at that path (deleted, renamed, moved, or its volume left) and is no longer watched."
     },
     "DriveInfo": {
       "source": "crates/simplefile-core/src/models.rs",
