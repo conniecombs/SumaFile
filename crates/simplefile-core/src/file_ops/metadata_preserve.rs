@@ -33,11 +33,9 @@ pub fn apply_basic_metadata_to_handle(
 ) -> Result<(), String> {
     use std::os::windows::fs::MetadataExt;
     use std::os::windows::io::AsRawHandle;
-    use winapi::um::fileapi::{SetFileInformationByHandle, FILE_BASIC_INFO};
-    use winapi::um::minwinbase::FileBasicInfo;
-    use winapi::um::winbase::GetFileInformationByHandleEx;
-    use winapi::um::winnt::{
-        FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_READONLY, LARGE_INTEGER,
+    use windows_sys::Win32::Storage::FileSystem::{
+        FileBasicInfo, GetFileInformationByHandleEx, SetFileInformationByHandle,
+        FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_READONLY, FILE_BASIC_INFO,
     };
 
     let handle = file.as_raw_handle() as _;
@@ -57,19 +55,12 @@ pub fn apply_basic_metadata_to_handle(
         ));
     }
 
-    fn large(value: u64) -> LARGE_INTEGER {
-        let mut out: LARGE_INTEGER = unsafe { std::mem::zeroed() };
-        unsafe {
-            *out.QuadPart_mut() = value as i64;
-        }
-        out
-    }
-
-    info.CreationTime = large(source.creation_time());
-    info.LastAccessTime = large(source.last_access_time());
-    info.LastWriteTime = large(source.last_write_time());
+    // File times are 100 ns ticks since 1601, well inside an i64.
+    info.CreationTime = source.creation_time() as i64;
+    info.LastAccessTime = source.last_access_time() as i64;
+    info.LastWriteTime = source.last_write_time() as i64;
     // Zero leaves the change time to the system.
-    info.ChangeTime = large(0);
+    info.ChangeTime = 0;
     let mut attributes = info.FileAttributes;
     if clear_hidden {
         attributes &= !FILE_ATTRIBUTE_HIDDEN;
@@ -120,8 +111,8 @@ pub fn apply_basic_metadata_to_handle(
 fn preserve_creation_time(metadata: &fs::Metadata, dst: &Path) -> Result<(), String> {
     use std::os::windows::fs::MetadataExt;
     use std::os::windows::io::AsRawHandle;
-    use winapi::shared::minwindef::FILETIME;
-    use winapi::um::fileapi::SetFileTime;
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::Storage::FileSystem::SetFileTime;
 
     if !metadata.is_file() {
         return Ok(());

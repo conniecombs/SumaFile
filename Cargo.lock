@@ -2651,8 +2651,8 @@ dependencies = [
  "trash",
  "unrar",
  "ureq",
- "winapi",
  "windows 0.56.0",
+ "windows-sys 0.61.2",
  "zip",
 ]
 
@@ -2836,6 +2836,7 @@ dependencies = [
  "serde_json",
  "simplefile-ipc",
  "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2886,6 +2887,7 @@ dependencies = [
  "sumafile-plugin",
  "tempfile",
  "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

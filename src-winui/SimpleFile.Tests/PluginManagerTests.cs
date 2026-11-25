@@ -1226,6 +1226,8 @@ public class PluginManagerTests : IAsyncLifetime
         Assert.Empty(registrar.Unregistered);
         var registration = Assert.Single(registrar.Registered);
         Assert.Equal(launcher.PipeName, registration.PipeName);
+        // The file service is given the token this launch of the backend expects.
+        Assert.Equal(launcher.LastLaunchToken, Assert.Single(registrar.RegisteredTokens));
         Assert.Equal(4, registrar.RegisterCalls);
         Assert.Equal(PluginState.Enabled, Record(manager, BackendId).State);
         Assert.True(first.Killed);
@@ -3366,9 +3368,18 @@ public class PluginManagerTests : IAsyncLifetime
             lock (_lock) _calls.Add(entry);
         }
 
+        /// <summary>The launch token of each registration that went through, in order.</summary>
+        public IReadOnlyList<string> RegisteredTokens
+        {
+            get { lock (_lock) return _registeredTokens.ToList(); }
+        }
+
+        private readonly List<string> _registeredTokens = [];
+
         public async Task RegisterAsync(
             string pluginId,
             string pipeName,
+            string authToken,
             IReadOnlyList<SimpleFile.PluginHost.Manifest.PluginArchiveFormatSpec> formats,
             CancellationToken ct)
         {
@@ -3380,6 +3391,7 @@ public class PluginManagerTests : IAsyncLifetime
             lock (_lock)
             {
                 _registered.Add((pluginId, pipeName, formats));
+                _registeredTokens.Add(authToken);
                 _calls.Add($"register:{pipeName}");
             }
         }

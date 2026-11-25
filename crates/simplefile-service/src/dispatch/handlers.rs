@@ -535,8 +535,13 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
                                 engine_name: format.engine_name,
                             })
                             .collect();
-                        crate::plugin_archive::register_plugin_engine(ticket, &p.pipe_name, formats)
-                            .map(|()| Value::Null)
+                        crate::plugin_archive::register_plugin_engine_with_token(
+                            ticket,
+                            &p.pipe_name,
+                            p.auth_token.as_deref(),
+                            formats,
+                        )
+                        .map(|()| Value::Null)
                     })
                 }
                 Err(r) => Dispatch::Reply(r),

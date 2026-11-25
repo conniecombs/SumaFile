@@ -236,6 +236,8 @@ mod job {
     };
     use windows_sys::Win32::System::Threading::{CREATE_NO_WINDOW, CREATE_SUSPENDED};
 
+    // The one Win32 function declared by hand: `windows-sys` does not have
+    // it. Everything else comes from that crate.
     #[link(name = "ntdll")]
     extern "system" {
         fn NtResumeProcess(process_handle: HANDLE) -> i32;

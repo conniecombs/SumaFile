@@ -27,6 +27,12 @@ public sealed class PluginBackendConnection : IAsyncDisposable
     /// <summary>The bare pipe name the backend serves on; the file service connects to it for archive engines.</summary>
     public string PipeName { get; internal set; } = "";
 
+    /// <summary>
+    /// The token this launch of the backend was given and expects in every handshake. The file service is given it
+    /// with the pipe name.
+    /// </summary>
+    public string AuthToken { get; internal set; } = "";
+
     /// <summary>Raised once when the backend dies or disconnects on its own; never for <see cref="DisposeAsync"/>.</summary>
     public event EventHandler<Exception?>? Lost;
 

@@ -327,10 +327,13 @@ stored in `plugin-approvals.json` against the manifest's hash. Plugins listed in
 
 The backend is a separate process. `PluginBackendHost` starts it with
 `--pipe-name SumaFile.Plugin.{session}.{pid}.{pluginId} --data-dir {folder}` in its own job object
-(`JobObject.CreateKillOnCloseOnly`: no breakaway, so the backend's children die with it). The
-backend creates the pipe. The host connects with `PipeOptions.CurrentUserOnly`, checks that the
-pipe's server is the process it started, and sends `plugin.handshake`, allowing 5 s to connect and
-5 s for the reply.
+(`JobObject.CreateKillOnCloseOnly`: no breakaway, so the backend's children die with it). It
+writes a new random 32-byte token, as hex, to the backend's standard input and sets
+`SUMAFILE_PLUGIN_AUTH_STDIN=1`; a backend that reads it answers only a handshake that carries it.
+The backend creates the pipe. The host connects with `PipeOptions.CurrentUserOnly`, checks that the
+pipe's server is the process it started, and sends `plugin.handshake` with the token, allowing 5 s
+to connect and 5 s for the reply. The token goes to the file service with the pipe name when the
+backend's archive formats are registered.
 
 Archive formats take a second route. The host registers a backend's formats with the service
 (`register_archive_engine`). The service then connects to that backend's pipe itself, with up to

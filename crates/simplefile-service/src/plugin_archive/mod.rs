@@ -375,6 +375,17 @@ pub fn register_plugin_engine(
     pipe_name: &str,
     formats: Vec<PluginArchiveFormat>,
 ) -> Result<(), String> {
+    register_plugin_engine_with_token(ticket, pipe_name, None, formats)
+}
+
+/// [`register_plugin_engine`] for a backend the app launched with
+/// `auth_token`: the token goes into every handshake with it.
+pub fn register_plugin_engine_with_token(
+    ticket: RegistrationTicket,
+    pipe_name: &str,
+    auth_token: Option<&str>,
+    formats: Vec<PluginArchiveFormat>,
+) -> Result<(), String> {
     let plugin_id = ticket.plugin_id.as_str();
     if !is_valid_plugin_id(plugin_id) {
         return Err(format!("pluginId must match {PLUGIN_ID_GRAMMAR}"));
@@ -392,7 +403,12 @@ pub fn register_plugin_engine(
         ));
     }
 
-    let connection = PluginConnection::connect(plugin_id, pipe_name)?;
+    let connection = PluginConnection::connect_authenticated(
+        plugin_id,
+        pipe_name,
+        auth_token,
+        PluginTimeouts::default(),
+    )?;
 
     let mut groups: Vec<(String, Vec<EngineFormat>)> = Vec::new();
     for format in formats {

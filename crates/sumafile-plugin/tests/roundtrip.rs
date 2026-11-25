@@ -139,6 +139,27 @@ fn start(multi: bool) -> (String, tokio::task::JoinHandle<Result<(), String>>) {
     (pipe_name, task)
 }
 
+/// A backend the host launched with `token` as its launch token.
+fn start_with_token(
+    multi: bool,
+    token: &str,
+) -> (String, tokio::task::JoinHandle<Result<(), String>>) {
+    let pipe_name = unique_pipe_name();
+    let args = Args {
+        pipe_name: pipe_name.clone(),
+        data_dir: std::env::temp_dir(),
+        rest: Vec::new(),
+    };
+    let task = tokio::spawn(sumafile_plugin::serve_with_token(
+        args,
+        info(),
+        multi,
+        Arc::new(EchoHandler),
+        Some(token.to_string()),
+    ));
+    (pipe_name, task)
+}
+
 async fn connect(pipe_name: &str) -> NamedPipeClient {
     let path = format!(r"\\.\pipe\{pipe_name}");
     for _ in 0..200 {
@@ -191,6 +212,14 @@ async fn handshake(client: &mut NamedPipeClient) -> Value {
         json!({ "pluginId": "com.example.echo", "hostVersion": "1.0.4", "sdkVersion": "1.0.0" }),
     )
     .await
+}
+
+/// A backend that takes several clients waits for its host: when the clients
+/// that came before the host have left, it is still there. The test ends it.
+async fn stop_backend_without_host(task: tokio::task::JoinHandle<Result<(), String>>) {
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(!task.is_finished(), "the backend left before its host came");
+    task.abort();
 }
 
 async fn assert_serve_returns(task: tokio::task::JoinHandle<Result<(), String>>) {
@@ -376,7 +405,7 @@ async fn cancel_flag_is_dropped_when_its_request_finishes() {
 
     drop(service);
     drop(other);
-    assert_serve_returns(task).await;
+    stop_backend_without_host(task).await;
 }
 
 #[tokio::test]
@@ -408,7 +437,7 @@ async fn cancel_that_overtakes_its_request_still_cancels_it() {
 
     drop(first);
     drop(second);
-    assert_serve_returns(task).await;
+    stop_backend_without_host(task).await;
 }
 
 #[tokio::test]
@@ -476,7 +505,7 @@ async fn cancels_for_unknown_or_finished_ids_are_bounded() {
     assert_cancelled_reply(&receive(&mut client).await, id);
 
     drop(client);
-    assert_serve_returns(task).await;
+    stop_backend_without_host(task).await;
 }
 
 /// Answers the host request the backend sent next on `host`, which must be
@@ -668,7 +697,7 @@ async fn archive_progress_is_sent_on_the_service_connection() {
     assert_eq!(reply["result"], json!("finished"));
 
     drop(service);
-    assert_serve_returns(task).await;
+    stop_backend_without_host(task).await;
 }
 
 #[tokio::test]
@@ -714,7 +743,7 @@ async fn host_connection_is_none_without_a_host_client() {
 
     drop(keep_alive);
     drop(service);
-    assert_serve_returns(task).await;
+    stop_backend_without_host(task).await;
 }
 
 async fn service_handshake(client: &mut NamedPipeClient) -> Value {
@@ -730,6 +759,127 @@ async fn service_handshake(client: &mut NamedPipeClient) -> Value {
         }),
     )
     .await
+}
+
+fn handshake_with(token: Option<&str>, service: bool) -> Value {
+    let mut params = json!({
+        "pluginId": "com.example.echo",
+        "hostVersion": "1.0.4",
+        "sdkVersion": "1.0.0"
+    });
+    if let Some(token) = token {
+        params["authToken"] = json!(token);
+    }
+    if service {
+        params["client"] = json!("simplefile-service");
+    }
+    params
+}
+
+/// The host gives a backend its launch token on standard input. Such a
+/// backend answers no handshake that does not carry the token, whether it
+/// comes from the host or from the service.
+#[tokio::test]
+async fn a_backend_launched_with_a_token_takes_only_a_handshake_that_carries_it() {
+    let (pipe_name, task) = start_with_token(true, "launch-secret");
+    let mut host = connect(&pipe_name).await;
+
+    let reply = call(
+        &mut host,
+        1,
+        "plugin.handshake",
+        handshake_with(None, false),
+    )
+    .await;
+    assert_eq!(reply["error"]["code"], json!(-32600), "{reply}");
+    assert_eq!(reply["error"]["message"], json!("authToken is required"));
+
+    let wrong = handshake_with(Some("launch-secreT"), false);
+    let reply = call(&mut host, 2, "plugin.handshake", wrong).await;
+    assert_eq!(reply["error"]["code"], json!(-32600), "{reply}");
+    assert_eq!(reply["error"]["message"], json!("authToken does not match"));
+
+    // A refused handshake leaves the connection where it was.
+    let reply = call(&mut host, 3, "echo", json!({})).await;
+    assert_eq!(reply["error"]["code"], json!(-32600), "{reply}");
+
+    let right = handshake_with(Some("launch-secret"), false);
+    let reply = call(&mut host, 4, "plugin.handshake", right).await;
+    assert_eq!(
+        reply["result"]["pluginId"],
+        json!("com.example.echo"),
+        "{reply}"
+    );
+    let reply = call(&mut host, 5, "echo", json!({ "a": 1 })).await;
+    assert_eq!(reply["result"], json!({ "a": 1 }));
+
+    let mut service = connect(&pipe_name).await;
+    let reply = call(
+        &mut service,
+        1,
+        "plugin.handshake",
+        handshake_with(None, true),
+    )
+    .await;
+    assert_eq!(reply["error"]["message"], json!("authToken is required"));
+    let right = handshake_with(Some("launch-secret"), true);
+    let reply = call(&mut service, 2, "plugin.handshake", right).await;
+    assert_eq!(
+        reply["result"]["pluginId"],
+        json!("com.example.echo"),
+        "{reply}"
+    );
+
+    drop(host);
+    drop(service);
+    assert_serve_returns(task).await;
+}
+
+/// A backend that was given no token (an older host, a test, a script) takes
+/// a handshake with or without one.
+#[tokio::test]
+async fn a_backend_launched_without_a_token_ignores_the_one_a_client_sends() {
+    let (pipe_name, task) = start(false);
+    let mut client = connect(&pipe_name).await;
+
+    let params = handshake_with(Some("whatever"), false);
+    let reply = call(&mut client, 1, "plugin.handshake", params).await;
+    assert_eq!(
+        reply["result"]["pluginId"],
+        json!("com.example.echo"),
+        "{reply}"
+    );
+
+    drop(client);
+    assert_serve_returns(task).await;
+}
+
+/// The service may connect, and leave again, before the host has connected.
+/// The backend used to exit with its last client, and the host then found no
+/// pipe; it now waits for the host it was launched for.
+#[tokio::test]
+async fn a_multi_client_server_waits_for_its_host_when_the_service_leaves_first() {
+    let (pipe_name, task) = start(true);
+    let mut service = connect(&pipe_name).await;
+    service_handshake(&mut service).await;
+    drop(service);
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!task.is_finished(), "the backend left before its host came");
+
+    let mut host = connect(&pipe_name).await;
+    let reply = handshake(&mut host).await;
+    assert_eq!(
+        reply["result"]["pluginId"],
+        json!("com.example.echo"),
+        "{reply}"
+    );
+    let reply = call(&mut host, 2, "echo", json!({ "a": 1 })).await;
+    assert_eq!(reply["result"], json!({ "a": 1 }));
+
+    // Once the host has been there, the last client to leave ends it.
+    drop(host);
+    assert_serve_returns(task).await;
 }
 
 #[tokio::test]
@@ -749,7 +899,7 @@ async fn service_connection_fails_host_calls_fast_and_logs_locally() {
     assert_eq!(reply["result"], json!({ "logged": true }));
 
     drop(client);
-    assert_serve_returns(task).await;
+    stop_backend_without_host(task).await;
 }
 
 #[tokio::test]

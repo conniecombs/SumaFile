@@ -39,20 +39,14 @@ zip = { version = "9", default-features = false, features = ["bzip2", "deflate64
 ureq = "3"
 
 [target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3", features = [
-  "accctrl",
-  "aclapi",
-  "errhandlingapi",
-  "fileapi",
-  "handleapi",
-  "libloaderapi",
-  "minwinbase",
-  "minwindef",
-  "shellapi",
-  "winbase",
-  "winerror",
-  "winnetwk",
-  "winnt",
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_NetworkManagement_WNet",
+  "Win32_Storage_FileSystem",
+  "Win32_System_IO",
+  "Win32_System_LibraryLoader",
+  "Win32_System_WindowsProgramming",
+  "Win32_UI_Shell",
 ] }
 windows = { version = "0.56", features = [
   "Win32_Foundation",

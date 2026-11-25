@@ -13,6 +13,7 @@ internal sealed class ArchiveEngineRegistrar(Func<ISimpleFileIpc?> client) : IAr
     public Task RegisterAsync(
         string pluginId,
         string pipeName,
+        string authToken,
         IReadOnlyList<PluginArchiveFormatSpec> formats,
         CancellationToken ct) =>
         // Shape of RegisterArchiveEngineParams in crates/simplefile-service/src/dispatch/params.rs.
@@ -22,6 +23,7 @@ internal sealed class ArchiveEngineRegistrar(Func<ISimpleFileIpc?> client) : IAr
             {
                 pluginId,
                 pipeName,
+                authToken,
                 formats = formats.Select(format => new
                 {
                     extension = format.Extension,

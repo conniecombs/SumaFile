@@ -62,8 +62,19 @@ fn stage(root: &Path) -> PathBuf {
     folder
 }
 
-/// Launches the staged backend and handshakes as the service.
-async fn launch(folder: &Path, data_dir: &Path) -> (Child, NamedPipeClient) {
+async fn connect(pipe: &str) -> NamedPipeClient {
+    for _ in 0..500 {
+        if let Ok(opened) = ClientOptions::new().open(pipe) {
+            return opened;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("backend pipe never appeared");
+}
+
+/// Launches the staged backend and handshakes as the service. Returns the
+/// pipe as well, for the host's connection.
+async fn launch(folder: &Path, data_dir: &Path) -> (Child, NamedPipeClient, String) {
     let pipe_name = format!(
         "sevenzip-plugin-test-{}-{}",
         std::process::id(),
@@ -81,15 +92,7 @@ async fn launch(folder: &Path, data_dir: &Path) -> (Child, NamedPipeClient) {
         .unwrap();
 
     let path = format!(r"\\.\pipe\{pipe_name}");
-    let mut client = None;
-    for _ in 0..500 {
-        if let Ok(opened) = ClientOptions::new().open(&path) {
-            client = Some(opened);
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    let mut client = client.expect("backend pipe never appeared");
+    let mut client = connect(&path).await;
 
     let reply = call(
         &mut client,
@@ -105,7 +108,7 @@ async fn launch(folder: &Path, data_dir: &Path) -> (Child, NamedPipeClient) {
     .await;
     assert_eq!(reply["result"]["pluginId"], json!("com.sumafile.sevenzip"));
     assert_eq!(reply["result"]["pluginVersion"], json!("1.0.0"));
-    (child, client)
+    (child, client, path)
 }
 
 #[tokio::test]
@@ -118,7 +121,7 @@ async fn backend_process_creates_and_lists_a_7z_through_its_pipe() {
     std::fs::write(source.join("literal [brackets] & spaces.txt"), "abc").unwrap();
     let archive = dir.path().join("pack.7z");
     let data_dir = dir.path().join("data");
-    let (mut child, mut client) = launch(&folder, &data_dir).await;
+    let (mut child, mut client, pipe) = launch(&folder, &data_dir).await;
 
     let reply = call(
         &mut client,
@@ -155,7 +158,30 @@ async fn backend_process_creates_and_lists_a_7z_through_its_pipe() {
         ])
     );
 
+    // The service was the only client and the host never connected: the
+    // backend waits for the host it was started for.
     drop(client);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "the backend left before its host came"
+    );
+
+    // Once the host has been there, the last client to leave ends it.
+    let mut host = connect(&pipe).await;
+    let reply = call(
+        &mut host,
+        1,
+        "plugin.handshake",
+        json!({
+            "pluginId": "com.sumafile.sevenzip",
+            "hostVersion": "1.0.4.0",
+            "sdkVersion": "1.0.0"
+        }),
+    )
+    .await;
+    assert_eq!(reply["result"]["pluginId"], json!("com.sumafile.sevenzip"));
+    drop(host);
     let status = tokio::time::timeout(Duration::from_secs(5), child.wait())
         .await
         .expect("backend did not exit within 5 s of the last disconnect")

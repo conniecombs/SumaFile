@@ -536,6 +536,79 @@ async fn reregistering_with_only_built_in_formats_keeps_the_existing_registratio
     service.stop().await;
 }
 
+/// The app launches a plugin's backend with a token and passes it on when it
+/// registers the plugin's archive engine. The service sends it in its own
+/// handshake: the first one, and the one of a connection it opens later.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_launch_token_given_at_registration_is_sent_in_every_handshake() {
+    let _lock = REGISTRY_LOCK.lock().await;
+    let pipe_name = format!("simplefile-test-plugin-token-{}", nonce());
+    let log = spawn_fake_plugin(&pipe_name);
+    let plugin_id = "com.test.token";
+    let _unregister = Unregister(plugin_id.to_string());
+    let service = Service::start().await;
+
+    let registered = service
+        .call(
+            "register_archive_engine",
+            json!({
+                "pluginId": plugin_id,
+                "pipeName": pipe_name,
+                "authToken": "launch-secret",
+                "formats": hello_format()
+            }),
+        )
+        .await;
+    assert!(registered.get("error").is_none(), "{registered}");
+
+    // The backend drops this connection without answering; the next call
+    // makes the service connect, and handshake, again.
+    let root = temp_dir("token");
+    let dropped = root.join("drop-me.hello");
+    std::fs::write(&dropped, b"x").unwrap();
+    let _ = service
+        .call("list_archive", json!({ "path": dropped.to_string_lossy() }))
+        .await;
+    let archive = root.join("x.hello");
+    std::fs::write(&archive, b"x").unwrap();
+    let listing = service
+        .call("list_archive", json!({ "path": archive.to_string_lossy() }))
+        .await;
+    assert!(listing.get("error").is_none(), "{listing}");
+
+    let calls = log.calls.lock().unwrap().clone();
+    let handshakes: Vec<&Value> = calls
+        .iter()
+        .filter(|(method, _)| method == "plugin.handshake")
+        .map(|(_, params)| params)
+        .collect();
+    assert!(handshakes.len() >= 2, "{handshakes:?}");
+    for handshake in handshakes {
+        assert_eq!(handshake["authToken"], "launch-secret", "{handshake}");
+    }
+
+    service.stop().await;
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// A plugin registered without a token (an app from before launch tokens) is
+/// sent none.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_registration_without_a_token_sends_none() {
+    let _lock = REGISTRY_LOCK.lock().await;
+    let pipe_name = format!("simplefile-test-plugin-notoken-{}", nonce());
+    let log = spawn_fake_plugin(&pipe_name);
+    let task_pipe = pipe_name.clone();
+    tokio::task::spawn_blocking(move || {
+        PluginConnection::connect("com.test.notoken", &task_pipe).expect("connect to fake plugin");
+    })
+    .await
+    .unwrap();
+    let handshake = log.calls.lock().unwrap()[0].clone();
+    assert_eq!(handshake.0, "plugin.handshake");
+    assert!(handshake.1.get("authToken").is_none(), "{}", handshake.1);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn handshake_reply_with_another_plugin_id_is_refused() {
     let _lock = REGISTRY_LOCK.lock().await;

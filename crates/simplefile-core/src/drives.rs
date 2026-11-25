@@ -85,7 +85,7 @@ fn windows_volume_details(wide_path: &[u16]) -> (Option<String>, Option<String>)
     let mut volume_name = [0u16; 260];
     let mut file_system_name = [0u16; 260];
     let has_info = unsafe {
-        winapi::um::fileapi::GetVolumeInformationW(
+        windows_sys::Win32::Storage::FileSystem::GetVolumeInformationW(
             wide_path.as_ptr(),
             volume_name.as_mut_ptr(),
             volume_name.len() as u32,
@@ -110,9 +110,8 @@ fn windows_volume_details(wide_path: &[u16]) -> (Option<String>, Option<String>)
 fn mapped_network_remote_path(drive_path: &str) -> Option<String> {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
-    use winapi::shared::minwindef::DWORD;
-    use winapi::shared::winerror::{ERROR_MORE_DATA, NO_ERROR};
-    use winapi::um::winnetwk::WNetGetConnectionW;
+    use windows_sys::Win32::Foundation::{ERROR_MORE_DATA, NO_ERROR};
+    use windows_sys::Win32::NetworkManagement::WNet::WNetGetConnectionW;
 
     let local_name = drive_path.trim_end_matches(['\\', '/']);
     let wide_local: Vec<u16> = OsStr::new(local_name)
@@ -120,7 +119,7 @@ fn mapped_network_remote_path(drive_path: &str) -> Option<String> {
         .chain(std::iter::once(0))
         .collect();
 
-    let mut len: DWORD = 260;
+    let mut len: u32 = 260;
     let mut remote_name = vec![0u16; len as usize];
     let mut result =
         unsafe { WNetGetConnectionW(wide_local.as_ptr(), remote_name.as_mut_ptr(), &mut len) };
@@ -153,7 +152,7 @@ fn network_remote_display_name(remote_path: &str) -> Option<String> {
 }
 
 fn windows_error_detail(error_code: u32) -> String {
-    use winapi::shared::winerror::{
+    use windows_sys::Win32::Foundation::{
         ERROR_ACCESS_DENIED, ERROR_BAD_NETPATH, ERROR_BAD_NET_NAME, ERROR_NOT_READY,
         ERROR_PATH_NOT_FOUND,
     };
@@ -182,7 +181,7 @@ fn windows_error_detail(error_code: u32) -> String {
 /// Returns Ok(attributes) when reachable, Err(Some(code)) on Windows error,
 /// Err(None) on probe timeout.
 fn probe_network_attributes(wide_path: &[u16]) -> Result<u32, Option<u32>> {
-    use winapi::um::fileapi::{GetFileAttributesW, INVALID_FILE_ATTRIBUTES};
+    use windows_sys::Win32::Storage::FileSystem::{GetFileAttributesW, INVALID_FILE_ATTRIBUTES};
 
     let (tx, rx) = mpsc::channel();
     let wide = wide_path.to_vec();
@@ -324,7 +323,7 @@ fn pending_drive(drive_path: String, mode: DriveListMode) -> Option<PendingDrive
         .chain(std::iter::once(0))
         .collect();
 
-    let dt = unsafe { winapi::um::fileapi::GetDriveTypeW(wide_path.as_ptr()) };
+    let dt = unsafe { windows_sys::Win32::Storage::FileSystem::GetDriveTypeW(wide_path.as_ptr()) };
     if dt <= 1 {
         return None;
     }
@@ -437,7 +436,7 @@ fn drive_info_from_pending(
                 let mut total_bytes: u64 = 0;
                 let mut total_free_bytes: u64 = 0;
 
-                if winapi::um::fileapi::GetDiskFreeSpaceExW(
+                if windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(
                     drive.wide_path.as_ptr(),
                     &mut free_bytes_available as *mut u64 as *mut _,
                     &mut total_bytes as *mut u64 as *mut _,
@@ -533,7 +532,7 @@ mod tests {
 
     #[test]
     fn windows_error_detail_covers_common_network_failures() {
-        use winapi::shared::winerror::{
+        use windows_sys::Win32::Foundation::{
             ERROR_ACCESS_DENIED, ERROR_BAD_NETPATH, ERROR_BAD_NET_NAME, ERROR_NOT_READY,
         };
 

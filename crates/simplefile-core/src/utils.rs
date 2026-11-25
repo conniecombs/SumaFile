@@ -219,8 +219,8 @@ pub fn is_network_path(path: &Path) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
-        use winapi::um::fileapi::GetDriveTypeW;
-        use winapi::um::winbase::DRIVE_REMOTE;
+        use windows_sys::Win32::Storage::FileSystem::GetDriveTypeW;
+        use windows_sys::Win32::System::WindowsProgramming::DRIVE_REMOTE;
 
         let bytes = effective.as_bytes();
         if bytes.len() >= 2 && bytes[1] == b':' {
@@ -251,8 +251,8 @@ pub fn is_local_fixed_volume(path: &Path) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
-        use winapi::um::fileapi::GetDriveTypeW;
-        use winapi::um::winbase::DRIVE_FIXED;
+        use windows_sys::Win32::Storage::FileSystem::GetDriveTypeW;
+        use windows_sys::Win32::System::WindowsProgramming::DRIVE_FIXED;
 
         let raw = path.to_string_lossy();
         let trimmed = raw.trim().trim_start_matches("\\\\?\\");
@@ -290,7 +290,7 @@ fn windows_volume_file_system(wide_root: &[u16]) -> Option<String> {
 
     let mut file_system_name = [0u16; 260];
     let ok = unsafe {
-        winapi::um::fileapi::GetVolumeInformationW(
+        windows_sys::Win32::Storage::FileSystem::GetVolumeInformationW(
             wide_root.as_ptr(),
             null_mut(),
             0,

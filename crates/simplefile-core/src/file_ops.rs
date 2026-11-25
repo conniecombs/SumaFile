@@ -206,17 +206,18 @@ fn clear_readonly_attributes_for_delete(path: &Path) {
 fn delete_with_shell_permanently(path: &Path) -> io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use std::ptr::{null, null_mut};
-    use winapi::um::shellapi::{
+    use windows_sys::Win32::UI::Shell::{
         SHFileOperationW, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FO_DELETE, SHFILEOPSTRUCTW,
     };
 
     let from: Vec<u16> = path.as_os_str().encode_wide().chain([0, 0]).collect();
     let mut operation = SHFILEOPSTRUCTW {
         hwnd: null_mut(),
-        wFunc: FO_DELETE as u32,
+        wFunc: FO_DELETE,
         pFrom: from.as_ptr(),
         pTo: null(),
-        fFlags: FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT,
+        // The flags of this structure are 16 bits wide; these three fit.
+        fFlags: (FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT) as u16,
         fAnyOperationsAborted: 0,
         hNameMappings: null_mut(),
         lpszProgressTitle: null(),

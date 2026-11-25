@@ -24,6 +24,8 @@ struct PoolState {
 struct Pool {
     plugin_id: String,
     pipe_name: String,
+    /// The backend's launch token, sent in the handshake of every connection.
+    auth_token: Option<String>,
     timeouts: PluginTimeouts,
     state: Mutex<PoolState>,
     freed: Condvar,
@@ -46,14 +48,26 @@ impl PluginConnection {
         pipe_name: &str,
         timeouts: PluginTimeouts,
     ) -> Result<Arc<Self>, String> {
+        Self::connect_authenticated(plugin_id, pipe_name, None, timeouts)
+    }
+
+    /// [`Self::connect_with_timeouts`] to a backend that was launched with
+    /// `auth_token` and answers only a handshake that carries it.
+    pub fn connect_authenticated(
+        plugin_id: &str,
+        pipe_name: &str,
+        auth_token: Option<&str>,
+        timeouts: PluginTimeouts,
+    ) -> Result<Arc<Self>, String> {
         if !is_valid_pipe_name(pipe_name) {
             return Err(format!("Invalid plugin pipe name: {pipe_name}"));
         }
-        let first = Connection::open(pipe_name, plugin_id, &timeouts)?;
+        let first = Connection::open(pipe_name, plugin_id, auth_token, &timeouts)?;
         Ok(Arc::new(Self {
             pool: Arc::new(Pool {
                 plugin_id: plugin_id.to_string(),
                 pipe_name: pipe_name.to_string(),
+                auth_token: auth_token.map(str::to_string),
                 timeouts,
                 state: Mutex::new(PoolState {
                     idle: vec![first],
@@ -183,7 +197,13 @@ impl Pool {
 
     /// Open a connection whose slot is already counted in `open`.
     fn open_counted(&self) -> Result<Connection, String> {
-        Connection::open(&self.pipe_name, &self.plugin_id, &self.timeouts).inspect_err(|_| {
+        Connection::open(
+            &self.pipe_name,
+            &self.plugin_id,
+            self.auth_token.as_deref(),
+            &self.timeouts,
+        )
+        .inspect_err(|_| {
             self.lock_state().open -= 1;
             self.freed.notify_one();
         })

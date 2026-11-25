@@ -110,6 +110,38 @@ public class PluginBackendHostTests : IAsyncLifetime
         Assert.Equal(plugin.Folder, launcher.LastWorkingDirectory);
     }
 
+    /// <summary>
+    /// The host makes a token for each launch, gives it to the launcher for the backend's standard input, and sends
+    /// the same token in its handshake. The connection keeps it for the file service.
+    /// </summary>
+    [Fact]
+    public async Task Start_GivesTheBackendALaunchTokenAndSendsItInTheHandshake()
+    {
+        var sent = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var launcher = Launcher(async (s, ct) =>
+        {
+            await s.WaitForConnectionAsync(ct);
+            var request = await s.ReadRequestAsync(ct);
+            var parameters = (System.Text.Json.JsonElement)request.Params!;
+            sent.TrySetResult(
+                parameters.TryGetProperty("authToken", out var token) ? token.GetString() : null);
+            await s.SendResultAsync(
+                request.Id,
+                new { pluginId = PluginId, pluginVersion = "1.2.3", sdkVersion = "1.0.0" },
+                ct);
+            await Task.Delay(Timeout.Infinite, ct);
+        });
+        var host = Host(launcher);
+
+        await using var connection = await host.StartAsync(Plugin(), CancellationToken.None);
+
+        var launchToken = launcher.LastLaunchToken;
+        Assert.NotNull(launchToken);
+        Assert.Matches("^[0-9a-f]{64}$", launchToken);
+        Assert.Equal(launchToken, await sent.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(launchToken, connection.AuthToken);
+    }
+
     [Fact]
     public async Task Start_PointsTmpAndTempAtTheDataFolder()
     {
@@ -433,6 +465,7 @@ internal sealed class FakePluginProcessLauncher : IPluginProcessLauncher, IAsync
     public IReadOnlyList<string>? LastArgs { get; private set; }
     public string? LastWorkingDirectory { get; private set; }
     public IReadOnlyDictionary<string, string>? LastEnvironment { get; private set; }
+    public string? LastLaunchToken { get; private set; }
     public string? PipeName { get; private set; }
     public FakePluginProcess? Process { get; private set; }
 
@@ -443,6 +476,18 @@ internal sealed class FakePluginProcessLauncher : IPluginProcessLauncher, IAsync
 
     /// <summary>How many times <see cref="Launch"/> was called.</summary>
     public int Launches => Volatile.Read(ref _launches);
+
+    public IPluginProcess Launch(
+        string executable,
+        IReadOnlyList<string> args,
+        string workingDirectory,
+        IReadOnlyDictionary<string, string> environment,
+        Action<string> onStderrLine,
+        string? launchToken)
+    {
+        LastLaunchToken = launchToken;
+        return Launch(executable, args, workingDirectory, environment, onStderrLine);
+    }
 
     public IPluginProcess Launch(
         string executable,

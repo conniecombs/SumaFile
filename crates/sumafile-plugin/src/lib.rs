@@ -29,7 +29,7 @@ pub use host::{
     SERVICE_CONNECTION_ERROR,
 };
 #[cfg(windows)]
-pub use server::serve;
+pub use server::{serve, serve_with_token};
 
 /// Named pipes need Windows: off Windows, `serve` fails at once.
 #[cfg(not(windows))]
@@ -41,6 +41,26 @@ pub async fn serve(
 ) -> Result<(), String> {
     Err("SumaFile plugin backends serve a named pipe, which needs Windows".to_string())
 }
+
+/// Named pipes need Windows: off Windows, `serve_with_token` fails at once.
+#[cfg(not(windows))]
+#[doc(hidden)]
+pub async fn serve_with_token(
+    _args: Args,
+    _info: PluginInfo,
+    _accepts_multiple_clients: bool,
+    _handler: std::sync::Arc<dyn PluginHandler>,
+    _launch_token: Option<String>,
+) -> Result<(), String> {
+    Err("SumaFile plugin backends serve a named pipe, which needs Windows".to_string())
+}
+
+/// Environment variable the host sets to `1` when it writes a launch token to
+/// the backend's standard input: one line, read before the pipe is served.
+/// [`serve`] reads it and then answers only a `plugin.handshake` whose
+/// `authToken` is that token. Without the variable there is no token, and
+/// every handshake is answered as before.
+pub const AUTH_STDIN_ENV: &str = "SUMAFILE_PLUGIN_AUTH_STDIN";
 
 /// Version of the plugin SDK protocol this crate speaks.
 pub const SDK_VERSION: &str = "1.0.0";

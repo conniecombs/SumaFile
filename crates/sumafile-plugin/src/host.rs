@@ -52,6 +52,7 @@ struct StateInner {
     in_flight: HashMap<String, InFlight>,
     early: VecDeque<String>,
     host: Option<Weak<Inner>>,
+    host_seen: bool,
 }
 
 struct InFlight {
@@ -138,7 +139,13 @@ impl BackendState {
             return Arc::ptr_eq(&existing, &client.inner);
         }
         state.host = Some(Arc::downgrade(&client.inner));
+        state.host_seen = true;
         true
+    }
+
+    /// Whether the host has handshaken at least once since the backend started.
+    pub(crate) fn host_seen(&self) -> bool {
+        lock(&self.inner).host_seen
     }
 
     fn clear_host(&self, client: &HostClient) {

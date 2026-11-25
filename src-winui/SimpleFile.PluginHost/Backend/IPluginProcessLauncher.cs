@@ -23,16 +23,44 @@ public interface IPluginProcessLauncher
         string workingDirectory,
         IReadOnlyDictionary<string, string> environment,
         Action<string> onStderrLine);
+
+    /// <summary>
+    /// Starts a backend and gives it <paramref name="launchToken"/>: the variable
+    /// <see cref="ProcessLauncher.AuthStdinVariable"/> is set to <c>1</c> in its environment and the token is the
+    /// first line of its standard input. A backend that reads it answers only a <c>plugin.handshake</c> that carries
+    /// the token. With no token, or in a launcher that cannot pass one, the backend starts as it always did and
+    /// answers every handshake.
+    /// </summary>
+    IPluginProcess Launch(
+        string executable,
+        IReadOnlyList<string> args,
+        string workingDirectory,
+        IReadOnlyDictionary<string, string> environment,
+        Action<string> onStderrLine,
+        string? launchToken) =>
+        Launch(executable, args, workingDirectory, environment, onStderrLine);
 }
 
 public sealed class ProcessLauncher : IPluginProcessLauncher
 {
+    /// <summary>Set to <c>1</c> in a backend's environment when its launch token is on its standard input.</summary>
+    public const string AuthStdinVariable = "SUMAFILE_PLUGIN_AUTH_STDIN";
+
     public IPluginProcess Launch(
         string executable,
         IReadOnlyList<string> args,
         string workingDirectory,
         IReadOnlyDictionary<string, string> environment,
-        Action<string> onStderrLine)
+        Action<string> onStderrLine) =>
+        Launch(executable, args, workingDirectory, environment, onStderrLine, launchToken: null);
+
+    public IPluginProcess Launch(
+        string executable,
+        IReadOnlyList<string> args,
+        string workingDirectory,
+        IReadOnlyDictionary<string, string> environment,
+        Action<string> onStderrLine,
+        string? launchToken)
     {
         var start = new ProcessStartInfo
         {
@@ -42,6 +70,13 @@ public sealed class ProcessLauncher : IPluginProcessLauncher
             CreateNoWindow = true,
             RedirectStandardError = true,
         };
+        if (launchToken is not null)
+        {
+            start.RedirectStandardInput = true;
+            // No byte-order mark: the backend reads the line as the token itself.
+            start.StandardInputEncoding = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+        }
+
         foreach (var arg in args)
         {
             start.ArgumentList.Add(arg);
@@ -51,6 +86,16 @@ public sealed class ProcessLauncher : IPluginProcessLauncher
         foreach (var (name, value) in environment)
         {
             start.Environment[name] = value;
+        }
+
+        // Never inherited from SumaFile's own environment: it says what is on this backend's standard input.
+        if (launchToken is not null)
+        {
+            start.Environment[AuthStdinVariable] = "1";
+        }
+        else
+        {
+            start.Environment.Remove(AuthStdinVariable);
         }
 
         // Created first: a backend that cannot be tied to a job must not start.
@@ -78,6 +123,19 @@ public sealed class ProcessLauncher : IPluginProcessLauncher
             }
 
             process.BeginErrorReadLine();
+            if (launchToken is not null)
+            {
+                try
+                {
+                    process.StandardInput.WriteLine(launchToken);
+                    process.StandardInput.Close();
+                }
+                catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException)
+                {
+                    // The backend is already gone; the connect that follows reports it.
+                }
+            }
+
             return new SystemPluginProcess(process, job);
         }
         catch

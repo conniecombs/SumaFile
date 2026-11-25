@@ -7,6 +7,8 @@ pipe with length-prefixed JSON-RPC 2.0.
 The crate owns the transport, so a backend only answers requests:
 
 - the named pipe server (`\\.\pipe\<name>`), framing and the `plugin.handshake`;
+- the launch token: `serve` reads the secret SumaFile writes to the backend's standard input and answers only a
+  handshake that carries it;
 - routing every request to your `PluginHandler`, one task per call, with JSON-RPC error codes from `PluginError`;
 - backend-wide `cancel` flags and `archive.progress` notifications for archive engines;
 - `HostClient`, for `host.*` calls back to SumaFile: settings, progress, log, notify and events.

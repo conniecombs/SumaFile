@@ -27,3 +27,6 @@ simplefile-ipc = { path = "../../../crates/simplefile-ipc" }
 sumafile-plugin = { path = "../../../crates/sumafile-plugin", features = ["test-support"] }
 tempfile = "3"
 tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "time"] }
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_IO"] }

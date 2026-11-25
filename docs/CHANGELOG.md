@@ -76,6 +76,20 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
   versions are still cleaned up, and an earlier version leaves the new
   records alone. See [Recovery](TRANSFER_TUNING.md#recovery).
 
+### Plugins
+
+- A plugin's backend answers only SumaFile. Each time SumaFile starts a
+  backend it gives it a new secret on its standard input, and the backend
+  answers no connection that does not present it. Any program of the same
+  user could open a backend's pipe and send it requests; without the secret
+  it is now refused. The bundled plugins and plugins built with the `sumafile-plugin`
+  crate get this by being rebuilt; a backend that does not read the secret
+  works as before. Plugin authors: see
+  [Launch token](PLUGINS.md#launch-token).
+- A backend that serves the file service as well (an archive plugin) no
+  longer exits when the service connects and leaves before SumaFile itself
+  has connected. It waits for SumaFile.
+
 ### Keyboard shortcuts
 
 - A shortcut on Plus, Minus, Comma, Period, Slash or Backslash is registered

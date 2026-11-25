@@ -316,6 +316,11 @@ pub(super) struct ArchiveEngineFormat {
 pub(super) struct RegisterArchiveEngineParams {
     pub(super) plugin_id: String,
     pub(super) pipe_name: String,
+    /// The token the app launched the plugin's backend with, which the
+    /// backend expects in every handshake. An app from before launch tokens
+    /// sends none.
+    #[serde(default)]
+    pub(super) auth_token: Option<String>,
     pub(super) formats: Vec<ArchiveEngineFormat>,
 }
 

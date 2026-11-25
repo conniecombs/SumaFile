@@ -628,7 +628,9 @@ The host starts `<plugin folder>\<backend.executable>` with the plugin folder as
 - `TMP` and `TEMP` are set to `<data dir>\tmp`, which the host also creates, so the backend's temporary files and those
   of every process it starts stay in the installation folder. The rest of the environment is SumaFile's.
 - Anything the backend writes to stderr goes to `plugins.log`, line by line, tagged with the plugin id. Standard
-  output is not read, and nothing is written to standard input.
+  output is not read.
+- `SUMAFILE_PLUGIN_AUTH_STDIN` is `1`, and the first line of standard input is the backend's **launch token**: 64
+  hexadecimal digits, new for every start. Standard input is closed after it. See [Launch token](#launch-token).
 
 The host puts the backend in a job object with kill-on-close, so the backend and every process it starts end with
 SumaFile, even when SumaFile crashes.
@@ -637,9 +639,11 @@ SumaFile, even when SumaFile crashes.
 
 - The backend starts on the UI half's first `InvokeBackendAsync` (`activateOn: first-call`), or once SumaFile has
   started (`activateOn: startup`, and every plugin with `archiveFormats`).
-- It should exit when its last client disconnects (the crate's `serve` returns then). To stop a plugin the host kills
-  the process and closes its connection; there is no shutdown message, so write files so that a kill at any point
-  leaves them valid.
+- It should exit when its last client disconnects (the crate's `serve` returns then). With
+  `acceptsMultipleClients: true` that holds once the host has connected: the file service may connect, and leave
+  again, before the host does, and a backend that exited then would leave the host without a pipe. The crate waits
+  for the host. To stop a plugin the host kills the process and closes its connection; there is no shutdown message,
+  so write files so that a kill at any point leaves them valid.
 - A backend that exits or drops the connection on its own marks the plugin **Stopped** (Faulted). Its calls fail, its
   progress rows fail with `Plugin backend stopped.`, its archive engines are unregistered, and SumaFile's status center
   offers Restart.
@@ -665,13 +669,30 @@ or `error` is a reply, and one with `method` and no `id` is a notification. The 
 backend's requests to the host must use integer ids too (32-bit), or the host treats them as notifications and never
 answers.
 
+### Launch token
+
+The pipe can be opened by any process of the same user. The launch token lets a backend tell the host and the file
+service, which know it, from any other.
+
+- When `SUMAFILE_PLUGIN_AUTH_STDIN` is `1` in the environment, read one line from standard input before creating the
+  pipe. Without its line ending it is the token: up to 512 printable ASCII characters.
+- Answer a `plugin.handshake` only when its `authToken` is that token. Refuse one without it with `-32600`
+  `authToken is required`, and one with another value with `-32600` `authToken does not match`; the connection stays
+  as it was, and requests on it are still refused until a handshake succeeds. Compare the whole token whatever the
+  first difference.
+- When the variable is not set there is no token: answer every handshake, as a backend started by a host from before
+  launch tokens, by a test or by a script must.
+
+The crate's `serve` does all of this. A backend that ignores the token keeps working: the host and the service send
+`authToken` in every handshake, and a field a backend does not know is ignored.
+
 ### Handshake
 
 `plugin.handshake` is the first request on every connection. Each client sends its own version as `hostVersion`, so
 the value below is only an example. The host sends:
 
 ```json
-{ "jsonrpc": "2.0", "id": 1, "method": "plugin.handshake", "params": { "pluginId": "com.example.tool", "hostVersion": "1.2.0.0", "sdkVersion": "1.0.0" } }
+{ "jsonrpc": "2.0", "id": 1, "method": "plugin.handshake", "params": { "pluginId": "com.example.tool", "hostVersion": "1.2.0.0", "sdkVersion": "1.0.0", "authToken": "<launch token>" } }
 ```
 
 The file service sends the same fields plus `"client": "simplefile-service"`, which tells a backend which connection
@@ -736,7 +757,7 @@ service, as a request (replied `null`) or as a notification, on any of their con
 | Code | Meaning |
 | --- | --- |
 | `-32700` | The frame is not valid JSON (the reply's `id` is `null`). |
-| `-32600` | A request before `plugin.handshake`, or a frame that is not a valid request or reply. |
+| `-32600` | A request before `plugin.handshake`, a `plugin.handshake` without the [launch token](#launch-token), or a frame that is not a valid request or reply. |
 | `-32601` | Method not found: an unknown plugin method from the backend, or an unknown `host.*` method from the host (`Unknown host method '<method>'.`). |
 | `-32602` | Invalid params. The host's messages are listed under [Host methods](#host-methods). |
 | `-32603` | Internal error: a handler that panicked (`plugin handler panicked` from the crate), or a host-side failure answering a `host.*` request. |
@@ -863,7 +884,9 @@ async fn main() {
 - `Args::parse` reads `--pipe-name` and `--data-dir` (both required) and keeps the rest in `Args::rest`.
 - `serve(args, info, accepts_multiple_clients, handler)` serves the pipe, answers `plugin.handshake` and `cancel`
   itself, runs every other request on its own task, and returns when the last client disconnects. Pass `true` for an
-  archive engine. It needs Windows; elsewhere it fails at once, but handlers and their tests build and run anywhere.
+  archive engine; it then waits for the host before the last client's leaving ends it. It reads the
+  [launch token](#launch-token) and checks it in every handshake. It needs Windows; elsewhere it fails at once, but
+  handlers and their tests build and run anywhere.
 - `PluginError::InvalidParams` is `-32602`, `PluginError::Application` is `-32000`, `PluginError::MethodNotFound` is
   `-32601`; a panic is answered with `-32603`.
 - `HostClient` makes the `host.*` calls (`get_settings`, `set_setting`, `progress_begin`, `progress_report`,
@@ -884,14 +907,15 @@ The crate's README (`crates/sumafile-plugin/README.md`) has the dependency lines
 
 Implement [Framing](#framing), [Handshake](#handshake), [Cancellation](#cancellation) and the error codes directly:
 
-1. Parse `--pipe-name` and `--data-dir`; create `\\.\pipe\<name>` as the first instance (and more instances as clients
-   connect, when `acceptsMultipleClients` is `true`).
-2. Read frames in a loop. Answer `plugin.handshake` with `pluginId`, `pluginVersion` and `sdkVersion` `1.0.0`, and
-   answer every other request before it with `-32600`.
+1. Parse `--pipe-name` and `--data-dir`; read the [launch token](#launch-token) when one is announced; create
+   `\\.\pipe\<name>` as the first instance (and more instances as clients connect, when `acceptsMultipleClients` is
+   `true`).
+2. Read frames in a loop. Answer `plugin.handshake` with `pluginId`, `pluginVersion` and `sdkVersion` `1.0.0` when it
+   carries the launch token (or when there is none), and answer every other request before it with `-32600`.
 3. Run each request concurrently and keep reading; reply with the request's `id`.
 4. Keep a backend-wide set of in-flight operation ids and their cancel flags.
 5. Use integer ids for `host.*` requests and match the host's replies by id.
-6. Exit when the last client disconnects.
+6. Exit when the last client disconnects; with several clients, only once the host has connected.
 
 ## Limits and deadlines
 

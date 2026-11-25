@@ -1519,19 +1519,7 @@ fn make_reparse_point_that_is_not_a_link(path: &Path) {
     // (0x2000_0000).
     const TAG: u32 = 0x0000_5346;
 
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn DeviceIoControl(
-            device: *mut std::ffi::c_void,
-            control_code: u32,
-            in_buffer: *const std::ffi::c_void,
-            in_buffer_size: u32,
-            out_buffer: *mut std::ffi::c_void,
-            out_buffer_size: u32,
-            bytes_returned: *mut u32,
-            overlapped: *mut std::ffi::c_void,
-        ) -> i32;
-    }
+    use windows_sys::Win32::System::IO::DeviceIoControl;
 
     let file = fs::OpenOptions::new()
         .write(true)

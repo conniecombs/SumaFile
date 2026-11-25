@@ -107,7 +107,13 @@ current user. An enabled plugin can do anything the user can do.
   place.
 - **Backend pipes.** The host checks that the server of a plugin's pipe is
   the backend process it launched and that it runs as the current user, so
-  another process cannot pose as a plugin's backend. Backends run in a kill-on-close job owned by
+  another process cannot pose as a plugin's backend. In the other direction,
+  SumaFile gives each backend a new secret on its standard input when it
+  starts it, and a backend built with the `sumafile-plugin` crate answers
+  only a connection that presents it: SumaFile itself, and the file service,
+  which SumaFile gives the secret to. This keeps out a program that merely
+  opens the pipe; a program of the same user that can read the backend's
+  memory is not kept out. Backends run in a kill-on-close job owned by
   SumaFile, so they end with SumaFile.
 - **Overrides.** `SUMAFILE_PLUGIN_ROOTS`, `SUMAFILE_PLUGIN_DATA_ROOT`,
   `SUMAFILE_PLUGIN_APPROVALS_PATH` and `SUMAFILE_PLUGIN_LOG_PATH` are test and

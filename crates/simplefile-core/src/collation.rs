@@ -74,8 +74,10 @@ fn fold_key(text: &str) -> Box<[u8]> {
 mod icu {
     use std::ffi::{c_char, c_void, CString};
     use std::sync::OnceLock;
-    use winapi::shared::minwindef::HMODULE;
-    use winapi::um::libloaderapi::{GetProcAddress, LoadLibraryExW, LOAD_LIBRARY_SEARCH_SYSTEM32};
+    use windows_sys::Win32::Foundation::HMODULE;
+    use windows_sys::Win32::System::LibraryLoader::{
+        GetProcAddress, LoadLibraryExW, LOAD_LIBRARY_SEARCH_SYSTEM32,
+    };
 
     /// `UCOL_SECONDARY`: accents distinguish, case does not. .NET maps
     /// `CompareOptions.IgnoreCase` to this strength.
@@ -141,12 +143,7 @@ mod icu {
     /// # Safety
     /// `name` must be NUL-terminated and `module` a loaded module handle.
     unsafe fn symbol(module: HMODULE, name: &[u8]) -> Option<*const c_void> {
-        let address = GetProcAddress(module, name.as_ptr().cast::<c_char>());
-        if address.is_null() {
-            None
-        } else {
-            Some(address as *const c_void)
-        }
+        GetProcAddress(module, name.as_ptr()).map(|address| address as *const c_void)
     }
 
     pub(super) struct IcuCollator {

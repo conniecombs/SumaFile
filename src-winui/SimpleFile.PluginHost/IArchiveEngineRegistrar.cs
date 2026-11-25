@@ -9,7 +9,13 @@ namespace SimpleFile.PluginHost;
 /// </summary>
 public interface IArchiveEngineRegistrar
 {
-    Task RegisterAsync(string pluginId, string pipeName, IReadOnlyList<PluginArchiveFormatSpec> formats, CancellationToken ct);
+    /// <param name="authToken">The token the backend was launched with; the service sends it in its handshake.</param>
+    Task RegisterAsync(
+        string pluginId,
+        string pipeName,
+        string authToken,
+        IReadOnlyList<PluginArchiveFormatSpec> formats,
+        CancellationToken ct);
 
     Task UnregisterAsync(string pluginId, CancellationToken ct);
 }

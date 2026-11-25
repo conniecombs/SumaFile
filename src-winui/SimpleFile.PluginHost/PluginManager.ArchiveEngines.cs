@@ -182,7 +182,12 @@ public sealed partial class PluginManager
                 try
                 {
                     await registrar
-                        .RegisterAsync(record.Id, connection.PipeName, record.Discovered.Manifest!.Contributions.ArchiveFormats, call.Token)
+                        .RegisterAsync(
+                            record.Id,
+                            connection.PipeName,
+                            connection.AuthToken,
+                            record.Discovered.Manifest!.Contributions.ArchiveFormats,
+                            call.Token)
                         .WaitAsync(ArchiveRegisterTimeout, token)
                         .ConfigureAwait(false);
                 }

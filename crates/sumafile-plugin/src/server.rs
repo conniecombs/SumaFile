@@ -30,7 +30,9 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use tokio::sync::mpsc;
 
-use crate::handshake::{handshake_result, is_service_client, HANDSHAKE_METHOD};
+use crate::handshake::{
+    handshake_result, is_service_client, read_launch_token, token_refusal, HANDSHAKE_METHOD,
+};
 use crate::host::BackendState;
 use crate::{Args, HostClient, PluginHandler, PluginInfo};
 
@@ -67,15 +69,40 @@ fn create_pipe_server(
 /// With `accepts_multiple_clients` the pipe allows unlimited instances (the
 /// host and the service may both connect) and a new listening instance is
 /// created after each accept; otherwise a single instance serves one client.
+/// Such a backend ends when its last client leaves once the host has been
+/// connected. The service may come and go before the host connects; the
+/// backend then keeps waiting for the host it was launched for.
+///
+/// When the host announces a launch token ([`crate::AUTH_STDIN_ENV`]), it is
+/// read from standard input before the pipe is created, and a
+/// `plugin.handshake` is answered only when its `authToken` is that token.
 pub async fn serve(
     args: Args,
     info: PluginInfo,
     accepts_multiple_clients: bool,
     handler: Arc<dyn PluginHandler>,
 ) -> Result<(), String> {
+    // Reading a line can wait for the host; it must not hold a runtime thread.
+    let launch_token = tokio::task::spawn_blocking(read_launch_token)
+        .await
+        .map_err(|error| format!("Could not read the launch token: {error}"))??;
+    serve_with_token(args, info, accepts_multiple_clients, handler, launch_token).await
+}
+
+/// [`serve`] with the launch token given by the caller instead of read from
+/// standard input. For tests.
+#[doc(hidden)]
+pub async fn serve_with_token(
+    args: Args,
+    info: PluginInfo,
+    accepts_multiple_clients: bool,
+    handler: Arc<dyn PluginHandler>,
+    launch_token: Option<String>,
+) -> Result<(), String> {
     let path = format!(r"\\.\pipe\{}", args.pipe_name);
     let info = Arc::new(info);
     let state = Arc::new(BackendState::default());
+    let launch_token: Option<Arc<str>> = launch_token.map(Arc::from);
 
     if !accepts_multiple_clients {
         let server = create_pipe_server(&path, true, false)?;
@@ -83,7 +110,7 @@ pub async fn serve(
             .connect()
             .await
             .map_err(|e| format!("Pipe {path} accept failed: {e}"))?;
-        run_connection(server, info, handler, state).await;
+        run_connection(server, info, handler, state, launch_token).await;
         return Ok(());
     }
 
@@ -96,7 +123,10 @@ pub async fn serve(
             biased;
             Some(()) = done_receiver.recv() => {
                 active -= 1;
-                if active == 0 {
+                // The last client to leave ends the backend, but only after
+                // the host has been here: the service, or a client that never
+                // handshook, may come and go before the host connects.
+                if active == 0 && state.host_seen() {
                     return Ok(());
                 }
             }
@@ -112,8 +142,9 @@ pub async fn serve(
                 let info = info.clone();
                 let handler = handler.clone();
                 let state = state.clone();
+                let launch_token = launch_token.clone();
                 tokio::spawn(async move {
-                    run_connection(server, info, handler, state).await;
+                    run_connection(server, info, handler, state, launch_token).await;
                     let _ = done.send(());
                 });
             }
@@ -149,6 +180,8 @@ struct Connection {
     host: HostClient,
     state: Arc<BackendState>,
     handshaken: bool,
+    /// The token the host launched this backend with, if it gave one.
+    launch_token: Option<Arc<str>>,
 }
 
 /// Drops a request's operation id from the in-flight set when the request's
@@ -184,6 +217,7 @@ async fn run_connection(
     info: Arc<PluginInfo>,
     handler: Arc<dyn PluginHandler>,
     state: Arc<BackendState>,
+    launch_token: Option<Arc<str>>,
 ) {
     let (mut reader, mut writer) = tokio::io::split(server);
     let (outbound, mut frames) = mpsc::unbounded_channel::<Vec<u8>>();
@@ -201,6 +235,7 @@ async fn run_connection(
         host: HostClient::pipe(outbound, state.clone()),
         state,
         handshaken: false,
+        launch_token,
     };
     while let Some(incoming) = read_incoming(
         &mut reader,
@@ -277,6 +312,20 @@ impl Connection {
 
     fn request(&mut self, id: Value, method: &str, params: Value) {
         if method == HANDSHAKE_METHOD {
+            // Checked before the handshake changes anything, the host slot
+            // included: a client without the token leaves no trace.
+            if let Some(refusal) = self
+                .launch_token
+                .as_deref()
+                .and_then(|expected| token_refusal(expected, &params))
+            {
+                self.reply(JsonRpcResponse::error(
+                    Some(id),
+                    ERR_INVALID_REQUEST,
+                    refusal,
+                ));
+                return;
+            }
             if is_service_client(&params) {
                 self.handshaken = true;
                 self.host.set_service_mode();
@@ -357,82 +406,33 @@ fn operation_id(params: &Value) -> Option<&str> {
 }
 
 fn apply_creator_only_dacl(server: &NamedPipeServer) -> Result<(), String> {
-    use std::ffi::c_void;
     use std::os::windows::io::AsRawHandle;
-
-    type Handle = *mut c_void;
-
-    const TOKEN_QUERY: u32 = 0x0008;
-    const TOKEN_USER_CLASS: i32 = 1;
-    const SDDL_REVISION_1: u32 = 1;
-    const DACL_SECURITY_INFORMATION: u32 = 0x0000_0004;
-
-    #[repr(C)]
-    struct SidAndAttributes {
-        sid: *mut c_void,
-        attributes: u32,
-    }
-
-    #[repr(C)]
-    struct TokenUser {
-        user: SidAndAttributes,
-    }
-
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn GetCurrentProcess() -> Handle;
-        fn CloseHandle(handle: Handle) -> i32;
-        fn LocalFree(mem: *mut c_void) -> *mut c_void;
-    }
-
-    #[link(name = "advapi32")]
-    extern "system" {
-        fn OpenProcessToken(
-            process_handle: Handle,
-            desired_access: u32,
-            token_handle: *mut Handle,
-        ) -> i32;
-        fn GetTokenInformation(
-            token_handle: Handle,
-            token_information_class: i32,
-            token_information: *mut c_void,
-            token_information_length: u32,
-            return_length: *mut u32,
-        ) -> i32;
-        fn ConvertSidToStringSidW(sid: *mut c_void, string_sid: *mut *mut u16) -> i32;
-        fn ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            string_sd: *const u16,
-            string_sd_revision: u32,
-            security_descriptor: *mut *mut c_void,
-            security_descriptor_size: *mut u32,
-        ) -> i32;
-        fn SetKernelObjectSecurity(
-            handle: Handle,
-            security_information: u32,
-            security_descriptor: *mut c_void,
-        ) -> i32;
-    }
+    use windows_sys::Win32::Foundation::{CloseHandle, LocalFree, HANDLE};
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
+        SDDL_REVISION_1,
+    };
+    use windows_sys::Win32::Security::{
+        GetTokenInformation, SetKernelObjectSecurity, TokenUser, DACL_SECURITY_INFORMATION,
+        PSECURITY_DESCRIPTOR, TOKEN_QUERY, TOKEN_USER,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
     // SAFETY: standard Win32 token query, SDDL conversion, and DACL update on
     // our newly created `NamedPipeServer` handle before any client connects.
     unsafe {
-        let mut token: Handle = std::ptr::null_mut();
+        let mut token: HANDLE = std::ptr::null_mut();
         if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
             return Err("failed to open process token for plugin pipe DACL".to_string());
         }
 
         let mut needed = 0u32;
-        GetTokenInformation(
-            token,
-            TOKEN_USER_CLASS,
-            std::ptr::null_mut(),
-            0,
-            &mut needed,
-        );
-        let mut buffer = vec![0u8; needed.max(1) as usize];
+        GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut needed);
+        // Aligned for TOKEN_USER, which holds a pointer.
+        let mut buffer = vec![0u64; (needed.max(1) as usize).div_ceil(8)];
         if GetTokenInformation(
             token,
-            TOKEN_USER_CLASS,
+            TokenUser,
             buffer.as_mut_ptr().cast(),
             needed,
             &mut needed,
@@ -443,9 +443,9 @@ fn apply_creator_only_dacl(server: &NamedPipeServer) -> Result<(), String> {
         }
         CloseHandle(token);
 
-        let user = &*(buffer.as_ptr() as *const TokenUser);
+        let user = &*(buffer.as_ptr() as *const TOKEN_USER);
         let mut sid_string: *mut u16 = std::ptr::null_mut();
-        if ConvertSidToStringSidW(user.user.sid, &mut sid_string) == 0 {
+        if ConvertSidToStringSidW(user.User.Sid, &mut sid_string) == 0 {
             return Err("failed to convert user SID for plugin pipe DACL".to_string());
         }
         let sid = {
@@ -459,7 +459,7 @@ fn apply_creator_only_dacl(server: &NamedPipeServer) -> Result<(), String> {
 
         let sddl = format!("D:P(A;;GA;;;{sid})");
         let sddl_wide: Vec<u16> = sddl.encode_utf16().chain(std::iter::once(0)).collect();
-        let mut sd: *mut c_void = std::ptr::null_mut();
+        let mut sd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
         if ConvertStringSecurityDescriptorToSecurityDescriptorW(
             sddl_wide.as_ptr(),
             SDDL_REVISION_1,
@@ -471,7 +471,7 @@ fn apply_creator_only_dacl(server: &NamedPipeServer) -> Result<(), String> {
         }
 
         let ok = SetKernelObjectSecurity(
-            server.as_raw_handle() as Handle,
+            server.as_raw_handle() as HANDLE,
             DACL_SECURITY_INFORMATION,
             sd,
         );

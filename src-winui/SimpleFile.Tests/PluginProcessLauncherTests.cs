@@ -52,6 +52,51 @@ public class PluginProcessLauncherTests
         Assert.Contains(lines, l => l.Contains("err"));
     }
 
+    /// <summary>
+    /// A backend launched with a token is told so in its environment and reads the token as the first line of its
+    /// standard input.
+    /// </summary>
+    [Fact]
+    public async Task Launch_WithALaunchToken_AnnouncesItAndWritesItToStandardInput()
+    {
+        var lines = new ConcurrentQueue<string>();
+        var got = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var process = new ProcessLauncher().Launch(
+            Cmd,
+            ["/v:on", "/c", "set /p token= & echo !SUMAFILE_PLUGIN_AUTH_STDIN!:!token! 1>&2"],
+            Environment.SystemDirectory,
+            NoEnvironment,
+            line =>
+            {
+                lines.Enqueue(line);
+                got.TrySetResult();
+            },
+            "0123abcd");
+
+        await got.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Contains(lines, l => l.Trim() == "1:0123abcd");
+    }
+
+    [Fact]
+    public async Task Launch_WithoutALaunchToken_AnnouncesNone()
+    {
+        var lines = new ConcurrentQueue<string>();
+        var got = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var process = new ProcessLauncher().Launch(
+            Cmd,
+            ["/c", "if defined SUMAFILE_PLUGIN_AUTH_STDIN (echo announced 1>&2) else (echo silent 1>&2)"],
+            Environment.SystemDirectory,
+            NoEnvironment,
+            line =>
+            {
+                lines.Enqueue(line);
+                got.TrySetResult();
+            });
+
+        await got.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Contains(lines, l => l.Trim() == "silent");
+    }
+
     [Fact]
     public async Task Dispose_EndsLongRunningProcess()
     {

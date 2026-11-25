@@ -99,6 +99,7 @@ impl Connection {
     pub(super) fn open(
         pipe_name: &str,
         plugin_id: &str,
+        auth_token: Option<&str>,
         timeouts: &PluginTimeouts,
     ) -> Result<Self, String> {
         let pipe = Arc::new(open_pipe(&crate::pipe_path(pipe_name))?);
@@ -123,15 +124,19 @@ impl Connection {
             next_id: 0,
             plugin_id: plugin_id.to_string(),
         };
+        let mut handshake = json!({
+            "pluginId": plugin_id,
+            "hostVersion": simplefile_core::APP_DISPLAY_VERSION,
+            "sdkVersion": PLUGIN_SDK_VERSION,
+            "client": CLIENT_NAME,
+        });
+        if let Some(auth_token) = auth_token {
+            handshake["authToken"] = json!(auth_token);
+        }
         let reply = connection
             .call(
                 PLUGIN_HANDSHAKE_METHOD,
-                json!({
-                    "pluginId": plugin_id,
-                    "hostVersion": simplefile_core::APP_DISPLAY_VERSION,
-                    "sdkVersion": PLUGIN_SDK_VERSION,
-                    "client": CLIENT_NAME,
-                }),
+                handshake,
                 timeouts.for_method(PLUGIN_HANDSHAKE_METHOD),
                 Watch::default(),
             )

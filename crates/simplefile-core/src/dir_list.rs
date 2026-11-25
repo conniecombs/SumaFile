@@ -738,10 +738,10 @@ fn enumerate_directory_windows(
 ) -> Result<(), WindowsEnumError> {
     use std::mem::MaybeUninit;
     use std::os::windows::ffi::OsStrExt;
-    use winapi::um::errhandlingapi::GetLastError;
-    use winapi::um::fileapi::{FindClose, FindFirstFileExW, FindNextFileW};
-    use winapi::um::handleapi::INVALID_HANDLE_VALUE;
-    use winapi::um::minwinbase::{
+    use windows_sys::Win32::Foundation::GetLastError;
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::Storage::FileSystem::{FindClose, FindFirstFileExW, FindNextFileW};
+    use windows_sys::Win32::Storage::FileSystem::{
         FindExInfoBasic, FindExSearchNameMatch, FIND_FIRST_EX_LARGE_FETCH, WIN32_FIND_DATAW,
     };
 
@@ -805,11 +805,13 @@ fn enumerate_directory_windows(
 #[cfg(windows)]
 fn file_entry_from_find_data(
     parent: &Path,
-    data: &winapi::um::minwinbase::WIN32_FIND_DATAW,
+    data: &windows_sys::Win32::Storage::FileSystem::WIN32_FIND_DATAW,
 ) -> Option<FileEntry> {
     use crate::utils::hidden_system_from_attrs;
     use std::os::windows::ffi::OsStringExt;
-    use winapi::um::winnt::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT};
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
+    };
 
     let name_len = data
         .cFileName
@@ -885,7 +887,7 @@ fn file_entry_from_find_data(
 }
 
 #[cfg(windows)]
-fn filetime_to_string(ft: winapi::shared::minwindef::FILETIME) -> String {
+fn filetime_to_string(ft: windows_sys::Win32::Foundation::FILETIME) -> String {
     use std::time::{Duration, UNIX_EPOCH};
 
     let ticks = ((ft.dwHighDateTime as u64) << 32) | (ft.dwLowDateTime as u64);
@@ -1018,8 +1020,8 @@ mod tests {
     #[test]
     fn listing_hides_windows_hidden_attribute() {
         use std::os::windows::ffi::OsStrExt;
-        use winapi::um::fileapi::SetFileAttributesW;
-        use winapi::um::winnt::FILE_ATTRIBUTE_HIDDEN;
+        use windows_sys::Win32::Storage::FileSystem::SetFileAttributesW;
+        use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_HIDDEN;
 
         let dir = unique_temp("win-hidden");
         let hidden_path = dir.join("secret.txt");

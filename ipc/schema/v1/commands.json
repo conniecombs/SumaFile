@@ -181,7 +181,7 @@
       "progressEvent": "operation-progress"
     },
     "register_archive_engine": {
-      "params": { "pluginId": "string", "pipeName": "string", "formats": "ArchiveEngineFormat[]" },
+      "params": { "pluginId": "string", "pipeName": "string", "authToken": "string optional", "formats": "ArchiveEngineFormat[]" },
       "result": "null",
       "notes": "Connects to the plugin backend pipe and handshakes before registering; a failed connection registers nothing."
     },

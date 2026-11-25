@@ -340,9 +340,19 @@ internal sealed class RemoteBackendHarness : IAsyncDisposable
             IReadOnlyList<string> args,
             string workingDirectory,
             IReadOnlyDictionary<string, string> environment,
-            Action<string> onStderrLine)
+            Action<string> onStderrLine) =>
+            Launch(executable, args, workingDirectory, environment, onStderrLine, launchToken: null);
+
+        // The real launcher, token included: the bundled backend is started as the app starts it.
+        public IPluginProcess Launch(
+            string executable,
+            IReadOnlyList<string> args,
+            string workingDirectory,
+            IReadOnlyDictionary<string, string> environment,
+            Action<string> onStderrLine,
+            string? launchToken)
         {
-            var process = _inner.Launch(executable, args, workingDirectory, environment, onStderrLine);
+            var process = _inner.Launch(executable, args, workingDirectory, environment, onStderrLine, launchToken);
             try
             {
                 var own = Process.GetProcessById(process.Id);

@@ -4,11 +4,15 @@
   "framing": "same as v1",
   "sdkVersion": "1.0.0",
   "commandLine": ["--pipe-name <name>", "--data-dir <dir>"],
+  "launchToken": {
+    "variable": "SUMAFILE_PLUGIN_AUTH_STDIN",
+    "notes": "When the variable is 1 in the backend's environment, the first line of its standard input is the launch token: up to 512 printable ASCII characters (the host sends 64 hex digits), read before the pipe is created. Such a backend answers a plugin.handshake only when its authToken is that token, and refuses any other with -32600 (\"authToken is required\", \"authToken does not match\"). Without the variable there is no token and every handshake is answered."
+  },
   "handshake": {
     "method": "plugin.handshake",
-    "params": ["pluginId", "hostVersion", "sdkVersion", "client?"],
+    "params": ["pluginId", "hostVersion", "sdkVersion", "client?", "authToken?"],
     "result": ["pluginId", "pluginVersion", "sdkVersion"],
-    "notes": "The Rust service sends client \"simplefile-service\"; the WinUI host omits client."
+    "notes": "The Rust service sends client \"simplefile-service\"; the WinUI host omits client. Both send the backend's launch token as authToken; a backend that was given none ignores it."
   },
   "hostMethods": [
     "host.get_settings",
@@ -37,7 +41,7 @@
   },
   "deadlines": { "handshake": "5 s", "list": "30 s", "read": "120 s idle", "transfer": "600 s idle", "cancel": "5 s" },
   "errors": {
-    "-32600": "request before plugin.handshake",
+    "-32600": "request before plugin.handshake, or a plugin.handshake without the launch token",
     "-32601": "method not found",
     "-32602": "invalid params",
     "-32603": "handler panicked",

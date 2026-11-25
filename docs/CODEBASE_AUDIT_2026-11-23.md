@@ -52,7 +52,7 @@ Every finding below was verified directly against live source code and cross-che
 - [x] **B5.** [High — C# Clipboard] Clipboard History `"Paste this"` and internal fallback self-wipe
 - [x] **B6.** [High — C# Undo/Redo] Collision-renamed move Undo/Redo corruption and missing `PackIntoFolder`/`UnpackFolder` undo entries
 - [x] **B7.** [High — C# PathRules / Breadcrumbs] UNC share root handling (`\\server\share`) and `recycle-bin:` tab labels
-- [x] **B8.** [High — Plugin SDK Security & Lifecycle] Creator-only pipe DACL, `reject_remote_clients`, 64 KiB pre-handshake cap, and single-host hijack prevention *(note: per-launch stdin token and pre-host multi-client exit hardening remain follow-ups)*
+- [x] **B8.** [High — Plugin SDK Security & Lifecycle] Creator-only pipe DACL, `reject_remote_clients`, 64 KiB pre-handshake cap, single-host hijack prevention, a per-launch token in the handshake, and a multi-client server that waits for its host
 - [x] **B9.** [High — Remote UI] Ref-counted `RemoteManagerViewModel.IsBusy` and concurrent transfer cancellation guard
 - [x] **B10.** [High — Sidebar & Tags] Collapsible indented Folder Tree, toggleable/clearable Label Filter, no `DefaultTags` resurrection, and case-insensitive tag keys
 - [x] **B11.** [High — Rust Path, Drive & Duplicate-Scan Bugs] `\\?\C:\` local vs `\\?\UNC\` network classification, removable/RAM-disk volume details, and hardlink deduplication
@@ -103,8 +103,8 @@ Every finding below was verified directly against live source code and cross-che
 - **Locations:** [server.rs](../crates/sumafile-plugin/src/server.rs), [host.rs](../crates/sumafile-plugin/src/host.rs).
 - **Resolution:** Applied `.reject_remote_clients(true)`, `.write_dac(true)` with a creator-only SID DACL (`apply_creator_only_dacl`), a `64 KiB` pre-handshake frame cap (`PRE_HANDSHAKE_MAX_FRAME_BYTES`), and single-host hijack rejection in `BackendState::set_host` / `Connection::request`.
 - **Follow-up (optional hardening):**
-  - [ ] Add a per-launch stdin session token to `plugin.handshake` (matching `simplefile-service`).
-  - [ ] Keep multi-client plugin servers (`accepts_multiple_clients = true`) alive if an auxiliary service client disconnects before the primary host connects.
+  - [x] Add a per-launch stdin session token to `plugin.handshake` (matching `simplefile-service`). The app writes a new token to the backend's standard input and announces it with `SUMAFILE_PLUGIN_AUTH_STDIN=1`; the helper crate's `serve` reads it and answers only a handshake whose `authToken` matches ([handshake.rs](../crates/sumafile-plugin/src/handshake.rs), [server.rs](../crates/sumafile-plugin/src/server.rs), [IPluginProcessLauncher.cs](../src-winui/SimpleFile.PluginHost/Backend/IPluginProcessLauncher.cs)). The app passes the token to the file service with `register_archive_engine`. A backend that is not given a token answers every handshake as before, so older hosts, tests and scripts keep working.
+  - [x] Keep multi-client plugin servers (`accepts_multiple_clients = true`) alive if an auxiliary service client disconnects before the primary host connects. The server ends with its last client only once the host has handshaken ([server.rs](../crates/sumafile-plugin/src/server.rs)).
 
 ### [x] B9. [High — Remote UI] Non-Refcounted `RemoteManagerViewModel.IsBusy` Cleared by Local Folder Clicks Mid-Transfer, Breaking Transfer Cancellation
 - **Locations:** [RemoteManagerViewModel.cs](../plugins/remote/ui/SumaFile.Remote.Model/RemoteManagerViewModel.cs).
@@ -230,7 +230,7 @@ Every finding below was verified directly against live source code and cross-che
 - [x] Eliminated silent 9,999-collision overwrite fallbacks in [archive/path.rs](../crates/simplefile-core/src/archive/path.rs), [archive/mutate.rs](../crates/simplefile-core/src/archive/mutate.rs), and [recycle_bin.rs](../crates/simplefile-core/src/recycle_bin.rs), and fixed `"CON .txt"` trailing-space validation in [remote/transfer.rs](../plugins/remote/backend/src/transfer.rs).
 - [~] `sumafile-transfer` owns the Windows reserved-name check (used by `simplefile-core` and the Remote backend) and the unique-name rule the archive code uses. The 7-Zip backend keeps its own reserved-name check, having no dependency on the transfer crate, and recursive removal is not unified.
 - [~] Deleted the unused `SessionState` fields (`duplicate_check_cancel`, `disk_cleanup_cancel`). `StderrLogger` is not shared: moving it would add to the published plugin SDK's API. `parse_params<T>`, `metadata.db` resolution and the wire DTOs are unchanged (the DTOs are `A8`).
-- [ ] Standardize C-ABI Win32 syscalls onto `windows-sys = "0.61"` (retiring duplicate `winapi` 0.3 / manual `extern "system"` declarations). Left open: it touches every Windows-only module and needs a Windows build to check.
+- [x] Standardize C-ABI Win32 syscalls onto `windows-sys = "0.61"` (retiring duplicate `winapi` 0.3 / manual `extern "system"` declarations). `simplefile-core` calls `windows-sys` where it called `winapi`, and the declarations that were written by hand come from it too: the plugin pipe's access list in [server.rs](../crates/sumafile-plugin/src/server.rs) and `DeviceIoControl` in two test helpers. Two things stay. `NtResumeProcess` in the Git backend is still declared by hand, because `windows-sys` does not have it. `winapi` is still in `Cargo.lock`, because the `unrar` crate depends on it. `simplefile-core` keeps the `windows` crate for its COM calls.
 
 ---
 

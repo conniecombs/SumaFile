@@ -5,6 +5,9 @@ const repoRoot = resolve(import.meta.dirname, '..');
 
 const ignoredDirectories = new Set([
   '.git',
+  // Tooling state, not part of the product. It may hold whole checkouts of
+  // this repository (.claude/worktrees), this script included.
+  '.claude',
   'node_modules',
   'target',
   'dist',

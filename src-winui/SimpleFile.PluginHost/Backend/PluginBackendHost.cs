@@ -79,6 +79,11 @@ public sealed class PluginBackendHost
             ["TEMP"] = tempDir,
         };
 
+        // A new secret for every launch. The backend reads it from its standard input and answers no handshake
+        // without it, so another process of the same user that reaches the pipe cannot speak to the backend.
+        var launchToken = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32))
+            .ToLowerInvariant();
+
         IPluginProcess process;
         try
         {
@@ -87,7 +92,8 @@ public sealed class PluginBackendHost
                 args,
                 plugin.Folder,
                 environment,
-                line => _log(plugin.Id, line));
+                line => _log(plugin.Id, line),
+                launchToken);
         }
         catch (Exception ex)
         {
@@ -121,7 +127,11 @@ public sealed class PluginBackendHost
 
             // Built before the handshake so host.* handlers registered by `configure` are in place
             // before the backend can send its first request.
-            var connection = new PluginBackendConnection(client, process) { PipeName = pipeName };
+            var connection = new PluginBackendConnection(client, process)
+            {
+                PipeName = pipeName,
+                AuthToken = launchToken,
+            };
             configure?.Invoke(connection);
 
             PluginHandshakeResult handshake;
@@ -137,6 +147,7 @@ public sealed class PluginBackendHost
                             pluginId = plugin.Id,
                             hostVersion = typeof(PluginBackendHost).Assembly.GetName().Version?.ToString() ?? "0.0.0",
                             sdkVersion = SimpleFile.PluginSdk.PluginSdk.Version,
+                            authToken = launchToken,
                         },
                         handshakeCts.Token).ConfigureAwait(false);
                 }
