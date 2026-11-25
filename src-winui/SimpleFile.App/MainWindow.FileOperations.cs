@@ -305,6 +305,11 @@ public sealed partial class MainWindow
         _transfer?.ClearCompleted();
     }
 
+    private void OnTransferRemoveRequested(TransferOperationViewModel operation)
+    {
+        _transfer?.Remove(operation);
+    }
+
     private void OnTransferWindowCloseRequested()
     {
         CloseTransferProgressWindow();
@@ -323,6 +328,7 @@ public sealed partial class MainWindow
         var window = new TransferProgressWindow();
         window.CancelRequested += OnFileProgressCancelRequested;
         window.ClearCompletedRequested += OnTransferClearCompletedRequested;
+        window.RemoveRequested += OnTransferRemoveRequested;
         window.CloseRequested += OnTransferWindowCloseRequested;
         window.Closed += OnTransferProgressWindowClosed;
         _transferProgressWindow = window;
@@ -334,6 +340,7 @@ public sealed partial class MainWindow
         if (sender is TransferProgressWindow window)
         {
             window.CancelRequested -= OnFileProgressCancelRequested;
+            window.RemoveRequested -= OnTransferRemoveRequested;
             window.ClearCompletedRequested -= OnTransferClearCompletedRequested;
             window.CloseRequested -= OnTransferWindowCloseRequested;
             window.Closed -= OnTransferProgressWindowClosed;

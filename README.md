@@ -254,7 +254,9 @@ Inspection tools include:
   actions
 - Pin preview open, or let unpinned preview collapse when empty or panes are
   cramped; automatic collapsing can be disabled in Settings -> Behavior
-- Quick Look for focused inspection
+- Quick Look for focused inspection: step through the files with Left and
+  Right, zoom an image with + and -, and switch a Markdown file between its
+  source and its rendered view
 - Properties dialog grouped into General, Attributes, and the file's metadata,
   with values you can select and copy
 - A folder's Properties counts its files, folders and total size through every

@@ -166,6 +166,13 @@ run folder by hand.
   the keyboard works (Down, Tab, Enter, Esc); F2 renames in place in the List
   and Tiles views with the box over the name; and a Details column moves from
   its header's menu without passing Name (the `typing-and-columns` scenario).
+- Quick Look shows the item's place beside its name, has the Source | Rendered
+  switch for a Markdown file and none for plain text, steps with Right, zooms
+  a picture with + and - and fits it again with 0, and closes on Space (the
+  `quick-look` scenario).
+- The conflict dialog's cards show a thumbnail for a picture and none for a
+  text file, and "Make the sidebar wider" and "narrower" move the sidebar by
+  one step.
 - Advanced Rename renders its Before/After columns aligned with their headers,
   disables Rename while the new names conflict, and preserves extensions. The
   run captures `workspace-polish.png`, `conflict-polish.png`, and

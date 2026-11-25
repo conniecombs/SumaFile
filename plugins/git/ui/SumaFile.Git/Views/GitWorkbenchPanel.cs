@@ -4,6 +4,8 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Documents;
 using SumaFile.Git.Model;
 
 namespace SumaFile.Git.Views;
@@ -73,9 +75,23 @@ internal sealed class GitWorkbenchPanel
                     <ColumnDefinition x:Name="DividerColumn" Width="8" />
                     <ColumnDefinition x:Name="DiffColumn" Width="420" MinWidth="260" MaxWidth="960" />
                 </Grid.ColumnDefinitions>
-                <Grid>
+                <Grid RowSpacing="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
                     <ListView x:Name="ChangesList" SelectionMode="Extended" AutomationProperties.Name="Git changes" />
                     <TextBlock x:Name="EmptyText" Margin="8" VerticalAlignment="Top" FontSize="12" Foreground="{ThemeResource SfTextMutedBrush}" Text="No changed files" />
+                    <Grid Grid.Row="1" ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="CommitMessageBox" MaxHeight="96" AcceptsReturn="True" FontSize="12" PlaceholderText="Commit message (Ctrl+Enter commits)" Style="{ThemeResource SfTextBoxStyle}" TextWrapping="Wrap" ScrollViewer.VerticalScrollBarVisibility="Auto" AutomationProperties.Name="Commit message" />
+                        <Button x:Name="CommitHereButton" Grid.Column="1" VerticalAlignment="Bottom" Style="{ThemeResource SfGhostButtonStyle}" AutomationProperties.Name="Commit staged changes with this message" ToolTipService.ToolTip="Commit staged changes with this message">
+                            <TextBlock FontSize="12" Text="Commit" />
+                        </Button>
+                    </Grid>
                 </Grid>
                 <Border Grid.Column="2" Padding="10" Background="{ThemeResource SfBgPrimaryBrush}" BorderBrush="{ThemeResource SfBorderBrush}" BorderThickness="1" CornerRadius="6">
                     <Grid RowSpacing="8">
@@ -84,7 +100,9 @@ internal sealed class GitWorkbenchPanel
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
                         <TextBlock x:Name="DiffTitleText" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource SfTextPrimaryBrush}" TextTrimming="CharacterEllipsis" />
-                        <TextBox x:Name="DiffTextBox" Grid.Row="1" AcceptsReturn="True" BorderThickness="0" FontFamily="Consolas" FontSize="12" IsReadOnly="True" ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Auto" TextWrapping="NoWrap" AutomationProperties.Name="Git diff" />
+                        <ScrollViewer x:Name="DiffScroller" Grid.Row="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" IsTabStop="True" AutomationProperties.Name="Git diff">
+                            <RichTextBlock x:Name="DiffTextBlock" FontFamily="Consolas" FontSize="12" Foreground="{ThemeResource SfTextPrimaryBrush}" IsTextSelectionEnabled="True" TextWrapping="NoWrap" AutomationProperties.Name="Git diff text" />
+                        </ScrollViewer>
                     </Grid>
                 </Border>
             </Grid>
@@ -126,7 +144,9 @@ internal sealed class GitWorkbenchPanel
     private readonly ListView _changes;
     private readonly TextBlock _emptyText;
     private readonly TextBlock _diffTitle;
-    private readonly TextBox _diffText;
+    private readonly RichTextBlock _diffText;
+    private readonly TextBox _commitBox;
+    private readonly Button _commitHere;
     private bool _attached;
     private bool _syncingList;
 
@@ -154,7 +174,9 @@ internal sealed class GitWorkbenchPanel
         _changes = Xaml.Find<ListView>(Root, "ChangesList", GitAutomationIds.Changes);
         _emptyText = Xaml.Find<TextBlock>(Root, "EmptyText");
         _diffTitle = Xaml.Find<TextBlock>(Root, "DiffTitleText", GitAutomationIds.DiffTitle);
-        _diffText = Xaml.Find<TextBox>(Root, "DiffTextBox", GitAutomationIds.DiffText);
+        _diffText = Xaml.Find<RichTextBlock>(Root, "DiffTextBlock", GitAutomationIds.DiffText);
+        _commitBox = Xaml.Find<TextBox>(Root, "CommitMessageBox", GitAutomationIds.CommitBox);
+        _commitHere = Xaml.Find<Button>(Root, "CommitHereButton", GitAutomationIds.CommitHere);
 
         var content = Xaml.Find<Grid>(Root, "ContentGrid");
         var splitter = new GitDiffSplitter(
@@ -173,6 +195,22 @@ internal sealed class GitWorkbenchPanel
         _pull.Click += (_, _) => RunCommand(GitCommandIds.Pull);
         _push.Click += (_, _) => RunCommand(GitCommandIds.Push);
         _commit.Click += (_, _) => RunCommand(GitCommandIds.Commit);
+        // The same command: with a message in the box it commits at once, and with none it asks in its dialog.
+        _commitHere.Click += (_, _) => RunCommand(GitCommandIds.Commit);
+        _commitBox.TextChanged += (_, _) => _model.CommitMessage = _commitBox.Text;
+        _commitBox.KeyDown += (_, e) =>
+        {
+            if (e.Key == Windows.System.VirtualKey.Enter
+                && Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control)
+                    .HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down)
+                && _model.CanCommit)
+            {
+                e.Handled = true;
+                RunCommand(GitCommandIds.Commit);
+            }
+        };
+        // The diff's colours are brushes of the theme they were made in.
+        Root.ActualThemeChanged += (_, _) => ShowDiff();
         _stage.Click += (_, _) => RunCommand(GitCommandIds.StageSelected);
         _unstage.Click += (_, _) => RunCommand(GitCommandIds.UnstageSelected);
         _diff.Click += (_, _) => RunCommand(GitCommandIds.DiffSelected);
@@ -239,12 +277,22 @@ internal sealed class GitWorkbenchPanel
             if (Is(nameof(GitWorkbenchViewModel.BranchText))) _branchText.Text = _model.BranchText;
             if (Is(nameof(GitWorkbenchViewModel.SummaryText))) _summaryText.Text = _model.SummaryText;
             if (Is(nameof(GitWorkbenchViewModel.DiffTitle))) _diffTitle.Text = _model.DiffTitle;
-            if (Is(nameof(GitWorkbenchViewModel.DiffText))) _diffText.Text = _model.DiffText;
+            if (Is(nameof(GitWorkbenchViewModel.DiffText))) ShowDiff();
+            if (Is(nameof(GitWorkbenchViewModel.CommitMessage)) && !string.Equals(_commitBox.Text, _model.CommitMessage, StringComparison.Ordinal))
+            {
+                _commitBox.Text = _model.CommitMessage;
+            }
+
             if (Is(nameof(GitWorkbenchViewModel.CanRefresh))) _refresh.IsEnabled = _model.CanRefresh;
             if (Is(nameof(GitWorkbenchViewModel.CanFetch))) _fetch.IsEnabled = _model.CanFetch;
             if (Is(nameof(GitWorkbenchViewModel.CanPull))) _pull.IsEnabled = _model.CanPull;
             if (Is(nameof(GitWorkbenchViewModel.CanPush))) _push.IsEnabled = _model.CanPush;
-            if (Is(nameof(GitWorkbenchViewModel.CanCommit))) _commit.IsEnabled = _model.CanCommit;
+            if (Is(nameof(GitWorkbenchViewModel.CanCommit)))
+            {
+                _commit.IsEnabled = _model.CanCommit;
+                _commitHere.IsEnabled = _model.CanCommit;
+            }
+
             if (Is(nameof(GitWorkbenchViewModel.CanStage))) _stage.IsEnabled = _model.CanStage;
             if (Is(nameof(GitWorkbenchViewModel.CanUnstage))) _unstage.IsEnabled = _model.CanUnstage;
             if (Is(nameof(GitWorkbenchViewModel.CanDiscard))) _discard.IsEnabled = _model.CanDiscard;
@@ -259,6 +307,52 @@ internal sealed class GitWorkbenchPanel
             // An element the host already tore down; the next presentation starts from the view model again.
         }
     }
+
+    /// <summary>
+    /// Shows the diff with its lines coloured by what they are: added, removed, a hunk's range, a file's header.
+    /// A very long diff is shown as plain text, in one piece.
+    /// </summary>
+    private void ShowDiff()
+    {
+        var text = _model.DiffText;
+        var lines = GitDiffLines.Parse(text);
+        var paragraph = new Paragraph();
+        if (lines.Count > GitDiffLines.MaxColoredLines)
+        {
+            paragraph.Inlines.Add(new Run { Text = text });
+        }
+        else
+        {
+            for (var index = 0; index < lines.Count; index++)
+            {
+                if (index > 0)
+                {
+                    paragraph.Inlines.Add(new LineBreak());
+                }
+
+                var run = new Run { Text = lines[index].Text };
+                if (DiffBrush(lines[index].Kind) is { } brush)
+                {
+                    run.Foreground = brush;
+                }
+
+                paragraph.Inlines.Add(run);
+            }
+        }
+
+        _diffText.Blocks.Clear();
+        _diffText.Blocks.Add(paragraph);
+    }
+
+    /// <summary>A line kind's colour, from the host's theme; null leaves the text's own colour.</summary>
+    private static Brush? DiffBrush(GitDiffLineKind kind) => kind switch
+    {
+        GitDiffLineKind.Added => Xaml.Brush("SfDecorationAddedBrush", "SystemFillColorSuccessBrush"),
+        GitDiffLineKind.Removed => Xaml.Brush("SfDecorationDeletedBrush", "SystemFillColorCriticalBrush"),
+        GitDiffLineKind.Hunk => Xaml.Brush("SfAccentBrush"),
+        GitDiffLineKind.Header => Xaml.Brush("SfTextMutedBrush"),
+        _ => null,
+    };
 
     private void ShowChanges()
     {

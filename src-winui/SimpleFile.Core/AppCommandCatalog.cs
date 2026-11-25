@@ -55,6 +55,16 @@ public static class AppCommandCatalog
         new("preview", "Show or hide preview pane", "View"),
         new("toggle-hidden", "Show or hide hidden files", "View", "Ctrl+H"),
         new("toggle-side-menu", "Show or hide sidebar", "View"),
+        // The dividers' resize, for the keyboard: no default keys, so they are run from the command palette or
+        // given keys in Settings.
+        new("sidebar-wider", "Make the sidebar wider", "View"),
+        new("sidebar-narrower", "Make the sidebar narrower", "View"),
+        new("preview-wider", "Make the preview pane wider", "View"),
+        new("preview-narrower", "Make the preview pane narrower", "View"),
+        new("pane-divider-left", "Move the pane divider left", "View"),
+        new("pane-divider-right", "Move the pane divider right", "View"),
+        new("panel-larger", "Make the docked panel larger", "View"),
+        new("panel-smaller", "Make the docked panel smaller", "View"),
         new("dual-pane", "Open or close second pane", "View", "F6"),
         new("switch-pane", "Switch pane", "View", "Tab"),
         new("close-left-pane", "Close left pane", "View"),

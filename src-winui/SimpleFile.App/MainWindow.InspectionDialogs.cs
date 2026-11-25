@@ -44,8 +44,11 @@ public sealed partial class MainWindow
     private const int QuickLookTextBudget = 2_000_000;
 
     /// <summary>
-    /// Quick Look is a lightbox: wide, the file name as the only header, Left / Right step to the
-    /// adjacent item in the active pane, Space or Escape close. Folders open Properties instead.
+    /// Quick Look is a lightbox: wide, the file name as the header with the item's place among the
+    /// pane's rows beside it, Left / Right step to the adjacent item in the active pane, Space or
+    /// Escape close. An image zooms with + and - (0 fits it again) or Ctrl+wheel; a text file that
+    /// can be rendered (Markdown, HTML...) switches between its source and the rendered view.
+    /// Folders open Properties instead.
     /// </summary>
     private async Task ShowQuickLookAsync()
     {
@@ -77,7 +80,7 @@ public sealed partial class MainWindow
                 Content.XamlRoot,
                 "Quick Look",
                 $"Loading {row.Name}…",
-                (_, token) => LoadQuickLookBodyAsync(row, fileOps, width, previewHeight, token),
+                (_, token) => LoadQuickLookBodyAsync(row, fileOps, workspace, width, previewHeight, token),
                 utilityCts.Token);
             if (!ReferenceEquals(_workspace, workspace) || utilityCts.IsCancellationRequested)
             {
@@ -97,15 +100,28 @@ public sealed partial class MainWindow
             FinishUtilityOperation(utilityCts);
         }
 
+        string PositionOf(FileRow item)
+        {
+            var rows = pane == PaneId.Secondary ? SecondaryFiles : PrimaryFiles;
+            var index = rows.IndexOf(item);
+            if (index < 0)
+            {
+                index = rows.ToList().FindIndex(candidate => PathRules.PathsEqual(candidate.Path, item.Path));
+            }
+
+            return QuickLookText.Position(index, rows.Count);
+        }
+
         var dialog = new ContentDialog
         {
-            Title = row.Name,
+            Title = QuickLookTitle(row.Name, PositionOf(row)),
             Content = host,
             CloseButtonText = "Close",
             DefaultButton = ContentDialogButton.Close,
             XamlRoot = Content.XamlRoot,
             KeyboardAcceleratorPlacementMode = KeyboardAcceleratorPlacementMode.Hidden,
         };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(dialog, row.Name);
         dialog.Resources["ContentDialogMaxWidth"] = width + 64;
         dialog.Resources["ContentDialogMaxHeight"] = previewHeight + 200;
 
@@ -128,7 +144,8 @@ public sealed partial class MainWindow
 
             current = rows[nextIndex];
             SelectRow(pane, current.Path);
-            dialog.Title = current.Name;
+            dialog.Title = QuickLookTitle(current.Name, QuickLookText.Position(nextIndex, rows.Count));
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(dialog, current.Name);
             navigationCts?.Cancel();
             var cts = new CancellationTokenSource();
             navigationCts = cts;
@@ -145,7 +162,7 @@ public sealed partial class MainWindow
             });
             try
             {
-                var (body, bodyCleanup) = await LoadQuickLookBodyAsync(current, fileOps, width, previewHeight, cts.Token);
+                var (body, bodyCleanup) = await LoadQuickLookBodyAsync(current, fileOps, workspace, width, previewHeight, cts.Token);
                 if (cts.IsCancellationRequested || !ReferenceEquals(navigationCts, cts))
                 {
                     bodyCleanup?.Invoke();
@@ -172,8 +189,45 @@ public sealed partial class MainWindow
             dialog.KeyboardAccelerators.Add(accelerator);
         }
 
-        AddAccelerator(VirtualKey.Left, () => _ = StepAsync(-1));
-        AddAccelerator(VirtualKey.Right, () => _ = StepAsync(1));
+        // The image being shown, when the item is one: its body carries the view that zooms.
+        bool Zoom(int delta)
+        {
+            if ((host.Children.FirstOrDefault() as FrameworkElement)?.Tag is not ScrollViewer image)
+            {
+                return false;
+            }
+
+            image.ChangeView(null, null, (float)QuickLookZoom.Step(image.ZoomFactor, delta));
+            return true;
+        }
+
+        // The lightbox's own keys are taken before whatever has the focus inside it: the text of a file would
+        // otherwise use Left and Right for its caret, and stepping would work for some files and not for others.
+        dialog.PreviewKeyDown += (_, e) =>
+        {
+            if (IsKeyDown(VirtualKey.Control) || IsKeyDown(VirtualKey.Menu))
+            {
+                return;
+            }
+
+            e.Handled = e.Key switch
+            {
+                VirtualKey.Left => Step(-1),
+                VirtualKey.Right => Step(1),
+                // Plus and minus on the main keys (187, 189) and on the number pad; 0 fits the image again.
+                VirtualKey.Add or (VirtualKey)187 => Zoom(1),
+                VirtualKey.Subtract or (VirtualKey)189 => Zoom(-1),
+                VirtualKey.Number0 or VirtualKey.NumberPad0 => Zoom(0),
+                _ => false,
+            };
+        };
+
+        bool Step(int delta)
+        {
+            _ = StepAsync(delta);
+            return true;
+        }
+
         AddAccelerator(VirtualKey.Space, dialog.Hide);
         dialog.Closed += (_, _) =>
         {
@@ -184,10 +238,32 @@ public sealed partial class MainWindow
         await DialogHost.ShowAsync(dialog);
     }
 
+    /// <summary>The lightbox's header: the name, and beside it, smaller, the item's place among the pane's rows.</summary>
+    private static Grid QuickLookTitle(string name, string position)
+    {
+        var title = new Grid { ColumnSpacing = 12 };
+        title.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        title.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        title.Children.Add(new TextBlock { Text = name, TextTrimming = TextTrimming.CharacterEllipsis });
+        var place = new TextBlock
+        {
+            Text = position,
+            FontSize = 12,
+            FontWeight = Microsoft.UI.Text.FontWeights.Normal,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SfTextMutedBrush"],
+        };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(place, "QuickLook.Position");
+        Grid.SetColumn(place, 1);
+        title.Children.Add(place);
+        return title;
+    }
+
     /// <summary>The Quick Look body for one item: the preview only, no metadata card.</summary>
     private async Task<(UIElement Body, Action? Cleanup)> LoadQuickLookBodyAsync(
         FileRow row,
         FileOperationService? fileOps,
+        ExplorerWorkspace? workspace,
         double width,
         double previewHeight,
         CancellationToken cancellationToken)
@@ -206,7 +282,7 @@ public sealed partial class MainWindow
             cancellationToken.ThrowIfCancellationRequested();
             if (preview.FileType == "text" && preview.Content is not null)
             {
-                body.Children.Add(new TextBox
+                var source = new TextBox
                 {
                     Text = preview.Content,
                     IsReadOnly = true,
@@ -215,10 +291,22 @@ public sealed partial class MainWindow
                     FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
                     FontSize = 12,
                     Height = previewHeight,
-                });
+                };
+                if (PreviewCapabilities.CanRenderAsHtml(row.Path, preview))
+                {
+                    cleanup = AddQuickLookRenderSwitch(
+                        body,
+                        source,
+                        row.Path,
+                        preview,
+                        previewHeight,
+                        rendered: workspace?.Settings.PreviewRenderHtml == true);
+                }
+
+                body.Children.Add(source);
             }
             else if (preview.FileType == "image"
-                && await TryAddQuickLookImageAsync(body, row, preview, fileOps, previewHeight, cancellationToken))
+                && await TryAddQuickLookImageAsync(body, row, preview, fileOps, width, previewHeight, cancellationToken))
             {
                 // The image is in the body.
             }
@@ -248,11 +336,57 @@ public sealed partial class MainWindow
         return (body, cleanup);
     }
 
+    /// <summary>
+    /// Puts a Source | Rendered switch above a text file that can be rendered, as the preview pane has. It opens in
+    /// the mode the pane is set to; the switch here changes this Quick Look only. The rendered view is made when it
+    /// is first asked for, and the returned action closes it.
+    /// </summary>
+    private static Action AddQuickLookRenderSwitch(
+        StackPanel body,
+        TextBox source,
+        string path,
+        FilePreview preview,
+        double previewHeight,
+        bool rendered)
+    {
+        var selector = new SelectorBar { HorizontalAlignment = HorizontalAlignment.Left };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(selector, "QuickLook.RenderMode");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(selector, "Preview mode");
+        var sourceItem = new SelectorBarItem { Text = "Source" };
+        var renderedItem = new SelectorBarItem { Text = "Rendered" };
+        selector.Items.Add(sourceItem);
+        selector.Items.Add(renderedItem);
+        var renderedHost = new Grid { Height = previewHeight, Visibility = Visibility.Collapsed };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(renderedHost, "QuickLook.Rendered");
+        Action? closeView = null;
+
+        void Show(bool showRendered)
+        {
+            if (showRendered && renderedHost.Children.Count == 0)
+            {
+                renderedHost.Children.Add(PreviewPresenter.CreateQuickLookHtmlView(
+                    PreviewHtmlRenderer.RenderDocument(path, preview), previewHeight, out var close));
+                closeView = close;
+            }
+
+            renderedHost.Visibility = showRendered ? Visibility.Visible : Visibility.Collapsed;
+            source.Visibility = showRendered ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        selector.SelectedItem = rendered ? renderedItem : sourceItem;
+        selector.SelectionChanged += (_, _) => Show(ReferenceEquals(selector.SelectedItem, renderedItem));
+        body.Children.Add(selector);
+        body.Children.Add(renderedHost);
+        Show(rendered);
+        return () => closeView?.Invoke();
+    }
+
     private static async Task<bool> TryAddQuickLookImageAsync(
         StackPanel body,
         FileRow row,
         FilePreview preview,
         FileOperationService fileOps,
+        double maxWidth,
         double maxHeight,
         CancellationToken cancellationToken)
     {
@@ -274,13 +408,36 @@ public sealed partial class MainWindow
         try
         {
             var source = await PreviewImageSourceFactory.FromBytesAsync(imageData, row.Path);
-            body.Children.Add(new Image
+            // The image opens fitted to the lightbox; the view around it zooms, up to eight times, and scrolls.
+            var view = new ScrollViewer
             {
-                Source = source,
-                MaxHeight = maxHeight,
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                Stretch = Stretch.Uniform,
+                Height = maxHeight,
+                ZoomMode = ZoomMode.Enabled,
+                MinZoomFactor = (float)QuickLookZoom.Fit,
+                MaxZoomFactor = (float)QuickLookZoom.Max,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalContentAlignment = HorizontalAlignment.Center,
+                VerticalContentAlignment = VerticalAlignment.Center,
+                Content = new Image
+                {
+                    Source = source,
+                    MaxWidth = Math.Max(1, maxWidth - 24),
+                    MaxHeight = Math.Max(1, maxHeight - 24),
+                    Stretch = Stretch.Uniform,
+                },
+            };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(view, "QuickLook.Image");
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(view, row.Name);
+            body.Children.Add(view);
+            body.Children.Add(new TextBlock
+            {
+                Text = "Zoom with + and -, or Ctrl and the mouse wheel. 0 fits the image again.",
+                FontSize = 12,
+                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SfTextMutedBrush"],
             });
+            // ShowQuickLookAsync finds the view that zooms through the body.
+            body.Tag = view;
             return true;
         }
         catch

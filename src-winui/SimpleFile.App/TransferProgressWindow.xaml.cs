@@ -33,6 +33,7 @@ public sealed partial class TransferProgressWindow : Window
     public bool IsClosed { get; private set; }
 
     public event Action<TransferOperationViewModel>? CancelRequested;
+    public event Action<TransferOperationViewModel>? RemoveRequested;
     public event Action? ClearCompletedRequested;
     public event Action? CloseRequested;
 
@@ -90,6 +91,14 @@ public sealed partial class TransferProgressWindow : Window
         if (sender is Button { Tag: TransferOperationViewModel operation })
         {
             CancelRequested?.Invoke(operation);
+        }
+    }
+
+    private void OnRemoveOperationClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: TransferOperationViewModel operation })
+        {
+            RemoveRequested?.Invoke(operation);
         }
     }
 

@@ -169,6 +169,32 @@ public class DialogsAndTransfersUxTests
     }
 
     [Fact]
+    public void ConflictDialog_ShowsAPictureOfEachSideOfAPictureConflict()
+    {
+        Assert.True(new SimpleFile.Core.ConflictFileSnapshot(@"C:\Photos\IMG_0001.JPG", "File", 10, null).HasThumbnail);
+        Assert.True(new SimpleFile.Core.ConflictFileSnapshot(@"C:\Photos\scan.webp", "File", 10, null).HasThumbnail);
+        Assert.False(new SimpleFile.Core.ConflictFileSnapshot(@"C:\Docs\report.txt", "File", 10, null).HasThumbnail);
+        Assert.False(new SimpleFile.Core.ConflictFileSnapshot(@"C:\Docs\no-extension", "File", 10, null).HasThumbnail);
+        // A folder named like a picture, and a link to one, are not read as pictures.
+        Assert.False(new SimpleFile.Core.ConflictFileSnapshot(@"C:\Photos\album.png", "Folder", null, null).HasThumbnail);
+        Assert.False(new SimpleFile.Core.ConflictFileSnapshot(@"C:\Photos\link.png", "Link", null, null).HasThumbnail);
+
+        var dialog = Read("ConflictDialog.xaml.cs");
+        var card = Slice(dialog, "private FrameworkElement FileCard(", "private const double ThumbnailSize");
+        // No loader, or not a picture: the card is its text, as before.
+        Assert.Contains("if (ThumbnailLoader is not { } load || !file.HasThumbnail)", card);
+        Assert.Contains("Visibility = Visibility.Collapsed,", card);
+        Assert.Contains("_ = ShowThumbnailAsync(frame, picture, file.Path, load, token);", card);
+        var show = Slice(dialog, "private async Task ShowThumbnailAsync(", "private static StackPanel FileDetails(");
+        Assert.Contains("catch (Exception)", show);
+        Assert.Contains("if (source is null || token.IsCancellationRequested)", show);
+        // The reads of one prompt end when the next is set and when the dialog closes.
+        Assert.Contains("_thumbnails?.Cancel();", Slice(dialog, "public void SetComparisons(", "private FrameworkElement FileCard("));
+        Assert.Contains("Closed += (_, _) => _thumbnails?.Cancel();", dialog);
+        Assert.Contains("dialog.ThumbnailLoader ??= LoadConflictThumbnailAsync;", Read("MainWindow.Transfer.cs"));
+    }
+
+    [Fact]
     public void QuickLook_IsALightboxAndFoldersOpenProperties()
     {
         var inspection = Read("MainWindow.InspectionDialogs.cs");
@@ -179,7 +205,35 @@ public class DialogsAndTransfersUxTests
         Assert.Contains("VirtualKey.Left", quickLook);
         Assert.Contains("VirtualKey.Right", quickLook);
         Assert.Contains("VirtualKey.Space", quickLook);
-        Assert.Contains("Title = row.Name", quickLook);
+        // The header is the name, with the item's place among the pane's rows beside it.
+        Assert.Contains("Title = QuickLookTitle(row.Name, PositionOf(row))", quickLook);
+        Assert.Contains("dialog.Title = QuickLookTitle(current.Name, QuickLookText.Position(nextIndex, rows.Count));", quickLook);
+        Assert.Contains("QuickLookText.Position(index, rows.Count)", quickLook);
+        // An image zooms from the keyboard; the view that zooms is found through the body being shown.
+        Assert.Contains("image.ChangeView(null, null, (float)QuickLookZoom.Step(image.ZoomFactor, delta));", quickLook);
+        // The lightbox takes its keys before whatever has the focus inside it, so a text file's caret does not
+        // keep Left and Right for itself; a key with Ctrl or Alt is not the lightbox's.
+        Assert.Contains("dialog.PreviewKeyDown += (_, e) =>", quickLook);
+        Assert.Contains("if (IsKeyDown(VirtualKey.Control) || IsKeyDown(VirtualKey.Menu))", quickLook);
+        Assert.Contains("VirtualKey.Add or (VirtualKey)187 => Zoom(1),", quickLook);
+        Assert.Contains("VirtualKey.Subtract or (VirtualKey)189 => Zoom(-1),", quickLook);
+        Assert.Contains("VirtualKey.Number0 or VirtualKey.NumberPad0 => Zoom(0),", quickLook);
+        Assert.Contains("ZoomMode = ZoomMode.Enabled", inspection);
+        Assert.Contains("body.Tag = view;", inspection);
+        // A text file that can be rendered gets the pane's Source | Rendered choice, and opens in the pane's mode.
+        Assert.Contains("if (PreviewCapabilities.CanRenderAsHtml(row.Path, preview))", quickLook);
+        Assert.Contains("rendered: workspace?.Settings.PreviewRenderHtml == true", quickLook);
+        Assert.Contains("PreviewPresenter.CreateQuickLookHtmlView(", quickLook);
+
+        // The rendered view is locked down as the pane's is: no script, and no navigation away from the document.
+        var html = Read("PreviewPresenter.Html.cs");
+        var view = Slice(html, "internal static Microsoft.UI.Xaml.Controls.WebView2 CreateQuickLookHtmlView(", "private static bool IsAllowedPreviewNavigation(");
+        Assert.Contains("LockDownPreviewWebView(core);", view);
+        Assert.Contains("core.Settings.IsScriptEnabled = false;", view);
+        Assert.Contains("if (!IsAllowedPreviewNavigation(args.Uri, null))", view);
+        Assert.Contains("core.NewWindowRequested += OnPreviewWebViewNewWindowRequested;", view);
+        Assert.True(view.IndexOf("LockDownPreviewWebView(core);", StringComparison.Ordinal) < view.IndexOf("view.NavigateToString(html);", StringComparison.Ordinal));
+        Assert.Contains("view.Close();", view);
         Assert.Contains("QuickLookTextBudget = 2_000_000", inspection);
     }
 

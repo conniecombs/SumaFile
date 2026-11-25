@@ -15,6 +15,31 @@ public sealed class TransferWindowLayoutTests
 
     private static string Details(string xaml) => Slice(xaml, "Header=\"Details\"", "</Expander>");
 
+    /// <summary>
+    /// Tab goes through a row in the order it is read. Details is drawn under the row with Cancel, so it is declared
+    /// after it: declared first, as it was, Tab reached Details and its Options before Cancel.
+    /// </summary>
+    [Fact]
+    public void ARow_IsTabbedInTheOrderItIsRead_AndItsButtonsAreNamed()
+    {
+        var xaml = Xaml();
+        var cancel = xaml.IndexOf("Click=\"OnCancelOperationClicked\"", StringComparison.Ordinal);
+        var remove = xaml.IndexOf("Click=\"OnRemoveOperationClicked\"", StringComparison.Ordinal);
+        var details = xaml.IndexOf("<Expander", StringComparison.Ordinal);
+        Assert.True(cancel > 0 && remove > cancel && details > remove, "Cancel, Remove and then Details, in the markup's order.");
+        Assert.DoesNotContain("TabIndex", xaml);
+        // Details is still the row's fourth line.
+        Assert.Contains("Grid.Row=\"3\"", Slice(xaml, "<Expander", ">"));
+
+        Assert.Contains("AutomationProperties.Name=\"{Binding CancelLabel}\"", xaml);
+        Assert.Contains("AutomationProperties.Name=\"{Binding RemoveLabel}\"", xaml);
+        Assert.Contains("AutomationProperties.Name=\"{Binding OptionsLabel}\"", xaml);
+        Assert.Contains("IsEnabled=\"{Binding CanRemove}\"", xaml);
+        Assert.Contains("window.RemoveRequested += OnTransferRemoveRequested;", Read("MainWindow.FileOperations.cs"));
+        Assert.Contains("window.RemoveRequested -= OnTransferRemoveRequested;", Read("MainWindow.FileOperations.cs"));
+        Assert.Contains("_transfer?.Remove(operation);", Read("MainWindow.FileOperations.cs"));
+    }
+
     private static string[] FittedTexts(string xaml) =>
         [.. Regex.Matches(xaml, "<local:FittedText[^>]*/>", RegexOptions.Singleline).Select(match => match.Value)];
 

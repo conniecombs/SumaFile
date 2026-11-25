@@ -249,6 +249,55 @@ public class PaneGestureSourceShapeTests
     }
 
     [Fact]
+    public void TheDividers_AreResizedFromTheKeyboardThroughTheSameSettingsAsADrag()
+    {
+        var routing = App("MainWindow.CommandRouting.cs");
+        var resize = App("MainWindow.ResizeCommands.cs");
+
+        foreach (var route in new[]
+                 {
+                     "[\"sidebar-wider\"] = () => ResizeSidebarAsync(1),", "[\"sidebar-narrower\"] = () => ResizeSidebarAsync(-1),",
+                     "[\"preview-wider\"] = () => ResizePreviewAsync(1),", "[\"preview-narrower\"] = () => ResizePreviewAsync(-1),",
+                     "[\"pane-divider-left\"] = () => MovePaneDividerAsync(-1),", "[\"pane-divider-right\"] = () => MovePaneDividerAsync(1),",
+                     "[\"panel-larger\"] = () => ResizeDockedPanelAsync(1),", "[\"panel-smaller\"] = () => ResizeDockedPanelAsync(-1),",
+                 })
+        {
+            Assert.Contains(route, routing);
+        }
+
+        Assert.Contains("UiSettings.StepSidebarWidth(workspace.Settings.SidebarWidth, direction)", resize);
+        Assert.Contains("ApplySidebarLayout();", resize);
+        Assert.Contains("UiSettings.StepPreviewWidth(workspace.Settings.PreviewWidth, direction)", resize);
+        Assert.Contains("ApplyPreviewVisibility();", resize);
+        Assert.Contains("UiSettings.StepDualPanePrimaryWidth(current, direction, available)", resize);
+        Assert.Contains("ApplyDualPaneLayout();", resize);
+        Assert.Contains("ResizePluginPanelBy(Math.Sign(direction) * UiSettings.ResizeCommandStep);", resize);
+        // Each saves, as letting go of a grip does, and says so when there is nothing to resize.
+        Assert.Equal(4, System.Text.RegularExpressions.Regex.Matches(resize, @"return workspace\.SaveUiSettingsAsync\(\);").Count);
+        Assert.Contains("SetStatusText(\"The sidebar is hidden\");", resize);
+    }
+
+    [Fact]
+    public void BrushesSetFromCode_FollowWindowsIntoHighContrast()
+    {
+        var lookup = App("ThemeResourceLookup.cs");
+
+        Assert.Contains("highContrast ? \"HighContrast\" : light ? \"Light\" : \"Dark\";", lookup);
+        Assert.Contains("var themeKey = ThemeKey(IsHighContrast(), owner.ActualTheme switch", lookup);
+        Assert.Contains("SPI_GETHIGHCONTRAST = 0x0042", lookup);
+        // The dictionary it then reads has every brush the other two have.
+        var app = App("App.xaml");
+        var dark = UiAuditSprint3Tests.Slice(app, "<ResourceDictionary x:Key=\"Dark\">", "</ResourceDictionary>");
+        var highContrast = UiAuditSprint3Tests.Slice(app, "<ResourceDictionary x:Key=\"HighContrast\">", "</ResourceDictionary>");
+        var keys = System.Text.RegularExpressions.Regex.Matches(dark, "x:Key=\"(Sf\\w+Brush)\"").Select(match => match.Groups[1].Value).ToArray();
+        Assert.NotEmpty(keys);
+        foreach (var key in keys)
+        {
+            Assert.Contains($"x:Key=\"{key}\"", highContrast);
+        }
+    }
+
+    [Fact]
     public void ARowView_DrawsTheDropMarkAndDropsItWhenItIsRecycled()
     {
         var xaml = App("FileRowView.xaml");

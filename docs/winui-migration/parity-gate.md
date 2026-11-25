@@ -346,6 +346,14 @@ In the Automated column of this table, "Catalog" and "Catalog test" mean `AppCom
 | `preview` | Toggle preview | Handler | Catalog | — | `MANUAL` |
 | `toggle-hidden` | Show or hide hidden files | Handler + workspace setting | Catalog test | Ctrl+H | `PASS` |
 | `toggle-side-menu` | Toggle sidebar | Handler | Catalog test | — | `PASS` |
+| `sidebar-wider` | Widen the sidebar by one step | Handler + UI setting | Resize command tests; `typing-and-columns` smoke (sidebar) | — | `PASS` |
+| `sidebar-narrower` | Narrow the sidebar by one step | Handler + UI setting | Resize command tests; `typing-and-columns` smoke (sidebar) | — | `PASS` |
+| `preview-wider` | Widen the preview pane by one step | Handler + UI setting | Resize command tests; `typing-and-columns` smoke (sidebar) | — | `PASS` |
+| `preview-narrower` | Narrow the preview pane by one step | Handler + UI setting | Resize command tests; `typing-and-columns` smoke (sidebar) | — | `PASS` |
+| `pane-divider-left` | Move the divider between the panes one step left | Handler + UI setting | Resize command tests; `typing-and-columns` smoke (sidebar) | — | `PASS` |
+| `pane-divider-right` | Move the divider between the panes one step right | Handler + UI setting | Resize command tests; `typing-and-columns` smoke (sidebar) | — | `PASS` |
+| `panel-larger` | Enlarge the docked plugin panel by one step | Handler + UI setting | Resize command tests; `typing-and-columns` smoke (sidebar) | — | `PASS` |
+| `panel-smaller` | Shrink the docked plugin panel by one step | Handler + UI setting | Resize command tests; `typing-and-columns` smoke (sidebar) | — | `PASS` |
 | `dual-pane` | Toggle | Handler | Dual-pane tests | F6 | `PASS` |
 | `switch-pane` | Switch active pane | Catalog + shortcut handler | Catalog test | Tab in dual pane | `PASS` |
 | `close-left-pane` | Close left pane | Palette + handler | `DualPaneAndTabsTests` (`CloseLeftPane_PromotesRightPane`) | Dual pane | `PASS` |

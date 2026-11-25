@@ -31,6 +31,8 @@ public class GitPluginSourceShapeTests
         ["DiffTitle"] = "Git.DiffTitle",
         ["DiffText"] = "Git.DiffText",
         ["DiffSplitter"] = "Git.DiffSplitter",
+        ["CommitBox"] = "Git.CommitBox",
+        ["CommitHere"] = "Git.CommitHere",
         ["CommitMessage"] = "Git.CommitMessage",
     };
 
@@ -208,7 +210,21 @@ public class GitPluginSourceShapeTests
         Assert.False(Regex.IsMatch(panel, @"\.Items\.(Add|Insert|Clear)\("), "The panel fills ListView.Items directly.");
         Assert.DoesNotContain("new ListViewItem", panel);
         Assert.Contains("FontFamily=\"Consolas\"", panel);
-        Assert.Contains("IsReadOnly=\"True\"", panel);
+        // The diff is text to read and select, coloured by line; nothing in it can be typed over.
+        var diffBlock = Regex.Match(panel, @"<RichTextBlock x:Name=""DiffTextBlock""[^>]*/>").Value;
+        Assert.Contains("IsTextSelectionEnabled=\"True\"", diffBlock);
+        Assert.Contains("TextWrapping=\"NoWrap\"", diffBlock);
+        Assert.DoesNotContain("x:Name=\"DiffTextBox\"", panel);
+        var show = Slice(panel, "private void ShowDiff()", "private static Brush? DiffBrush(");
+        Assert.Contains("GitDiffLines.Parse(text)", show);
+        Assert.Contains("lines.Count > GitDiffLines.MaxColoredLines", show);
+        Assert.Contains("\"SfDecorationAddedBrush\"", panel);
+        Assert.Contains("\"SfDecorationDeletedBrush\"", panel);
+        Assert.Contains("Root.ActualThemeChanged += (_, _) => ShowDiff();", panel);
+        // The commit box in the panel runs the Commit command, which reads the box through the view model.
+        Assert.Contains("_commitHere.Click += (_, _) => RunCommand(GitCommandIds.Commit);", panel);
+        Assert.Contains("_commitBox.TextChanged += (_, _) => _model.CommitMessage = _commitBox.Text;", panel);
+        Assert.Contains("_commitHere.IsEnabled = _model.CanCommit;", panel);
         Assert.Contains("_model.PropertyChanged += ", panel);
         Assert.Contains("_model.PropertyChanged -= ", panel);
         Assert.Contains("Foreground=\"{ThemeResource SystemFillColorCriticalBrush}\"", Slice(panel, "x:Name=\"DiscardButton\"", "</Button>"));
@@ -242,6 +258,10 @@ public class GitPluginSourceShapeTests
 
         var commit = Slice(prompts, "public async Task<string?> PromptCommitMessageAsync(", "public async Task<bool> ConfirmDiscardAsync(");
         Assert.Contains("GitAutomationIds.CommitMessage", commit);
+        // UI audit P20: a message has a body, and there is nothing to commit with until one is typed.
+        Assert.Contains("AcceptsReturn = true", commit);
+        Assert.Contains("IsPrimaryButtonEnabled = false", commit);
+        Assert.Contains("dialog.IsPrimaryButtonEnabled = !string.IsNullOrWhiteSpace(input.Text);", commit);
         Assert.Contains("CloseButtonText = \"Cancel\"", commit);
         Assert.Contains("result == PluginDialogResult.Primary ? input.Text : null", commit);
     }

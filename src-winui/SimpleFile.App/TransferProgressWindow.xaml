@@ -95,6 +95,85 @@
                                     Foreground="{ThemeResource SfTextPrimaryBrush}"
                                     Text="{Binding StatusLabel}" />
                             </Grid>
+                            <Grid Grid.Row="1">
+                                <ProgressBar AutomationProperties.Name="Transfer progress"
+                                    Height="4"
+                                    Minimum="0"
+                                    Maximum="100"
+                                    Background="{ThemeResource SfBorderBrush}"
+                                    Foreground="{ThemeResource SfAccentBrush}"
+                                    IsIndeterminate="{Binding IsIndeterminate}"
+                                    Value="{Binding ProgressPercent}" />
+                                <TextBlock
+                                    HorizontalAlignment="Right"
+                                    Margin="0,-18,0,0"
+                                    FontSize="12"
+                                    FontWeight="SemiBold"
+                                    Foreground="{ThemeResource SfTextPrimaryBrush}"
+                                    Text="{Binding PercentText}" />
+                            </Grid>
+
+                            <Grid Grid.Row="2" ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel MinWidth="0" Spacing="3">
+                                    <!-- One file by name; with several at once, "name and 7 more files". A long
+                                         name is shortened and the count stays whole. -->
+                                    <local:FittedText
+                                        FontSize="13"
+                                        Foreground="{ThemeResource SfTextPrimaryBrush}"
+                                        Kind="FileName"
+                                        Suffix="{Binding CurrentItemSuffix}"
+                                        Text="{Binding CurrentItemText}"
+                                        ToolTipService.ToolTip="{Binding CurrentItemLine}" />
+                                    <TextBlock
+                                        FontSize="12"
+                                        Foreground="{ThemeResource SfTextMutedBrush}"
+                                        Text="{Binding StatusDetailText}"
+                                        TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                                <StackPanel
+                                    Grid.Column="1"
+                                    VerticalAlignment="Center"
+                                    Orientation="Horizontal"
+                                    Spacing="6">
+                                    <!-- Each row's buttons say which transfer they act on: a screen reader would
+                                         otherwise read "Cancel" once for every row. -->
+                                    <Button
+                                        MinWidth="88"
+                                        AutomationProperties.Name="{Binding CancelLabel}"
+                                        Click="OnCancelOperationClicked"
+                                        IsEnabled="{Binding CanCancel}"
+                                        Style="{StaticResource SfGhostButtonStyle}"
+                                        Tag="{Binding}"
+                                        ToolTipService.ToolTip="Cancel transfer">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <FontIcon
+                                                FontFamily="{StaticResource SfIconFont}"
+                                                FontSize="11"
+                                                Glyph="&#xE711;" />
+                                            <TextBlock Text="Cancel" />
+                                        </StackPanel>
+                                    </Button>
+                                    <Button
+                                        AutomationProperties.Name="{Binding RemoveLabel}"
+                                        Click="OnRemoveOperationClicked"
+                                        IsEnabled="{Binding CanRemove}"
+                                        Style="{StaticResource SfGhostButtonStyle}"
+                                        Tag="{Binding}"
+                                        ToolTipService.ToolTip="Remove this finished transfer from the list">
+                                        <FontIcon
+                                            FontFamily="{StaticResource SfIconFont}"
+                                            FontSize="11"
+                                            Glyph="&#xE74D;" />
+                                    </Button>
+                                </StackPanel>
+                            </Grid>
+
+                            <!-- Declared after the row above it, though it is drawn below: Tab goes through a row in
+                                 the order it reads, to Cancel before Details and its Options. -->
                             <Expander
                                 Grid.Row="3"
                                 Header="Details"
@@ -117,7 +196,7 @@
                                                VerticalAlignment="Center"
                                                Foreground="{ThemeResource SfTextMutedBrush}" />
                                     <Button Grid.Column="1" Content="Options" Click="OnTaskOptionsClicked" Tag="{Binding}"
-                                            AutomationProperties.Name="Transfer options for this task"
+                                            AutomationProperties.Name="{Binding OptionsLabel}"
                                             IsEnabled="{Binding CanChangeOptions}" Style="{StaticResource SfGhostButtonStyle}" />
                                 </Grid>
                                 <!-- The files being copied now, under the folder each comes from. Each line is one
@@ -172,64 +251,6 @@
                                 </ScrollViewer>
                             </Grid>
                             </Expander>
-
-                            <Grid Grid.Row="1">
-                                <ProgressBar AutomationProperties.Name="Transfer progress"
-                                    Height="4"
-                                    Minimum="0"
-                                    Maximum="100"
-                                    Background="{ThemeResource SfBorderBrush}"
-                                    Foreground="{ThemeResource SfAccentBrush}"
-                                    IsIndeterminate="{Binding IsIndeterminate}"
-                                    Value="{Binding ProgressPercent}" />
-                                <TextBlock
-                                    HorizontalAlignment="Right"
-                                    Margin="0,-18,0,0"
-                                    FontSize="12"
-                                    FontWeight="SemiBold"
-                                    Foreground="{ThemeResource SfTextPrimaryBrush}"
-                                    Text="{Binding PercentText}" />
-                            </Grid>
-
-                            <Grid Grid.Row="2" ColumnSpacing="12">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel MinWidth="0" Spacing="3">
-                                    <!-- One file by name; with several at once, "name and 7 more files". A long
-                                         name is shortened and the count stays whole. -->
-                                    <local:FittedText
-                                        FontSize="13"
-                                        Foreground="{ThemeResource SfTextPrimaryBrush}"
-                                        Kind="FileName"
-                                        Suffix="{Binding CurrentItemSuffix}"
-                                        Text="{Binding CurrentItemText}"
-                                        ToolTipService.ToolTip="{Binding CurrentItemLine}" />
-                                    <TextBlock
-                                        FontSize="12"
-                                        Foreground="{ThemeResource SfTextMutedBrush}"
-                                        Text="{Binding StatusDetailText}"
-                                        TextTrimming="CharacterEllipsis" />
-                                </StackPanel>
-                                <Button
-                                    Grid.Column="1"
-                                    MinWidth="88"
-                                    VerticalAlignment="Center"
-                                    Click="OnCancelOperationClicked"
-                                    IsEnabled="{Binding CanCancel}"
-                                    Style="{StaticResource SfGhostButtonStyle}"
-                                    Tag="{Binding}"
-                                    ToolTipService.ToolTip="Cancel transfer">
-                                    <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <FontIcon
-                                            FontFamily="{StaticResource SfIconFont}"
-                                            FontSize="11"
-                                            Glyph="&#xE711;" />
-                                        <TextBlock Text="Cancel" />
-                                    </StackPanel>
-                                </Button>
-                            </Grid>
                         </Grid>
                     </Border>
                 </DataTemplate>

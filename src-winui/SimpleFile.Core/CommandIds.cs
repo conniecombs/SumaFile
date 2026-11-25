@@ -37,6 +37,14 @@ public static class CommandIds
     public const string Preview = "preview";
     public const string ToggleHidden = "toggle-hidden";
     public const string ToggleSideMenu = "toggle-side-menu";
+    public const string SidebarWider = "sidebar-wider";
+    public const string SidebarNarrower = "sidebar-narrower";
+    public const string PreviewWider = "preview-wider";
+    public const string PreviewNarrower = "preview-narrower";
+    public const string PaneDividerLeft = "pane-divider-left";
+    public const string PaneDividerRight = "pane-divider-right";
+    public const string PanelLarger = "panel-larger";
+    public const string PanelSmaller = "panel-smaller";
     public const string DualPane = "dual-pane";
     public const string SwitchPane = "switch-pane";
     public const string CloseLeftPane = "close-left-pane";

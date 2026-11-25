@@ -19,6 +19,7 @@ public sealed class GitWorkbenchViewModel : INotifyPropertyChanged
     private string _summaryText = "";
     private string _diffTitle = DefaultDiffTitle;
     private string _diffText = DefaultDiffText;
+    private string _commitMessage = "";
     private IReadOnlyList<GitChangeRow> _changes = new List<GitChangeRow>();
     private bool _isGitEnabled = true;
     private bool _isRepo;
@@ -85,6 +86,16 @@ public sealed class GitWorkbenchViewModel : INotifyPropertyChanged
     {
         get => _diffText;
         private set => Set(ref _diffText, value);
+    }
+
+    /// <summary>
+    /// What is typed in the panel's commit message box. Commit uses it when it is not blank, without asking, and
+    /// empties it once the commit is made; with a blank box Commit asks for the message in its dialog.
+    /// </summary>
+    public string CommitMessage
+    {
+        get => _commitMessage;
+        set => Set(ref _commitMessage, value ?? "");
     }
 
     public bool CanRefresh

@@ -403,8 +403,11 @@ public sealed partial class MainWindow
         SmokeGitClearMessageBar();
         SmokeInvoke(await SmokeGitButtonAsync(SmokeGitCommitId));
         var commitDialog = await SmokeOpenDialogAsync(SmokeGitBody()!.XamlRoot!, SmokeGitCommitTitle);
+        var commitPrimary = SmokeDialogButton(commitDialog, "PrimaryButton");
+        SmokeAssert(!commitPrimary.IsEnabled, "The commit dialog offers Commit before a message is typed");
         SmokeRemoteControl<TextBox>(commitDialog, SmokeGitCommitMessageId).Text = SmokeGitCommitText;
-        SmokeInvoke(SmokeDialogButton(commitDialog, "PrimaryButton"));
+        await SmokeGitWaitAsync(() => commitPrimary.IsEnabled, () => "the commit dialog's Commit to be enabled once a message is typed");
+        SmokeInvoke(commitPrimary);
         string? subject = null;
         await SmokeGitPollAsync(
             async () => (subject = (await SmokeGitCliAsync(repo, "log", "-1", "--format=%s")).Trim()) == SmokeGitCommitText,
@@ -418,13 +421,38 @@ public sealed partial class MainWindow
         var head = (await SmokeGitCliAsync(repo, "rev-parse", "HEAD")).Trim();
         await SmokeGitSettleAsync("after Commit");
 
+        // The commit box in the panel: with a message in it, Commit asks nothing and the box is emptied.
+        const string inlineText = "Commit from the panel";
+        // new.txt is still untracked: stage it with the panel, as above, and Commit has something to commit.
+        SmokeInvoke(await SmokeGitSelectChangeAsync("new.txt", SmokeGitStageId));
+        await SmokeGitPollAsync(
+            async () => SmokeGitLines(await SmokeGitCliAsync(repo, "diff", "--cached", "--name-only")).Contains("new.txt"),
+            SmokeGitUiWait,
+            () => "git diff --cached --name-only to list new.txt after Stage");
+        var commitHere = await SmokeGitButtonAsync("Git.CommitHere");
+        var commitBox = SmokeRemoteControl<TextBox>(SmokeGitBody()!, "Git.CommitBox");
+        commitBox.Text = inlineText;
+        // What is typed reaches the view model with the box's own change event.
+        await Task.Delay(200);
+        SmokeInvoke(commitHere);
+        string? inlineSubject = null;
+        await SmokeGitPollAsync(
+            async () => (inlineSubject = (await SmokeGitCliAsync(repo, "log", "-1", "--format=%s")).Trim()) == inlineText,
+            SmokeGitNetworkWait,
+            () => $"git log -1 to name '{inlineText}', names '{inlineSubject}'");
+        await SmokeGitWaitAsync(() => SmokeFindById<TextBox>(SmokeGitBody()!, "Git.CommitBox") is { Text: "" },
+            () => "the commit box to be emptied after its commit");
+        SmokeAssert(SmokeOpenDialog(SmokeGitBody()!.XamlRoot!) is null, "Commit asked for a message although the commit box held one");
+        var pushed = (await SmokeGitCliAsync(repo, "rev-parse", "HEAD")).Trim();
+        await SmokeGitSettleAsync("after the commit from the panel");
+
         // Push: the bare origin's main is repo's HEAD.
         await SmokeGitTransferAsync(transfers, SmokeGitPushId, "Pushing " + folderName);
         string? origin = null;
         await SmokeGitPollAsync(
-            async () => (origin = (await SmokeGitCliAsync(fixture.Origin, "rev-parse", "main")).Trim()) == head,
+            async () => (origin = (await SmokeGitCliAsync(fixture.Origin, "rev-parse", "main")).Trim()) == pushed,
             SmokeGitNetworkWait,
-            () => $"origin.git's main to be {head}, is {origin}");
+            () => $"origin.git's main to be {pushed}, is {origin}");
         SmokeAssert(fetch.Status == TransferOperationStatus.Completed, $"The fetch row is {fetch.Status}");
         return new SmokeGitMutations(fetchMessage!, head, commitMessage!);
     }
@@ -978,16 +1006,17 @@ public sealed partial class MainWindow
     private async Task SmokeGitDiffAsync(string path, string expected)
     {
         var timer = Stopwatch.StartNew();
-        TextBox? diff = null;
+        RichTextBlock? diff = null;
         while (true)
         {
             SmokeInvoke(await SmokeGitSelectChangeAsync(path, SmokeGitDiffId));
             var attempt = Stopwatch.StartNew();
             while (attempt.Elapsed < TimeSpan.FromSeconds(3))
             {
-                diff = SmokeGitBody() is { } body ? SmokeFindById<TextBox>(body, SmokeGitDiffTextId) : null;
-                if ((diff?.Text ?? "").Contains(expected, StringComparison.Ordinal))
+                diff = SmokeGitBody() is { } body ? SmokeFindById<RichTextBlock>(body, SmokeGitDiffTextId) : null;
+                if (SmokeGitDiffText(diff).Contains(expected, StringComparison.Ordinal))
                 {
+                    SmokeGitDiffIsColoured(diff!, path);
                     return;
                 }
 
@@ -997,9 +1026,40 @@ public sealed partial class MainWindow
             if (timer.Elapsed > SmokeGitUiWait)
             {
                 throw new TimeoutException(
-                    $"UI smoke timed out after {SmokeGitUiWait.TotalSeconds:0} s: {SmokeGitDiffTextId} to show the diff of {path} with '{expected}', reads '{diff?.Text}'");
+                    $"UI smoke timed out after {SmokeGitUiWait.TotalSeconds:0} s: {SmokeGitDiffTextId} to show the diff of {path} with '{expected}', reads '{SmokeGitDiffText(diff)}'");
             }
         }
+    }
+
+    /// <summary>The preview's lines: one text run per line.</summary>
+    private static IEnumerable<Microsoft.UI.Xaml.Documents.Run> SmokeGitDiffRuns(RichTextBlock? diff) =>
+        diff?.Blocks.OfType<Microsoft.UI.Xaml.Documents.Paragraph>().SelectMany(paragraph => paragraph.Inlines.OfType<Microsoft.UI.Xaml.Documents.Run>()) ?? [];
+
+    private static string SmokeGitDiffText(RichTextBlock? diff) => string.Join("\n", SmokeGitDiffRuns(diff).Select(run => run.Text));
+
+    /// <summary>
+    /// A shown diff's added lines, its hunk lines and its unchanged lines are drawn in three different colours, and a
+    /// removed line, when it has one, in a fourth.
+    /// </summary>
+    private static void SmokeGitDiffIsColoured(RichTextBlock diff, string path)
+    {
+        static Windows.UI.Color? ColourOf(Microsoft.UI.Xaml.Documents.Run? run) => (run?.Foreground as Microsoft.UI.Xaml.Media.SolidColorBrush)?.Color;
+        var runs = SmokeGitDiffRuns(diff).ToArray();
+        var hunkAt = Array.FindIndex(runs, run => run.Text.StartsWith("@@", StringComparison.Ordinal));
+        SmokeAssert(hunkAt >= 0, $"The diff of {path} shows no hunk line");
+        var body = runs[(hunkAt + 1)..];
+        var hunk = ColourOf(runs[hunkAt]);
+        var added = ColourOf(body.FirstOrDefault(run => run.Text.StartsWith('+')));
+        var removed = ColourOf(body.FirstOrDefault(run => run.Text.StartsWith('-')));
+        var plain = ColourOf(body.FirstOrDefault(run => run.Text.StartsWith(' '))) ?? (diff.Foreground as Microsoft.UI.Xaml.Media.SolidColorBrush)?.Color;
+        SmokeAssert(hunk is not null && hunk != plain, $"The hunk line of {path}'s diff is drawn like an unchanged line ({hunk})");
+        if (added is null && removed is null)
+        {
+            throw new InvalidOperationException($"The diff of {path} shows neither an added nor a removed line in colour");
+        }
+
+        SmokeAssert(added is null || (added != plain && added != hunk), $"An added line of {path}'s diff is drawn in {added}, like other lines");
+        SmokeAssert(removed is null || (removed != plain && removed != hunk && removed != added), $"A removed line of {path}'s diff is drawn in {removed}, like other lines");
     }
 
     private async Task<Button> SmokeGitSelectChangeAsync(string path, string buttonId)

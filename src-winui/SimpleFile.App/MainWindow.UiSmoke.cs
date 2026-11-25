@@ -134,6 +134,9 @@ public sealed partial class MainWindow
             await CheckpointAsync("typing-and-columns");
             await SmokeTypingAndColumnsAsync(results, root);
 
+            await CheckpointAsync("quick-look");
+            await SmokeQuickLookAsync(results, root);
+
             // With -PointerInput, the panes' gestures that only a real mouse makes.
             if (SmokePointerInput)
             {

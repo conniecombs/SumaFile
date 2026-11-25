@@ -90,6 +90,48 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 - The highlight of a pane's border is cleared when a drag that started in
   the Details view ends outside the panes.
 
+### Quick Look, dialogs and accessibility
+
+- Quick Look shows where the item is among the pane's files beside its
+  name ("3 of 12").
+- An image in Quick Look zooms: + and - step in and out up to eight times,
+  0 fits it again, and Ctrl with the mouse wheel zooms as well. The image
+  scrolls while it is zoomed.
+- A text file that can be rendered (Markdown, HTML, CSV, JSON and the like)
+  has the preview pane's Source | Rendered choice in Quick Look. It opens in
+  the mode the pane is set to; changing it there changes that Quick Look
+  only.
+- Left and Right step through the files in Quick Look also while the text
+  of a file has the focus. The text used to take those keys for its caret,
+  so stepping stopped at the first text file.
+- The conflict dialog shows a small picture of each side when the two files
+  are pictures (JPEG, PNG, GIF, WebP, BMP).
+- In the Transfers window, Tab now reaches a row's Cancel before its
+  Details, as the row reads. Each row's buttons name their transfer for a
+  screen reader, and a finished row has a Remove button of its own beside
+  Clear completed for all of them.
+- The sidebar, the preview pane, the divider between the two panes and a
+  docked panel can be resized from the keyboard: eight commands in the
+  command palette, such as "Make the sidebar wider" and "Move the pane
+  divider left", move them one step. They have no keys of their own; give
+  them some in Settings -> Shortcuts.
+- In a Windows High Contrast theme, the parts of the window that are drawn
+  from code (file row marks, the active pane's border, preview details) now
+  use SumaFile's High Contrast colours. They kept the colours of the light
+  or dark theme underneath.
+
+### Git
+
+- The diff preview is coloured: added lines, removed lines, the range line
+  of each hunk and the file's header lines each have their own colour. A
+  diff of more than 4,000 lines is shown plain.
+- The Git panel has a commit message box under the list of changes. With a
+  message in it, Commit (the button beside it, the one in the panel's
+  toolbar, or Ctrl+Enter in the box) commits at once and empties the box.
+  With the box empty, Commit asks in its dialog as before.
+- The commit dialog takes a message of several lines, and its Commit button
+  is enabled once a message is typed.
+
 ### Typing, renaming and columns
 
 - The omnibar suggests as you type. A path gets the folders that complete

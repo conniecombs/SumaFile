@@ -8,6 +8,54 @@ namespace SimpleFile.Tests;
 public class TransferManagerViewModelTests
 {
     [Fact]
+    public async Task Remove_TakesOneFinishedRowOutAndLeavesARunningOneAlone()
+    {
+        var manager = new TransferManagerViewModel { MaxConcurrentTransfers = 2 };
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var done = manager.Enqueue([@"C:\src\done.txt"], @"D:\out", move: false, (_, _) => Task.FromResult(TransferOperationStatus.Completed));
+        var running = manager.Enqueue([@"C:\src\slow.txt"], @"D:\out", move: false, async (_, _) =>
+        {
+            await release.Task;
+            return TransferOperationStatus.Completed;
+        });
+        await WaitUntilAsync(() => done.IsTerminal && running.Status == TransferOperationStatus.Running);
+        Assert.True(done.CanRemove);
+        Assert.False(running.CanRemove);
+
+        // A transfer under way is cancelled, not removed.
+        Assert.False(manager.Remove(running));
+        // The list has the newest row first.
+        Assert.Equal([running, done], manager.Operations);
+
+        Assert.True(manager.Remove(done));
+        Assert.Equal([running], manager.Operations);
+        Assert.False(manager.Remove(done));
+        Assert.False(manager.HasTerminalOperations);
+
+        release.SetResult();
+        await WaitUntilAsync(() => running.IsTerminal);
+        Assert.True(running.CanRemove);
+        Assert.True(manager.Remove(running));
+        Assert.Empty(manager.Operations);
+    }
+
+    [Fact]
+    public void ARowsButtons_SayWhichTransferTheyActOn()
+    {
+        var manager = new TransferManagerViewModel { MaxConcurrentTransfers = 1 };
+        var hold = new TaskCompletionSource<TransferOperationStatus>();
+        var copy = manager.Enqueue([@"C:\src\one.txt", @"C:\src	wo.txt"], @"D:\Backup", move: false, (_, _) => hold.Task);
+        var upload = manager.EnqueueExternal("Uploading 1 item to example.com:/srv", "", (_, _) => hold.Task);
+
+        Assert.Equal(@"Cancel: Copy 2 items to D:\Backup", copy.CancelLabel);
+        Assert.Equal(@"Remove from the list: Copy 2 items to D:\Backup", copy.RemoveLabel);
+        Assert.Equal(@"Transfer options for: Copy 2 items to D:\Backup", copy.OptionsLabel);
+        // A plugin's row has its whole route in its title.
+        Assert.Equal("Cancel: Uploading 1 item to example.com:/srv", upload.CancelLabel);
+        hold.SetResult(TransferOperationStatus.Cancelled);
+    }
+
+    [Fact]
     public void DefaultMaxConcurrentTransfers_IsTwo()
     {
         var manager = new TransferManagerViewModel();

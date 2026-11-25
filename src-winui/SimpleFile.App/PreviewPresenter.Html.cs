@@ -138,6 +138,70 @@ internal sealed partial class PreviewPresenter
         return view;
     }
 
+    /// <summary>
+    /// Builds Quick Look's rendered view of a text file (Markdown, HTML, CSV, JSON...) with the lockdown of the
+    /// pane's: no script at all, and no navigation away from the document handed to it; a link is given to the
+    /// operating system. <paramref name="cleanup"/> closes the view.
+    /// </summary>
+    internal static Microsoft.UI.Xaml.Controls.WebView2 CreateQuickLookHtmlView(string html, double height, out Action cleanup)
+    {
+        var view = new Microsoft.UI.Xaml.Controls.WebView2
+        {
+            Height = height,
+            HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Stretch,
+        };
+        var started = false;
+        var closed = false;
+        view.Loaded += async (_, _) =>
+        {
+            if (started || closed)
+            {
+                return;
+            }
+
+            started = true;
+            try
+            {
+                await view.EnsureCoreWebView2Async();
+                if (closed)
+                {
+                    return;
+                }
+
+                var core = view.CoreWebView2;
+                LockDownPreviewWebView(core);
+                core.Settings.IsScriptEnabled = false;
+                core.NavigationStarting += (_, args) =>
+                {
+                    if (!IsAllowedPreviewNavigation(args.Uri, null))
+                    {
+                        args.Cancel = true;
+                        OpenExternalLink(args.Uri);
+                    }
+                };
+                core.NewWindowRequested += OnPreviewWebViewNewWindowRequested;
+                view.NavigateToString(html);
+            }
+            catch
+            {
+                // The viewer could not start, or Quick Look closed first; the source view is still there.
+            }
+        };
+        cleanup = () =>
+        {
+            closed = true;
+            try
+            {
+                view.Close();
+            }
+            catch
+            {
+                // A view that never started has nothing to close.
+            }
+        };
+        return view;
+    }
+
     private static bool IsAllowedPreviewNavigation(string? target, Uri? allowedFile)
     {
         if (string.IsNullOrEmpty(target))

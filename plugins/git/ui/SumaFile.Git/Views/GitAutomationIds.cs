@@ -23,6 +23,8 @@ public static class GitAutomationIds
     public const string DiffTitle = "Git.DiffTitle";
     public const string DiffText = "Git.DiffText";
     public const string DiffSplitter = "Git.DiffSplitter";
+    public const string CommitBox = "Git.CommitBox";
+    public const string CommitHere = "Git.CommitHere";
 
     // Commit dialog.
     public const string CommitMessage = "Git.CommitMessage";

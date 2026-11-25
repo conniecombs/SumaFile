@@ -186,6 +186,27 @@ public sealed class UiSettings
             : NormalizeIconSize((int?)null);
     }
 
+    /// <summary>
+    /// How far one use of a resize command moves a divider. The dividers are dragged with the mouse; the commands
+    /// (Make the sidebar wider, Move the pane divider left...) are the same resize for the keyboard.
+    /// </summary>
+    public const double ResizeCommandStep = 24;
+
+    /// <summary>The sidebar's width one step wider (a positive <paramref name="direction"/>) or narrower, within its limits.</summary>
+    public static double StepSidebarWidth(double width, int direction) =>
+        NormalizeSidebarWidth(NormalizeSidebarWidth(width) + Math.Sign(direction) * ResizeCommandStep);
+
+    /// <summary>The preview pane's width one step wider or narrower, within its limits.</summary>
+    public static double StepPreviewWidth(double width, int direction) =>
+        NormalizePreviewWidth(NormalizePreviewWidth(width) + Math.Sign(direction) * ResizeCommandStep);
+
+    /// <summary>
+    /// The left pane's width with the divider moved one step right (a positive <paramref name="direction"/>) or
+    /// left, in a row <paramref name="available"/> wide; both panes keep their minimum width.
+    /// </summary>
+    public static double StepDualPanePrimaryWidth(double currentWidth, int direction, double available) =>
+        ResolveDualPanePrimaryWidth(Math.Max(1, currentWidth + Math.Sign(direction) * ResizeCommandStep), DualPaneDefaultPercent, available);
+
     public static double NormalizeSidebarWidth(double width)
     {
         if (double.IsNaN(width) || double.IsInfinity(width))

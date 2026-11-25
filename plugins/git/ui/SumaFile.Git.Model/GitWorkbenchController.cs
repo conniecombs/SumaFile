@@ -387,7 +387,10 @@ public sealed class GitWorkbenchController : IDisposable
 
     private async Task CommitAsync(Command command, string path, CancellationToken ct)
     {
-        var message = await _prompts.PromptCommitMessageAsync(ct);
+        // A message typed in the panel's box is the message: nothing is asked. A blank box asks in the dialog.
+        var typed = _model.CommitMessage;
+        var fromPanel = !string.IsNullOrWhiteSpace(typed);
+        var message = fromPanel ? typed : await _prompts.PromptCommitMessageAsync(ct);
         if (message is null)
         {
             return;
@@ -400,7 +403,21 @@ public sealed class GitWorkbenchController : IDisposable
             return;
         }
 
-        await RunCommandAsync(command, path, (backend, repo, _, token) => backend.CommitAsync(repo, message, token), ct);
+        await RunCommandAsync(
+            command,
+            path,
+            async (backend, repo, _, token) =>
+            {
+                var result = await backend.CommitAsync(repo, message, token);
+                // Committed: the box is emptied. A commit that failed keeps the message for another try.
+                if (fromPanel && string.Equals(_model.CommitMessage, typed, StringComparison.Ordinal))
+                {
+                    _model.CommitMessage = "";
+                }
+
+                return result;
+            },
+            ct);
     }
 
     private async Task RunPathsCommandAsync(Command command, string path, IReadOnlyList<string> fileSelection, CancellationToken ct)

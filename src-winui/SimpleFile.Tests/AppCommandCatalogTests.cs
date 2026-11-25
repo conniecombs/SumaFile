@@ -73,7 +73,8 @@ public class AppCommandCatalogTests
         Assert.Empty(AppCommandCatalog.Filter("sftp"));
         Assert.Equal(5, AppCommandCatalog.Filter("icon size").Count);
         Assert.Equal(7, AppCommandCatalog.Filter("profile").Count);
-        Assert.Equal("toggle-side-menu", Assert.Single(AppCommandCatalog.Filter("sidebar")).Id);
+        // Showing it, and resizing it from the keyboard.
+        Assert.Equal(["toggle-side-menu", "sidebar-wider", "sidebar-narrower"], AppCommandCatalog.Filter("sidebar").Select(command => command.Id));
         Assert.Equal("settings", AppCommandCatalog.Find("settings")?.Id);
         Assert.Null(AppCommandCatalog.Find("missing"));
     }

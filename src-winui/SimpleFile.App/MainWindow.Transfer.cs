@@ -261,6 +261,18 @@ public sealed partial class MainWindow
         return null;
     }
 
+    /// <summary>A small picture of a file for the conflict dialog's card, from the file service; null without one.</summary>
+    private async Task<ImageSource?> LoadConflictThumbnailAsync(string path, CancellationToken token)
+    {
+        if (_workspace?.FileOps is not { } fileOps)
+        {
+            return null;
+        }
+
+        var bytes = await fileOps.GenerateThumbnailAsync(path, 128, token);
+        return bytes is { Length: > 0 } ? await PreviewImageSourceFactory.FromBytesAsync(bytes, path) : null;
+    }
+
     private async Task<List<string>> ReadDroppedPathsAsync(DragEventArgs e)
     {
         if (_dragPaths.Length > 0)
@@ -1041,6 +1053,7 @@ public sealed partial class MainWindow
             var comparisons = await Task.Run(() => TransferConflictComparisonLoader.Load(
                 sources, destination, conflicts, cancellationToken, existingConflictPath, incomingConflictPath), cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
+            dialog.ThumbnailLoader ??= LoadConflictThumbnailAsync;
             dialog.SetComparisons(comparisons, allowReplace);
             using var cancelDialog = cancellationToken.Register(() => DispatcherQueue.TryEnqueue(dialog.Hide));
             await DialogHost.ShowAsync(dialog);

@@ -43,6 +43,52 @@ public class PaneMouseGestureTests
     }
 
     [Fact]
+    public void ResizeCommands_MoveADividerOneStepAndStopAtItsLimits()
+    {
+        var step = UiSettings.ResizeCommandStep;
+
+        Assert.Equal(UiSettings.SidebarDefaultWidth + step, UiSettings.StepSidebarWidth(UiSettings.SidebarDefaultWidth, 1));
+        Assert.Equal(UiSettings.SidebarDefaultWidth - step, UiSettings.StepSidebarWidth(UiSettings.SidebarDefaultWidth, -1));
+        Assert.Equal(UiSettings.SidebarMaxWidth, UiSettings.StepSidebarWidth(UiSettings.SidebarMaxWidth, 1));
+        Assert.Equal(UiSettings.SidebarMinWidth, UiSettings.StepSidebarWidth(UiSettings.SidebarMinWidth, -1));
+        // A width that was never a number starts from the default.
+        Assert.Equal(UiSettings.SidebarDefaultWidth + step, UiSettings.StepSidebarWidth(double.NaN, 1));
+
+        Assert.Equal(UiSettings.PreviewDefaultWidth + step, UiSettings.StepPreviewWidth(UiSettings.PreviewDefaultWidth, 1));
+        Assert.Equal(UiSettings.PreviewMaxWidth, UiSettings.StepPreviewWidth(UiSettings.PreviewMaxWidth, 1));
+        Assert.Equal(UiSettings.PreviewMinWidth, UiSettings.StepPreviewWidth(UiSettings.PreviewMinWidth, -1));
+
+        // The pane divider: both panes keep their minimum width.
+        const double available = 1200;
+        Assert.Equal(600 + step, UiSettings.StepDualPanePrimaryWidth(600, 1, available));
+        Assert.Equal(600 - step, UiSettings.StepDualPanePrimaryWidth(600, -1, available));
+        var widest = available - UiSettings.FilePaneMinWidth - UiSettings.DualPaneDividerWidth;
+        Assert.Equal(widest, UiSettings.StepDualPanePrimaryWidth(widest, 1, available));
+        Assert.Equal(UiSettings.FilePaneMinWidth, UiSettings.StepDualPanePrimaryWidth(UiSettings.FilePaneMinWidth, -1, available));
+    }
+
+    [Fact]
+    public void EveryDivider_HasAResizeCommandEachWay()
+    {
+        string[] ids =
+        [
+            "sidebar-wider", "sidebar-narrower", "preview-wider", "preview-narrower",
+            "pane-divider-left", "pane-divider-right", "panel-larger", "panel-smaller",
+        ];
+
+        foreach (var id in ids)
+        {
+            var command = AppCommandCatalog.Find(id);
+            Assert.True(command is not null, $"{id} is not in the command catalog.");
+            Assert.Equal("View", command!.Group);
+        }
+
+        // Found by what a user would type.
+        Assert.Contains(AppCommandCatalog.Filter("sidebar wider"), command => command.Id == "sidebar-wider");
+        Assert.Contains(OmnibarSuggestions.CommandSuggestions("divider"), suggestion => suggestion.Value == "pane-divider-left");
+    }
+
+    [Fact]
     public void DropDestination_ADragFromAPaneMovesUnlessCtrlIsHeldAndOneFromOutsideCopies()
     {
         Assert.True(DropDestination.IsMove(internalDrag: true, controlHeld: false));

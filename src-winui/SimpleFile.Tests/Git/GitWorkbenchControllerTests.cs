@@ -280,6 +280,40 @@ public class GitWorkbenchControllerTests
     }
 
     [Fact]
+    public async Task Commit_WithAMessageInThePanelsBox_AsksNothingAndEmptiesTheBox()
+    {
+        var (host, backend, model, prompts, controller) = Create();
+        model.CommitMessage = "  From the panel  ";
+
+        await controller.ExecuteAsync(Context(GitCommandIds.Commit), CancellationToken.None);
+
+        Assert.Equal([@"commit R:\repo [From the panel]"], backend.CallsOf("commit"));
+        Assert.Equal(0, prompts.CommitRequests);
+        Assert.Equal("", model.CommitMessage);
+        Assert.Equal(("Committed.", false), host.Notifications[^1]);
+
+        // The box is empty again, so the next Commit asks in the dialog as it always did.
+        prompts.CommitMessage = "From the dialog";
+        await controller.ExecuteAsync(Context(GitCommandIds.Commit), CancellationToken.None);
+        Assert.Equal(1, prompts.CommitRequests);
+        Assert.Equal(@"commit R:\repo [From the dialog]", backend.CallsOf("commit")[^1]);
+    }
+
+    [Fact]
+    public async Task Commit_ThatFails_KeepsTheMessageInThePanelsBox()
+    {
+        var (host, backend, model, prompts, controller) = Create();
+        backend.Commit = (_, _, _) => Task.FromException<GitCommandResult>(new InvalidOperationException("nothing staged"));
+        model.CommitMessage = "Try again later";
+
+        await controller.ExecuteAsync(Context(GitCommandIds.Commit), CancellationToken.None);
+
+        Assert.Equal("Try again later", model.CommitMessage);
+        Assert.Equal(0, prompts.CommitRequests);
+        Assert.Equal(("nothing staged", true), host.Notifications[^1]);
+    }
+
+    [Fact]
     public async Task Commands_WhenDisabled_NotifyTheDisabledMessageAndRunNothing()
     {
         Assert.Equal(9, GitCommandIds.Handled.Count);

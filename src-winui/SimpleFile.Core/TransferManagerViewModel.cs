@@ -352,6 +352,21 @@ public sealed class TransferOperationViewModel : ObservableObject
         TransferOperationStatus.Failed or
         TransferOperationStatus.Skipped;
 
+    /// <summary>A finished row can be taken out of the list on its own; one still queued or running is cancelled first.</summary>
+    public bool CanRemove => IsTerminal;
+
+    /// <summary>
+    /// The names of this row's buttons for a screen reader, which reads a list of rows: "Cancel" alone, once per
+    /// row, would not say which transfer it stops.
+    /// </summary>
+    public string CancelLabel => "Cancel: " + RowLabel;
+
+    public string RemoveLabel => "Remove from the list: " + RowLabel;
+
+    public string OptionsLabel => "Transfer options for: " + RowLabel;
+
+    private string RowLabel => IsExternal || string.IsNullOrWhiteSpace(Destination) ? Title : $"{Title} to {Destination}";
+
     internal CancellationToken CancellationToken => _cts.Token;
 
     internal Task<TransferOperationStatus> RunAsync() => _runner(this, _cts.Token);
@@ -556,6 +571,7 @@ public sealed class TransferOperationViewModel : ObservableObject
         OnPropertyChanged(nameof(CanCancel));
         OnPropertyChanged(nameof(CanChangeOptions));
         OnPropertyChanged(nameof(IsTerminal));
+        OnPropertyChanged(nameof(CanRemove));
     }
 
     private string RunningStatusDetailText()
@@ -790,6 +806,19 @@ public sealed class TransferManagerViewModel : ObservableObject
             operation.MarkCancelling();
             RefreshCounts();
         }
+    }
+
+    /// <summary>Takes one finished row out of the list. False, and nothing changes, for a row that is not finished.</summary>
+    public bool Remove(TransferOperationViewModel operation)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        if (!operation.IsTerminal || !Operations.Remove(operation))
+        {
+            return false;
+        }
+
+        RefreshCounts();
+        return true;
     }
 
     public void ClearCompleted()

@@ -2,6 +2,15 @@ namespace SimpleFile.Core;
 
 public sealed record ConflictFileSnapshot(string Path, string Kind, long? Size, DateTime? ModifiedUtc)
 {
+    /// <summary>
+    /// Whether the conflict dialog shows a small picture of the item beside its details: a file of a picture type
+    /// the app makes thumbnails of itself. Two versions of a photo are told apart at a glance, which their sizes
+    /// and dates do not do.
+    /// </summary>
+    public bool HasThumbnail =>
+        Kind == "File"
+        && System.IO.Path.GetExtension(Path).TrimStart('.').ToLowerInvariant() is "jpg" or "jpeg" or "png" or "gif" or "webp" or "bmp";
+
     public string Description => Kind + (Size is { } size ? $" · {size:N0} bytes" : "")
         + (ModifiedUtc is { } modified ? $" · Modified {modified.ToLocalTime():g}" : "");
 }

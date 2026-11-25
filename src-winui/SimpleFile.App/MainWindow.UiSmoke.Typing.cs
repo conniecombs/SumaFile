@@ -108,6 +108,34 @@ public sealed partial class MainWindow
             MoveColumnBy(PaneId.Primary, "size", -1);
             await SmokeRemoteWaitAsync(() => SmokeColumnOrder() == before, () => $"Size to move back and stop behind Name, the headers are [{SmokeColumnOrder()}]");
             SmokeAssert(workspace.ColumnsFor(PaneId.Primary).VisibleIds[0] == "name", "A column moved in front of Name");
+
+            // 7. The sidebar's divider from the keyboard: the resize commands widen and narrow it by one step.
+            var showedSidebar = false;
+            if (!workspace.Settings.SidebarVisible)
+            {
+                await ToggleSidebarAsync();
+                showedSidebar = true;
+            }
+
+            try
+            {
+                var sidebarWidth = workspace.Settings.SidebarWidth;
+                await RunAppCommandAsync("sidebar-wider");
+                SmokeAssert(Math.Abs(workspace.Settings.SidebarWidth - (sidebarWidth + UiSettings.ResizeCommandStep)) < 0.01
+                    && Math.Abs(SidebarColumn.Width.Value - workspace.Settings.SidebarWidth) < 0.01,
+                    $"'Make the sidebar wider' left it {workspace.Settings.SidebarWidth} wide (column {SidebarColumn.Width.Value}), from {sidebarWidth}");
+                await RunAppCommandAsync("sidebar-narrower");
+                SmokeAssert(Math.Abs(workspace.Settings.SidebarWidth - sidebarWidth) < 0.01 && Math.Abs(SidebarColumn.Width.Value - sidebarWidth) < 0.01,
+                    $"'Make the sidebar narrower' left it {workspace.Settings.SidebarWidth} wide, expected {sidebarWidth} again");
+            }
+            finally
+            {
+                if (showedSidebar)
+                {
+                    await ToggleSidebarAsync();
+                }
+            }
+
             results.Add(new { scenario = "typing-and-columns", passed = true });
         }
         finally

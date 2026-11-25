@@ -142,6 +142,23 @@ public sealed partial class MainWindow
         SmokeAssert(await File.ReadAllTextAsync(Path.Combine(existingFolder, comparisons[0].KeepBothName)) == "incoming content"
             && await File.ReadAllTextAsync(Path.Combine(existingFolder, "report.txt")) == "existing",
             "Keep both preview differed from the backend result or replaced the original file");
+
+        // Two versions of a picture: each card shows its thumbnail, which arrives after the card.
+        var picture = Convert.FromBase64String(SmokeOnePixelPng);
+        await File.WriteAllBytesAsync(Path.Combine(incomingFolder, "photo.png"), picture);
+        await File.WriteAllBytesAsync(Path.Combine(existingFolder, "photo.png"), picture);
+        var pictures = TransferConflictComparisonLoader.Load(
+            [Path.Combine(incomingFolder, "photo.png")], existingFolder, ["photo.png"], CancellationToken.None);
+        SmokeAssert(pictures[0].Incoming.HasThumbnail && pictures[0].Existing.HasThumbnail && !comparisons[0].Incoming.HasThumbnail,
+            "The conflict comparison names the wrong files as pictures");
+        var pictureConflict = new ConflictDialog { XamlRoot = RootGrid.XamlRoot, ThumbnailLoader = LoadConflictThumbnailAsync };
+        pictureConflict.SetConflict(new(false, 1, existingFolder, null, ["photo.png"]));
+        pictureConflict.SetComparisons(pictures);
+        await SmokeWaitAsync(() => pictureConflict.ShownThumbnails == 2, "both cards of a picture conflict to show their thumbnails");
+        // A text file's cards ask for none.
+        pictureConflict.SetComparisons(comparisons);
+        await Task.Delay(300);
+        SmokeAssert(pictureConflict.ShownThumbnails == 0, "A text file's conflict cards show a thumbnail");
         results.Add(new { scenario = "conflict-comparison-dialog", passed = true });
 
         var longName = "quarterly-financial-review-with-a-long-filename-that-must-wrap-and-keep-its-extension-visible.txt";

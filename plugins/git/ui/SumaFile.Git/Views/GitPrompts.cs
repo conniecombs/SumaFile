@@ -30,6 +30,10 @@ internal sealed class GitPrompts(IPluginHost host, Func<XamlRoot?> shownPanelXam
         {
             PlaceholderText = "Commit message",
             MinWidth = 360,
+            MaxHeight = 160,
+            // A subject, a blank line and a body.
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
         };
         AutomationProperties.SetAutomationId(input, GitAutomationIds.CommitMessage);
         AutomationProperties.SetName(input, "Commit message");
@@ -42,7 +46,10 @@ internal sealed class GitPrompts(IPluginHost host, Func<XamlRoot?> shownPanelXam
             PrimaryButtonText = "Commit",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary,
+            // Nothing to commit with until a message is typed.
+            IsPrimaryButtonEnabled = false,
         };
+        input.TextChanged += (_, _) => dialog.IsPrimaryButtonEnabled = !string.IsNullOrWhiteSpace(input.Text);
 
         var result = await _host.Dialogs.ShowDialogAsync(dialog, ct);
         return result == PluginDialogResult.Primary ? input.Text : null;
