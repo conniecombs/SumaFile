@@ -256,6 +256,10 @@ internal static class ExtensionCatalog
     }
 }
 
+/// <summary>
+/// The rules of a rubber-band selection in a file list, for every view: the rectangle between where the drag began
+/// and where the pointer is, the rows it touches, and the selection that makes.
+/// </summary>
 public static class MarqueeSelection
 {
     public static bool Intersects(double x, double y, double width, double height, double itemTop, double itemBottom)
@@ -263,6 +267,33 @@ public static class MarqueeSelection
         var top = Math.Min(y, y + height);
         var bottom = Math.Max(y, y + height);
         return itemBottom >= top && itemTop <= bottom && width != 0;
+    }
+
+    /// <summary>The rectangle spanned by the point the marquee started at and the pointer, whichever way it was dragged.</summary>
+    public static (double X, double Y, double Width, double Height) Bounds(double startX, double startY, double x, double y) =>
+        (Math.Min(startX, x), Math.Min(startY, y), Math.Abs(x - startX), Math.Abs(y - startY));
+
+    /// <summary>Whether two rectangles meet. Rectangles that only share an edge do.</summary>
+    public static bool Intersects(
+        double x, double y, double width, double height,
+        double otherX, double otherY, double otherWidth, double otherHeight) =>
+        !(x + width < otherX || x > otherX + otherWidth || y + height < otherY || y > otherY + otherHeight);
+
+    /// <summary>
+    /// The selection a marquee makes: the items it touches. With Ctrl held (<paramref name="toggle"/>) it is the
+    /// selection the marquee started from, with each touched item's state reversed, as in Explorer.
+    /// </summary>
+    public static HashSet<T> Resolve<T>(IEnumerable<T> initial, IEnumerable<T> touched, bool toggle)
+        where T : notnull
+    {
+        if (!toggle)
+        {
+            return [.. touched];
+        }
+
+        var selection = new HashSet<T>(initial);
+        selection.SymmetricExceptWith(new HashSet<T>(touched));
+        return selection;
     }
 }
 

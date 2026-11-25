@@ -1,0 +1,17 @@
+<Project>
+  <!-- Offline NuGet cache fallback and the .NET runtime pack fallback from src-winui. -->
+  <Import Project="..\src-winui\Directory.Build.targets" />
+
+  <!-- The helpers every plugin's WinUI assembly uses (shared\ui): compiled into each assembly that asks for them, and
+       in scope everywhere in it. A plugin's assemblies are loaded in its own context, so the code is shared as
+       source, not as an assembly. -->
+  <ItemGroup Condition="'$(UsesPluginUiHelpers)' == 'true'">
+    <Compile Include="$(MSBuildThisFileDirectory)shared\ui\*.cs" LinkBase="Shared" />
+    <Using Include="SumaFile.Plugins.Ui" />
+  </ItemGroup>
+
+  <!-- Without this a plugin would silently take the app's version from src-winui. -->
+  <Target Name="RequirePluginManifestVersion" BeforeTargets="BeforeBuild" Condition="'$(PluginManifestVersion)' == ''">
+    <Error Text="No version found in the plugin manifest $(PluginManifestPath)." />
+  </Target>
+</Project>

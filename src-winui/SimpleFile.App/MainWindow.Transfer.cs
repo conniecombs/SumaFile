@@ -55,6 +55,7 @@ public sealed partial class MainWindow
 
     private void OnDetailsRowsDragCompleted(object? sender, EventArgs e)
     {
+        ClearPaneDragHighlights();
         _dragPaths = [];
     }
 
@@ -123,8 +124,41 @@ public sealed partial class MainWindow
         SecondaryPaneRoot.BorderThickness = new Thickness(secondaryHighlighted ? 1.5 : 0);
     }
 
+    // The folder row a drag is over, shown as the drop's destination.
+    private FileRowView? _dropTargetRowView;
+
+    /// <summary>
+    /// Shows <paramref name="folder"/>'s row as where a drop would go, and no other row. Null shows none.
+    /// </summary>
+    private void ShowDropTargetRow(PaneId pane, FileRow? folder)
+    {
+        var view = folder is null ? null : RealizedRowView(pane, folder);
+        if (!ReferenceEquals(view, _dropTargetRowView))
+        {
+            _dropTargetRowView?.SetDropTarget(false);
+            _dropTargetRowView = view;
+        }
+
+        // Set again on every move: a view recycled since the last one has cleared itself.
+        view?.SetDropTarget(true);
+    }
+
+    private FileRowView? RealizedRowView(PaneId pane, FileRow row)
+    {
+        var details = pane == PaneId.Secondary ? SecondaryDetailsFileList : PrimaryDetailsFileList;
+        if (details.Visibility == Visibility.Visible)
+        {
+            return details.RealizedRowView(row);
+        }
+
+        var list = pane == PaneId.Secondary ? SecondaryFileList : PrimaryFileList;
+        return list.ContainerFromItem(row) is ListViewItem item ? FindDescendant<FileRowView>(item) : null;
+    }
+
     private void ClearPaneDragHighlights()
     {
+        ShowDropTargetRow(PaneId.Primary, null);
+        ShowDropTargetChrome(null);
         PrimaryPaneRoot.BorderBrush = Brush("SfBorderBrush");
         PrimaryPaneRoot.BorderThickness = new Thickness(0);
         SecondaryPaneRoot.BorderBrush = Brush("SfBorderBrush");
@@ -158,10 +192,13 @@ public sealed partial class MainWindow
         var hovered = HoveredFileRow(e, pane);
         var target = DropDestination.Resolve(_workspace.Pane(pane).Path, hovered?.Path, hovered?.IsDir == true);
         var sources = _dragPaths.Length > 0 ? _dragPaths : [];
-        var copy = (e.Modifiers & Windows.ApplicationModel.DataTransfer.DragDrop.DragDropModifiers.Control) != 0
-            || sources.Length == 0;
+        var copy = !DropDestination.IsMove(
+            internalDrag: sources.Length > 0,
+            controlHeld: (e.Modifiers & Windows.ApplicationModel.DataTransfer.DragDrop.DragDropModifiers.Control) != 0);
         var valid = sources.Length == 0 || DropDestination.IsValidDrop(sources, target.Destination, move: !copy);
-        SetPaneDragHighlight(pane, valid);
+        // The highlight is where the files would land: the folder row under the pointer, or else the pane.
+        SetPaneDragHighlight(pane, valid && !target.OntoFolder);
+        ShowDropTargetRow(pane, valid && target.OntoFolder ? hovered : null);
         e.AcceptedOperation = valid
             ? (copy ? DataPackageOperation.Copy : DataPackageOperation.Move)
             : DataPackageOperation.None;
@@ -186,9 +223,9 @@ public sealed partial class MainWindow
             return;
         }
 
-        var internalDrag = _dragPaths.Length > 0;
-        var move = internalDrag
-            && (e.Modifiers & Windows.ApplicationModel.DataTransfer.DragDrop.DragDropModifiers.Control) == 0;
+        var move = DropDestination.IsMove(
+            internalDrag: _dragPaths.Length > 0,
+            controlHeld: (e.Modifiers & Windows.ApplicationModel.DataTransfer.DragDrop.DragDropModifiers.Control) != 0);
         if (!DropDestination.IsValidDrop(sources, target.Destination, move))
         {
             SetStatusText("Cannot drop into that location");

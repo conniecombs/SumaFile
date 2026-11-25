@@ -3,10 +3,10 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
 
-namespace SumaFile.Git.Views;
+namespace SumaFile.Plugins.Ui;
 
 /// <summary>
-/// A thin wrapper over <see cref="XamlReader.Load(string)"/> for the plugin's theme-aware fragments (spec §5.3: a
+/// A thin wrapper over <see cref="XamlReader.Load(string)"/> for a plugin's theme-aware fragments (spec §5.3: a
 /// plugin folder cannot hold compiled XAML). Fragments use <c>{ThemeResource …}</c> with the host keys of spec §5.1,
 /// so they follow the app theme; they never use bindings, which the code sets from <c>PropertyChanged</c> instead.
 /// </summary>

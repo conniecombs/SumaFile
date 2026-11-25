@@ -29,6 +29,8 @@ $defaultInstallDir = Join-Path $env:LOCALAPPDATA "Programs\SumaFile-WinUI"
 
 . (Join-Path $PSScriptRoot "lib\plugin-staging.ps1")
 . (Join-Path $PSScriptRoot "lib\wix-msi.ps1")
+# Wait-PathsExist.
+. (Join-Path $PSScriptRoot "lib\smoke-common.ps1")
 
 function Get-RememberedInstallDir {
     $values = Get-ItemProperty -LiteralPath $lifecycleRegistryKey -ErrorAction SilentlyContinue
@@ -40,16 +42,6 @@ function Invoke-Msiexec([string]$Arguments, [string]$Label) {
     Write-Host "msiexec $Arguments"
     $run = Start-Process -FilePath "msiexec.exe" -ArgumentList $Arguments -Wait -PassThru
     if ($run.ExitCode -ne 0) { throw "$Label failed with msiexec exit code $($run.ExitCode); see the log named above." }
-}
-
-function Wait-PathsExist([string[]]$Paths, [int]$Seconds, [string]$Because) {
-    $deadline = (Get-Date).AddSeconds($Seconds)
-    do {
-        $missing = @($Paths | Where-Object { -not (Test-Path -LiteralPath $_) })
-        if ($missing.Count -eq 0) { return }
-        Start-Sleep -Milliseconds 500
-    } while ((Get-Date) -lt $deadline)
-    throw "$Because Missing after $Seconds s: $($missing -join ', ')"
 }
 
 # 1. Inputs and guards.

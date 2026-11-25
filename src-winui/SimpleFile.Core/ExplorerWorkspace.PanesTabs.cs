@@ -31,6 +31,10 @@ public sealed partial class ExplorerWorkspace
     public Task CloseTabAsync(string tabId, PaneId pane, CancellationToken cancellationToken = default) =>
         _panesTabs.CloseTabAsync(this, tabId, pane, cancellationToken);
 
+    /// <summary>Moves a tab to another position in its pane's strip. See <see cref="StripReorder"/>.</summary>
+    public bool MoveTab(string tabId, PaneId pane, int index) =>
+        _panesTabs.MoveTab(this, tabId, pane, index);
+
     public Task ReopenClosedTabAsync(CancellationToken cancellationToken = default) =>
         _panesTabs.ReopenClosedTabAsync(this, cancellationToken);
 

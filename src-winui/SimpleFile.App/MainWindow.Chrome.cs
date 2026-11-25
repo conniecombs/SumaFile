@@ -50,6 +50,7 @@ public sealed partial class MainWindow
                 Foreground = Brush(isLast ? "SfTextPrimaryBrush" : "SfTextMutedBrush"),
             };
             button.Click += OnBreadcrumbClick;
+            AttachPathDropTarget(button);
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, $"Navigate to {segment.Label}");
             host.Children.Add(button);
             if (!isLast)
@@ -146,6 +147,7 @@ public sealed partial class MainWindow
                 Child = tabParts,
             };
             chrome.PointerPressed += OnTabPointerPressed;
+            AttachTabGestures(select, chrome);
             host.Children.Add(chrome);
         }
 

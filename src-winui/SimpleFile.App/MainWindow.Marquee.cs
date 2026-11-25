@@ -6,11 +6,17 @@ using SimpleFile.Core;
 
 namespace SimpleFile.App;
 
+// Rubber-band selection in a file pane, in every view. It starts with a press on the blank space around the rows
+// (a press on a row selects it or starts dragging it) and selects the rows on screen that the rectangle touches;
+// with Ctrl held it reverses them in the selection it started from. The rules are MarqueeSelection's, in Core.
 public sealed partial class MainWindow
 {
     private bool _isMarqueeDragging;
     private Windows.Foundation.Point _marqueeStartPoint;
     private PaneId _marqueePane;
+
+    // The Details view keeps its rows in its own control; the other views are the pane's plain list.
+    private bool _marqueeInDetails;
     private readonly HashSet<object> _marqueeInitialSelection = [];
 
     private void OnPrimaryMarqueePressed(object sender, PointerRoutedEventArgs e)
@@ -22,17 +28,16 @@ public sealed partial class MainWindow
     private void BeginMarquee(object sender, PointerRoutedEventArgs e, PaneId pane, ListView list, Canvas canvas)
     {
         var details = pane == PaneId.Secondary ? SecondaryDetailsFileList : PrimaryDetailsFileList;
-        if (details.Visibility == Visibility.Visible)
-        {
-            return;
-        }
+        var inDetails = details.Visibility == Visibility.Visible;
 
         var props = e.GetCurrentPoint((UIElement)sender).Properties;
         if (!props.IsLeftButtonPressed) return;
 
-        if (IsInsideListViewItem(e.OriginalSource as DependencyObject, list)) return;
+        var source = e.OriginalSource as DependencyObject;
+        if (inDetails ? details.IsInsideRow(source) : IsInsideListViewItem(source, list)) return;
 
         _marqueePane = pane;
+        _marqueeInDetails = inDetails;
         _marqueeStartPoint = e.GetCurrentPoint(canvas).Position;
         _isMarqueeDragging = true;
 
@@ -45,10 +50,15 @@ public sealed partial class MainWindow
         var modifiers = e.KeyModifiers;
         if ((modifiers & Windows.System.VirtualKeyModifiers.Control) != 0)
         {
-            foreach (var item in list.SelectedItems)
+            IEnumerable<object> selected = inDetails ? details.SelectedRows : list.SelectedItems;
+            foreach (var item in selected)
             {
                 _marqueeInitialSelection.Add(item);
             }
+        }
+        else if (inDetails)
+        {
+            details.ClearSelection();
         }
         else
         {
@@ -74,11 +84,7 @@ public sealed partial class MainWindow
         var list = _marqueePane == PaneId.Secondary ? SecondaryFileList : PrimaryFileList;
 
         var currentPoint = e.GetCurrentPoint(canvas).Position;
-
-        double x = Math.Min(_marqueeStartPoint.X, currentPoint.X);
-        double y = Math.Min(_marqueeStartPoint.Y, currentPoint.Y);
-        double width = Math.Abs(currentPoint.X - _marqueeStartPoint.X);
-        double height = Math.Abs(currentPoint.Y - _marqueeStartPoint.Y);
+        var (x, y, width, height) = MarqueeSelection.Bounds(_marqueeStartPoint.X, _marqueeStartPoint.Y, currentPoint.X, currentPoint.Y);
 
         Canvas.SetLeft(rect, x);
         Canvas.SetTop(rect, y);
@@ -123,33 +129,31 @@ public sealed partial class MainWindow
 
     private void UpdateMarqueeSelection(ListView list, Canvas canvas, Windows.Foundation.Rect marqueeBounds, Windows.System.VirtualKeyModifiers modifiers)
     {
-        bool ctrlPressed = (modifiers & Windows.System.VirtualKeyModifiers.Control) != 0;
-        var desired = ctrlPressed
-            ? new HashSet<object>(_marqueeInitialSelection)
-            : new HashSet<object>();
+        var toggle = (modifiers & Windows.System.VirtualKeyModifiers.Control) != 0;
+        if (_marqueeInDetails)
+        {
+            var details = _marqueePane == PaneId.Secondary ? SecondaryDetailsFileList : PrimaryDetailsFileList;
+            details.SelectRows(MarqueeSelection.Resolve(
+                _marqueeInitialSelection.OfType<FileRow>(),
+                details.RowsIntersecting(marqueeBounds, canvas),
+                toggle));
+            return;
+        }
 
+        var touched = new List<object>();
         foreach (var (index, container) in DetailsFileListView.RealizedContainers(list))
         {
-            var rawItem = list.Items[index];
-            var transform = container.TransformToVisual(canvas);
-            var itemBounds = transform.TransformBounds(
+            var itemBounds = container.TransformToVisual(canvas).TransformBounds(
                 new Windows.Foundation.Rect(0, 0, container.ActualWidth, container.ActualHeight));
-
-            if (!RectIntersects(marqueeBounds, itemBounds))
+            if (MarqueeSelection.Intersects(
+                    marqueeBounds.X, marqueeBounds.Y, marqueeBounds.Width, marqueeBounds.Height,
+                    itemBounds.X, itemBounds.Y, itemBounds.Width, itemBounds.Height))
             {
-                continue;
-            }
-
-            if (ctrlPressed && _marqueeInitialSelection.Contains(rawItem))
-            {
-                desired.Remove(rawItem);
-            }
-            else
-            {
-                desired.Add(rawItem);
+                touched.Add(list.Items[index]);
             }
         }
 
+        var desired = MarqueeSelection.Resolve(_marqueeInitialSelection, touched, toggle);
         var toRemove = new List<object>();
         foreach (var current in list.SelectedItems)
         {
@@ -171,11 +175,6 @@ public sealed partial class MainWindow
                 list.SelectedItems.Add(item);
             }
         }
-    }
-
-    private static bool RectIntersects(Windows.Foundation.Rect a, Windows.Foundation.Rect b)
-    {
-        return !(a.Right < b.Left || a.Left > b.Right || a.Bottom < b.Top || a.Top > b.Bottom);
     }
 
     private static bool IsInsideListViewItem(DependencyObject? source, ListView list)

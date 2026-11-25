@@ -18,6 +18,8 @@ $bundleDir = Join-Path $root "dist\winui"
 
 # Assert-BundledPlugins, the app-owned plugin state and the installer smoke helpers (guards, seed, launch, snapshots).
 . (Join-Path $PSScriptRoot "lib\plugin-staging.ps1")
+# The install, uninstall and installer helpers the installer smokes share.
+. (Join-Path $PSScriptRoot "lib\smoke-common.ps1")
 $timeoutSeconds = 25
 $process = $null
 $sentinelPath = $null
@@ -25,77 +27,6 @@ $previousDownloadDir = $null
 $defaultInstallDir = Join-Path $env:LOCALAPPDATA "Programs\SumaFile-WinUI"
 $smokeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("sumafile-upgrade-smoke-" + [System.Guid]::NewGuid().ToString("N"))
 $installDir = Join-Path $smokeRoot "SumaFile-WinUI"
-
-function Get-ExpectedVersion {
-    $props = Get-Content -Path (Join-Path $root "src-winui\Directory.Build.props") -Raw
-    if ($props -match '<InformationalVersion>([^<]+)</InformationalVersion>') {
-        return $Matches[1]
-    }
-    if ($props -match '<Version>([^<]+)</Version>') {
-        return $Matches[1]
-    }
-    throw "Could not read InformationalVersion or Version from src-winui\Directory.Build.props."
-}
-
-function Get-WinUIInstall {
-    @(Get-SumaFileUninstallEntries -Scope CurrentUser) | Select-Object -First 1
-}
-
-function Test-SameFolder([string]$Left, [string]$Right) {
-    $a = [System.IO.Path]::GetFullPath($Left.Trim().Trim('"')).TrimEnd('\')
-    $b = [System.IO.Path]::GetFullPath($Right.Trim().Trim('"')).TrimEnd('\')
-    [string]::Equals($a, $b, [System.StringComparison]::OrdinalIgnoreCase)
-}
-
-function Find-WinUIExecutable($installed) {
-    # Only the HKCU entry's InstallLocation, and only when it is this smoke's folder: the smoke never launches another
-    # install's executable.
-    if (-not $installed.InstallLocation -or -not (Test-SameFolder $installed.InstallLocation $installDir)) {
-        throw "The SumaFile uninstall entry's InstallLocation is '$($installed.InstallLocation)'; expected $installDir."
-    }
-    $exe = Join-Path $installDir "SumaFile.exe"
-    if (Test-Path -LiteralPath $exe -PathType Leaf) { return $exe }
-    return $null
-}
-
-function Invoke-Uninstall($installed) {
-    $uninstallCommand = $installed.Values.QuietUninstallString
-    if (-not $uninstallCommand) {
-        $uninstallCommand = $installed.Values.UninstallString
-    }
-
-    $uninstallerPath = $null
-    if ($uninstallCommand -match '^\s*"([^"]+)"') {
-        $uninstallerPath = $Matches[1]
-    } elseif ($uninstallCommand) {
-        $uninstallerPath = ($uninstallCommand -split "\s+", 2)[0]
-    }
-
-    if (-not $uninstallerPath -or -not (Test-Path -LiteralPath $uninstallerPath)) {
-        throw "Could not find SumaFile uninstaller. UninstallString: '$uninstallCommand'."
-    }
-
-    $uninstall = Start-Process -FilePath $uninstallerPath -ArgumentList "/S" -Wait -PassThru
-    if ($uninstall.ExitCode -ne 0) {
-        throw "WinUI NSIS uninstall failed with exit code $($uninstall.ExitCode)."
-    }
-}
-
-function Resolve-NewInstaller {
-    if ($NewInstaller) {
-        $resolved = Resolve-Path -LiteralPath $NewInstaller -ErrorAction Stop
-        return $resolved.Path
-    }
-
-    $installer = Get-ChildItem -Path $bundleDir -Filter "SumaFile_*_x64-winui-setup.exe" -File -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1
-    if (-not $installer) {
-        throw "No new WinUI NSIS installer found in $bundleDir. Run 'npm run build:winui:release' first."
-    }
-
-    return $installer.FullName
-}
 
 function Resolve-PreviousInstaller {
     if ($PreviousInstaller) {
@@ -192,7 +123,7 @@ function Assert-Installed {
         throw "Installed WinUI version '$($installed.DisplayVersion)' did not match expected '$ExpectedVersion'."
     }
 
-    $exePath = Find-WinUIExecutable $installed
+    $exePath = Find-WinUIExecutable -Installed $installed -InstallDir $installDir
     if (-not $exePath) {
         throw "Installed SumaFile.exe was not found in $installDir."
     }
@@ -224,8 +155,8 @@ function Stop-SmokeProcesses {
     $script:process = $null
 }
 
-$expectedVersion = Get-ExpectedVersion
-$newInstallerPath = Resolve-NewInstaller
+$expectedVersion = Get-SumaFileDisplayVersion -Root $root
+$newInstallerPath = Resolve-NewInstaller -Explicit $NewInstaller -BundleDir $bundleDir
 $previousInstallerPath = Resolve-PreviousInstaller
 if (-not $previousInstallerPath) {
     Clear-PreviousDownload

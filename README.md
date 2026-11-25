@@ -144,9 +144,15 @@ uninstalling, or remove those entries in Credential Manager. Settings in
 - Dual-pane browsing with independent pane history, tabs, sort, view and
   selection
 - Pane-local tabs with history, close, switch, direct tab shortcuts, and
-  Reopen closed tab from the command palette
+  Reopen closed tab from the command palette. Drag a tab to reorder it,
+  middle-click a tab to close it, and middle-click a folder, a breadcrumb or
+  a sidebar entry to open it in a new tab
+- Files dropped onto a folder's row, a tab, a breadcrumb or a sidebar entry
+  go into that folder
+- Back and forward with the mouse's side buttons
 - Open in other pane on a folder's menu
-- Breadcrumbs and a single omnibar for paths, commands, search, and filtering
+- Breadcrumbs and a single omnibar for paths, commands, search, and filtering,
+  with folder and command suggestions as you type
 - Quick Access, drives with labels and network-share status, bookmarks, recent
   locations, smart folders, and folder tree sections
 - Persistent pane-local filter counts, Clear filter, and search result banners
@@ -336,6 +342,11 @@ plugin, SumaFile shows no FTP/SFTP UI.
 - Profile test before save
 - Remote folder browsing with create folder, upload, download, rename, delete,
   refresh, and disconnect actions
+- Local and remote lists that work like a file pane: click to select,
+  double-click or Enter to open a folder, a typed path in either folder box,
+  Name, Size and Modified columns, Backspace, F5, F2 and Delete, a context
+  menu, drag between the two lists (or from Explorer onto the remote list) to
+  upload and download, and splitters between the panels
 - Recursive folder uploads and downloads, including empty folders
 - Streamed transfers with byte progress, per-item outcomes, and retry of
   incomplete selections; existing files are preserved until transfer
@@ -387,6 +398,7 @@ Press `F1` or `Ctrl+/` in SumaFile for the live shortcut list.
 | `Ctrl+Shift+Left` / `Ctrl+Shift+Right` | Focus left / right pane |
 | `Ctrl+T` or `Ctrl+N` / `Ctrl+W` | New tab / close tab |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
+| `Ctrl+Shift+PageUp` / `Ctrl+Shift+PageDown` | Move the focused tab left / right |
 | `Ctrl+1`-`Ctrl+9` | Jump to tab; `9` means last tab |
 | `F2` | Rename |
 | `Delete` / `Shift+Delete` | Recycle Bin delete / permanent delete |
@@ -555,8 +567,8 @@ and the template in `templates/sumafile-plugin`.
   task state requires editing the Markdown source.
 - Some Windows-reserved shortcuts may not be assignable; shortcut remapping,
   import, and export live in Settings -> Shortcuts.
-- Inline rename is available in the Details view; List, Tiles and Content views
-  still open the rename dialog.
+- Renaming in place takes one selected item; with several selected, F2 opens
+  the rename dialog.
 
 ## Development
 

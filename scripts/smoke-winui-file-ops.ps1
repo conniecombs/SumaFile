@@ -8,6 +8,8 @@ Set-StrictMode -Version 3.0
 $ErrorActionPreference = "Stop"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+# ConvertTo-NativeArgument and Invoke-GitProcess.
+. (Join-Path $PSScriptRoot "lib\smoke-common.ps1")
 $payloadDir = Join-Path $root "dist\winui\payload"
 $servicePath = Join-Path $payloadDir "simplefile-service.exe"
 
@@ -451,27 +453,23 @@ function Stop-RemoteBackend {
     }
 }
 
-function ConvertTo-NativeArgument {
-    # One argument of a Windows command line, quoted the way the C runtime splits it.
-    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
-
-    if ($Value.Length -gt 0 -and $Value -notmatch '[\s"]') {
-        return $Value
+function Get-SmokeGitEnvironment {
+    # The isolation every git process of the Git plugin smoke runs with.
+    @{
+        GIT_CONFIG_GLOBAL       = $gitSmokeConfig
+        GIT_CONFIG_NOSYSTEM     = "1"
+        GIT_CEILING_DIRECTORIES = $smokeRoot
+        GIT_TERMINAL_PROMPT     = "0"
     }
-
-    $escaped = [regex]::Replace($Value, '(\\*)"', '$1$1\"')
-    $escaped = [regex]::Replace($escaped, '(\\+)$', '$1$1')
-    return '"' + $escaped + '"'
 }
 
 function Set-SmokeGitIsolation {
-    # The isolation every git process of the Git plugin smoke runs with.
     param([Parameter(Mandatory = $true)][System.Diagnostics.ProcessStartInfo]$StartInfo)
 
-    $StartInfo.EnvironmentVariables["GIT_CONFIG_GLOBAL"] = $gitSmokeConfig
-    $StartInfo.EnvironmentVariables["GIT_CONFIG_NOSYSTEM"] = "1"
-    $StartInfo.EnvironmentVariables["GIT_CEILING_DIRECTORIES"] = $smokeRoot
-    $StartInfo.EnvironmentVariables["GIT_TERMINAL_PROMPT"] = "0"
+    $environment = Get-SmokeGitEnvironment
+    foreach ($name in $environment.Keys) {
+        $StartInfo.EnvironmentVariables[$name] = $environment[$name]
+    }
 }
 
 function Invoke-SmokeGit {
@@ -481,35 +479,8 @@ function Invoke-SmokeGit {
         [Parameter(Mandatory = $true)][string[]]$Arguments
     )
 
-    $start = New-Object System.Diagnostics.ProcessStartInfo
-    $start.FileName = $script:gitExe
-    $start.Arguments = (@(@("-C", $Directory) + $Arguments) | ForEach-Object { ConvertTo-NativeArgument $_ }) -join " "
-    $start.UseShellExecute = $false
-    $start.CreateNoWindow = $true
-    $start.RedirectStandardOutput = $true
-    $start.RedirectStandardError = $true
-    $start.StandardOutputEncoding = New-Object System.Text.UTF8Encoding $false
-    $start.StandardErrorEncoding = New-Object System.Text.UTF8Encoding $false
-    Set-SmokeGitIsolation -StartInfo $start
-    $process = [System.Diagnostics.Process]::Start($start)
-    try {
-        $stdout = $process.StandardOutput.ReadToEndAsync()
-        $stderr = $process.StandardError.ReadToEndAsync()
-        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-            try { $process.Kill() } catch {}
-            throw "git $($Arguments -join ' ') did not finish within $TimeoutSeconds seconds."
-        }
-
-        $process.WaitForExit()
-        if ($process.ExitCode -ne 0) {
-            throw "git $($Arguments -join ' ') in $Directory failed with exit code $($process.ExitCode): $($stderr.Result)"
-        }
-
-        return $stdout.Result
-    }
-    finally {
-        $process.Dispose()
-    }
+    Invoke-GitProcess -GitExe $script:gitExe -WorkingDirectory $Directory -Arguments $Arguments `
+        -Environment (Get-SmokeGitEnvironment) -TimeoutSeconds $TimeoutSeconds
 }
 
 function Invoke-GitPluginSmoke {

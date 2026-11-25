@@ -486,6 +486,52 @@ public class RemoteManagerViewModelTests
         Assert.Equal(["/", "/incoming", "/"], backend.ListedPaths);
     }
 
+    /// <summary>The remote path box is editable: a typed folder is listed, and one that cannot be changes nothing.</summary>
+    [Fact]
+    public async Task NavigateRemotePathAsync_ListsATypedFolderAndKeepsTheListingWhenItFails()
+    {
+        var backend = new FakeRemoteBackend(
+        [
+            new RemoteProfile { Id = "prod", Name = "Production", Protocol = "sftp", Host = "example.com", Port = 22, Username = "deploy", RootPath = "/", AuthKind = "password" },
+        ])
+        {
+            Session = new RemoteSession { SessionId = "remote-session-1", ProfileId = "prod", Protocol = "sftp", RootPath = "/" },
+            ListingsByPath =
+            {
+                ["/"] = new RemoteDirectoryListing
+                {
+                    Path = "/",
+                    Entries = [new RemoteFileEntry { Name = "incoming", Path = "/incoming", IsDir = true }],
+                },
+                ["/incoming"] = new RemoteDirectoryListing
+                {
+                    Path = "/incoming",
+                    Parent = "/",
+                    Entries = [new RemoteFileEntry { Name = "app.txt", Path = "/incoming/app.txt" }],
+                },
+            },
+        };
+        var viewModel = Create(backend);
+        await viewModel.LoadProfilesAsync();
+        await viewModel.ConnectSelectedProfileAsync();
+
+        // Typed without its leading slash and with blanks around it.
+        await viewModel.NavigateRemotePathAsync("  incoming ");
+
+        Assert.Equal("/incoming", viewModel.RemotePath);
+        Assert.Equal("app.txt", Assert.Single(viewModel.RemoteEntries).Name);
+        Assert.Equal("Remote path: /incoming", viewModel.StatusText);
+
+        // The fake fails a path it has no listing for, as a server does for a folder that is not there.
+        await Assert.ThrowsAnyAsync<Exception>(() => viewModel.NavigateRemotePathAsync("/missing"));
+
+        Assert.Equal("/incoming", viewModel.RemotePath);
+        Assert.Equal("app.txt", Assert.Single(viewModel.RemoteEntries).Name);
+        Assert.False(viewModel.IsBusy);
+        Assert.True(viewModel.CanMutateRemoteEntries);
+        Assert.Equal(["/", "/incoming", "/missing"], backend.ListedPaths);
+    }
+
     [Fact]
     public async Task LocalNavigationMethods_LoadBrowseAndReturnToParent()
     {

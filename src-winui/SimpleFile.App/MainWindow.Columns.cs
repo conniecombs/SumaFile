@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using SimpleFile.Core;
@@ -46,7 +47,7 @@ public sealed partial class MainWindow
                     Width = new GridLength(column.Width),
                 });
 
-                var cell = new Grid();
+                var cell = new Grid { Tag = column.Id };
                 var button = new Button
                 {
                     Style = ChromeStyle("SfColumnHeaderButtonStyle"),
@@ -56,6 +57,7 @@ public sealed partial class MainWindow
                     ContextFlyout = CreateColumnsFlyout(pane, column.Id),
                 };
                 button.Click += OnSortColumn;
+                AttachColumnHeaderDrag(button, column.Id, pane);
                 ToolTipService.SetToolTip(button, $"Sort by {column.Label}");
                 AutomationProperties.SetName(button, SortAutomationName(column, pane));
                 cell.Children.Add(button);
@@ -106,6 +108,22 @@ public sealed partial class MainWindow
 
         AppendLazyColumnItems(flyout, pane, columnId);
         flyout.Items.Add(new MenuFlyoutSeparator());
+        // What dragging the header does, for the keyboard.
+        var moveLeft = new MenuFlyoutItem { Text = "Move Column Left" };
+        AutomationProperties.SetAutomationId(moveLeft, "Columns.MoveLeft");
+        moveLeft.Click += (_, _) => MoveColumnBy(pane, columnId, -1);
+        var moveRight = new MenuFlyoutItem { Text = "Move Column Right" };
+        AutomationProperties.SetAutomationId(moveRight, "Columns.MoveRight");
+        moveRight.Click += (_, _) => MoveColumnBy(pane, columnId, 1);
+        flyout.Opening += (_, _) =>
+        {
+            var layout = _workspace?.ColumnsFor(pane);
+            moveLeft.IsEnabled = layout?.CanMove(columnId, -1) == true;
+            moveRight.IsEnabled = layout?.CanMove(columnId, 1) == true;
+        };
+        flyout.Items.Add(moveLeft);
+        flyout.Items.Add(moveRight);
+        flyout.Items.Add(new MenuFlyoutSeparator());
         var sizeColumn = new MenuFlyoutItem { Text = "Size Column to Fit" };
         sizeColumn.Click += (_, _) => SizeColumnToFit(columnId, pane, save: true);
         var sizeAll = new MenuFlyoutItem { Text = "Size All Columns to Fit" };
@@ -113,6 +131,143 @@ public sealed partial class MainWindow
         flyout.Items.Add(sizeColumn);
         flyout.Items.Add(sizeAll);
         return flyout;
+    }
+
+    // The column header being dragged along the header row, from the press on it until the release.
+    private ColumnHeaderDrag? _columnHeaderDrag;
+
+    private readonly record struct ColumnHeaderDrag(PaneId Pane, string ColumnId, Button Button, Grid Header, double StartX, bool Moving);
+
+    /// <summary>
+    /// Lets a column be dragged to another place in the header row: it takes the place of the column it is let go
+    /// on, which is marked meanwhile. The name column stays first. Like a tab, a header is a button, which keeps the
+    /// pointer from its press to its release and gives it up before a handler added here hears of the release.
+    /// </summary>
+    private void AttachColumnHeaderDrag(Button button, string columnId, PaneId pane)
+    {
+        if (columnId == "name")
+        {
+            return;
+        }
+
+        button.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, e) =>
+        {
+            if (e.GetCurrentPoint(button).Properties.IsLeftButtonPressed
+                && (button.Parent as FrameworkElement)?.Parent is Grid header)
+            {
+                _columnHeaderDrag = new ColumnHeaderDrag(pane, columnId, button, header, e.GetCurrentPoint(header).Position.X, Moving: false);
+            }
+        }), true);
+        button.AddHandler(UIElement.PointerMovedEvent, new PointerEventHandler(OnColumnHeaderDragMoved), true);
+        button.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(OnColumnHeaderDragReleased), true);
+        button.PointerCaptureLost += OnColumnHeaderDragReleased;
+    }
+
+    private void OnColumnHeaderDragMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (_columnHeaderDrag is not { } drag || !ReferenceEquals(sender, drag.Button))
+        {
+            return;
+        }
+
+        var point = e.GetCurrentPoint(drag.Header);
+        if (!point.Properties.IsLeftButtonPressed)
+        {
+            EndColumnHeaderDrag();
+            return;
+        }
+
+        if (!drag.Moving && Math.Abs(point.Position.X - drag.StartX) < TabDragThreshold)
+        {
+            return;
+        }
+
+        _columnHeaderDrag = drag with { Moving = true };
+        drag.Button.Opacity = 0.6;
+        var target = ColumnHeaderCellAt(drag.Header, point.Position.X);
+        ShowDropTargetChrome(target is not null && !ReferenceEquals(target, drag.Button.Parent) && target.Tag as string != "name"
+            ? target.Children.OfType<Button>().FirstOrDefault()
+            : null);
+    }
+
+    private void OnColumnHeaderDragReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (_columnHeaderDrag is not { } drag)
+        {
+            return;
+        }
+
+        EndColumnHeaderDrag();
+        var point = e.GetCurrentPoint(drag.Header);
+        if (!drag.Moving || _workspace is not { } workspace || point.Properties.IsLeftButtonPressed)
+        {
+            // A click, which sorts; or the pointer was taken away with the button still down.
+            return;
+        }
+
+        // The place of the column under the pointer in the saved order: a narrow pane shows its columns in another.
+        var targetId = ColumnHeaderCellAt(drag.Header, point.Position.X)?.Tag as string;
+        var index = targetId is null ? -1 : workspace.ColumnsFor(drag.Pane).VisibleIds.IndexOf(targetId);
+        if (index >= 0)
+        {
+            ApplyColumnMove(drag.Pane, drag.ColumnId, index);
+        }
+    }
+
+    private void EndColumnHeaderDrag()
+    {
+        if (_columnHeaderDrag is not { } drag)
+        {
+            return;
+        }
+
+        _columnHeaderDrag = null;
+        drag.Button.Opacity = 1;
+        ShowDropTargetChrome(null);
+    }
+
+    /// <summary>The header cell at <paramref name="x"/> across the header row; the first or the last past its ends.</summary>
+    private static Grid? ColumnHeaderCellAt(Grid header, double x)
+    {
+        var cells = header.Children.OfType<Grid>().Where(cell => cell.Tag is string).ToList();
+        if (cells.Count == 0)
+        {
+            return null;
+        }
+
+        var edges = cells
+            .Select(cell =>
+            {
+                var left = cell.TransformToVisual(header).TransformPoint(new Windows.Foundation.Point(0, 0)).X;
+                return (left, left + cell.ActualWidth);
+            })
+            .ToList();
+        return cells[StripReorder.TargetIndex(x, edges)];
+    }
+
+    private void MoveColumnBy(PaneId pane, string columnId, int delta)
+    {
+        if (_workspace is not { } workspace)
+        {
+            return;
+        }
+
+        var ids = workspace.ColumnsFor(pane).VisibleIds;
+        var index = ids.IndexOf(columnId);
+        if (index >= 0)
+        {
+            ApplyColumnMove(pane, columnId, StripReorder.Step(index, ids.Count, delta));
+        }
+    }
+
+    /// <summary>Moves the column and, when it moved, shows and saves the new order as a change of columns is saved.</summary>
+    private void ApplyColumnMove(PaneId pane, string columnId, int index)
+    {
+        if (_workspace is { } workspace && workspace.MoveColumn(pane, columnId, index))
+        {
+            SyncFromWorkspace();
+            _ = RunUiActionAsync("Columns", () => workspace.SaveUiSettingsAsync());
+        }
     }
 
     /// <summary>The same picker as a "Columns" submenu at the end of the list background's menu, in the Details view.</summary>

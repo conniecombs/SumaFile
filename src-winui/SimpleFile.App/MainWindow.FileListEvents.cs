@@ -140,6 +140,19 @@ public sealed partial class MainWindow
             return;
         }
 
+        // Ctrl+Shift+PageUp and PageDown move the tab, as in a browser. (Ctrl+Shift+Left and Right are the
+        // window's shortcuts for the left and the right pane.)
+        if (e.Key is VirtualKey.PageUp or VirtualKey.PageDown)
+        {
+            if (IsKeyDown(VirtualKey.Control) && IsKeyDown(VirtualKey.Shift))
+            {
+                e.Handled = true;
+                TryMoveTabWithKeyboard(tab, e.Key == VirtualKey.PageDown ? 1 : -1);
+            }
+
+            return;
+        }
+
         if (e.Key is not VirtualKey.Left and not VirtualKey.Right)
         {
             return;
@@ -590,9 +603,9 @@ public sealed partial class MainWindow
     private bool IsInlineRenameActive => _inlineRenamePending || _inlineRenameView?.IsRenaming == true;
 
     /// <summary>
-    /// F2 in the Details view with exactly one item selected renames it in place. Returns
-    /// false (so the caller falls back to the rename dialog) for other views, multiple or no
-    /// selection, or when the row cannot be realized.
+    /// F2 with exactly one item selected renames it in place, in every view. Returns false (so the
+    /// caller falls back to the rename dialog) for multiple or no selection, in the Recycle Bin, or
+    /// when the row cannot be realized.
     /// </summary>
     private bool TryBeginInlineRename()
     {
@@ -608,26 +621,19 @@ public sealed partial class MainWindow
         }
 
         var pane = ActiveUiPane;
-        if (!string.Equals(workspace.ViewFor(pane), "details", StringComparison.Ordinal)
-            || PathRules.IsRecycleBinPath(workspace.Pane(pane).Path))
+        if (PathRules.IsRecycleBinPath(workspace.Pane(pane).Path))
         {
             return false;
         }
 
-        var list = pane == PaneId.Secondary ? SecondaryDetailsFileList : PrimaryDetailsFileList;
-        if (list.Visibility != Visibility.Visible)
-        {
-            return false;
-        }
-
-        var selected = list.SelectedRows;
+        var selected = SelectedRowsForPane(pane);
         if (selected.Count != 1)
         {
             return false;
         }
 
         var target = selected[0];
-        if (list.RowViewFor(target) is null)
+        if (RowViewForRename(pane, target) is null)
         {
             return false;
         }
@@ -645,8 +651,8 @@ public sealed partial class MainWindow
             }
 
             _inlineRenamePending = false;
-            var stillSelected = list.SelectedRows is { Count: 1 } rows && ReferenceEquals(rows[0], target);
-            if (stillSelected && list.RowViewFor(target) is { } view && view.BeginRename(CommitInlineRenameAsync))
+            var stillSelected = SelectedRowsForPane(pane) is { Count: 1 } rows && ReferenceEquals(rows[0], target);
+            if (stillSelected && RowViewForRename(pane, target) is { } view && view.BeginRename(CommitInlineRenameAsync))
             {
                 _inlineRenameView = view;
                 return;
@@ -664,6 +670,28 @@ public sealed partial class MainWindow
         }
 
         return queued;
+    }
+
+    /// <summary>
+    /// The view of <paramref name="row"/> in the list the pane is showing, scrolled into view first: the Details
+    /// list, or the plain list of the List, Tiles and Content views.
+    /// </summary>
+    private FileRowView? RowViewForRename(PaneId pane, FileRow row)
+    {
+        var details = pane == PaneId.Secondary ? SecondaryDetailsFileList : PrimaryDetailsFileList;
+        if (details.Visibility == Visibility.Visible)
+        {
+            return details.RowViewFor(row);
+        }
+
+        var list = pane == PaneId.Secondary ? SecondaryFileList : PrimaryFileList;
+        if (list.ContainerFromItem(row) is not ListViewItem)
+        {
+            list.ScrollIntoView(row);
+            list.UpdateLayout();
+        }
+
+        return list.ContainerFromItem(row) is ListViewItem item ? FindDescendant<FileRowView>(item) : null;
     }
 
     private void CancelInlineRename()

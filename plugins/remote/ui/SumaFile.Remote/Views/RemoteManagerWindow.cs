@@ -13,7 +13,7 @@ namespace SumaFile.Remote.Views;
 /// <summary>
 /// The FTP/SFTP manager: a plain <see cref="Window"/> subclass built in code (spec §5.3), ported from the 1.0.4
 /// <c>RemoteManagerWindow.xaml</c>. The layout is one theme-aware <see cref="Xaml"/> fragment; the code wires its
-/// events, fills its lists with code-created items and copies view model values on <c>PropertyChanged</c>. Every
+/// events, fills its lists from the view model's collections and copies its values on <c>PropertyChanged</c>. Every
 /// dialog goes through the host's dialog gate on this window's own XamlRoot, and the host gives the window its
 /// chrome and closes it before the plugin stops.
 /// </summary>
@@ -60,11 +60,13 @@ internal sealed partial class RemoteManagerWindow : Window
                 </Button>
             </Grid>
 
-            <Grid Grid.Row="1" ColumnSpacing="12">
+            <Grid x:Name="PanesGrid" Grid.Row="1">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="260" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition x:Name="ProfilesColumn" Width="260" />
+                    <ColumnDefinition Width="12" />
+                    <ColumnDefinition x:Name="LocalColumn" Width="*" />
+                    <ColumnDefinition Width="12" />
+                    <ColumnDefinition x:Name="RemoteColumn" Width="*" />
                 </Grid.ColumnDefinitions>
 
                 <Border Padding="12" Background="{ThemeResource SfBgPrimaryBrush}" BorderBrush="{ThemeResource SfBorderBrush}" BorderThickness="1" CornerRadius="8">
@@ -95,16 +97,17 @@ internal sealed partial class RemoteManagerWindow : Window
                     </Grid>
                 </Border>
 
-                <Border Grid.Column="1" Padding="12" Background="{ThemeResource SfBgPrimaryBrush}" BorderBrush="{ThemeResource SfBorderBrush}" BorderThickness="1" CornerRadius="8">
+                <Border Grid.Column="2" Padding="12" Background="{ThemeResource SfBgPrimaryBrush}" BorderBrush="{ThemeResource SfBorderBrush}" BorderThickness="1" CornerRadius="8">
                     <Grid RowSpacing="10">
                         <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
                         <Grid ColumnSpacing="8">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="Auto" />
@@ -120,20 +123,35 @@ internal sealed partial class RemoteManagerWindow : Window
                             <Button x:Name="ChooseLocalButton" Grid.Column="3" Style="{ThemeResource SfGhostButtonStyle}" AutomationProperties.Name="Choose local folder" ToolTipService.ToolTip="Choose local folder">
                                 <FontIcon FontFamily="{ThemeResource SfIconFont}" FontSize="11" Glyph="&#xE8B7;" />
                             </Button>
-                            <Button x:Name="UploadButton" Grid.Column="4" Style="{ThemeResource SfGhostButtonStyle}" AutomationProperties.Name="Upload selected local files to remote pane" ToolTipService.ToolTip="Upload selected local files to remote pane">
-                                <FontIcon FontFamily="{ThemeResource SfIconFont}" FontSize="11" Glyph="&#xE898;" />
-                            </Button>
-                            <Button x:Name="LocalRefreshButton" Grid.Column="5" Style="{ThemeResource SfGhostButtonStyle}" AutomationProperties.Name="Refresh local folder" ToolTipService.ToolTip="Refresh local folder">
+                            <Button x:Name="LocalRefreshButton" Grid.Column="4" Style="{ThemeResource SfGhostButtonStyle}" AutomationProperties.Name="Refresh local folder" ToolTipService.ToolTip="Refresh local folder">
                                 <FontIcon FontFamily="{ThemeResource SfIconFont}" FontSize="11" Glyph="&#xE72C;" />
                             </Button>
                         </Grid>
-                        <ListView x:Name="LocalListView" Grid.Row="1" IsItemClickEnabled="True" SelectionMode="Extended" AutomationProperties.Name="Local files" />
+                        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
+                            <Button x:Name="UploadButton" Style="{ThemeResource SfGhostButtonStyle}" AutomationProperties.Name="Upload selected local files to remote pane" ToolTipService.ToolTip="Upload selected local files to remote pane">
+                                <FontIcon FontFamily="{ThemeResource SfIconFont}" FontSize="11" Glyph="&#xE898;" />
+                            </Button>
+                        </StackPanel>
+                        <Grid Grid.Row="2" Margin="16,0,12,0" ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="16" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="72" />
+                                <ColumnDefinition Width="124" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="1" FontSize="12" Foreground="{ThemeResource SfTextMutedBrush}" Text="Name" />
+                            <TextBlock Grid.Column="2" HorizontalAlignment="Right" FontSize="12" Foreground="{ThemeResource SfTextMutedBrush}" Text="Size" />
+                            <TextBlock Grid.Column="3" HorizontalAlignment="Right" FontSize="12" Foreground="{ThemeResource SfTextMutedBrush}" Text="Modified" />
+                        </Grid>
+                        <ListView x:Name="LocalListView" Grid.Row="3" SelectionMode="Extended" AutomationProperties.Name="Local files" />
                     </Grid>
                 </Border>
 
-                <Border Grid.Column="2" Padding="12" Background="{ThemeResource SfBgPrimaryBrush}" BorderBrush="{ThemeResource SfBorderBrush}" BorderThickness="1" CornerRadius="8">
+                <Border Grid.Column="4" Padding="12" Background="{ThemeResource SfBgPrimaryBrush}" BorderBrush="{ThemeResource SfBorderBrush}" BorderThickness="1" CornerRadius="8">
                     <Grid RowSpacing="10">
                         <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
                             <RowDefinition Height="Auto" />
@@ -144,39 +162,51 @@ internal sealed partial class RemoteManagerWindow : Window
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <TextBox x:Name="RemotePathBox" IsReadOnly="True" Style="{ThemeResource SfTextBoxStyle}" AutomationProperties.Name="Remote folder" />
-                            <Button x:Name="RemoteUpButton" Grid.Column="1" Style="{ThemeResource SfGhostButtonStyle}" AutomationProperties.Name="Go to parent remote folder" ToolTipService.ToolTip="Go to parent remote folder">
+                            <TextBox x:Name="RemotePathBox" PlaceholderText="Type a remote folder" Style="{ThemeResource SfTextBoxStyle}" AutomationProperties.Name="Remote folder" />
+                            <Button x:Name="RemoteGoButton" Grid.Column="1" Style="{ThemeResource SfGhostButtonStyle}" AutomationProperties.Name="Go to the typed remote folder" ToolTipService.ToolTip="Go to the typed remote folder">
+                                <FontIcon FontFamily="{ThemeResource SfIconFont}" FontSize="11" Glyph="&#xE72A;" />
+                            </Button>
+                            <Button x:Name="RemoteUpButton" Grid.Column="2" Style="{ThemeResource SfGhostButtonStyle}" AutomationProperties.Name="Go to parent remote folder" ToolTipService.ToolTip="Go to parent remote folder">
                                 <FontIcon FontFamily="{ThemeResource SfIconFont}" FontSize="11" Glyph="&#xE74A;" />
                             </Button>
-                            <Button x:Name="NewFolderButton" Grid.Column="2" Style="{ThemeResource SfGhostButtonStyle}" AutomationProperties.Name="Create remote folder" ToolTipService.ToolTip="Create remote folder">
-                                <FontIcon FontFamily="{ThemeResource SfIconFont}" FontSize="11" Glyph="&#xE8F4;" />
-                            </Button>
-                            <Button x:Name="RemoteUploadButton" Grid.Column="3" Style="{ThemeResource SfGhostButtonStyle}" AutomationProperties.Name="Upload selected local files to remote pane" ToolTipService.ToolTip="Upload selected local files to remote pane">
-                                <FontIcon FontFamily="{ThemeResource SfIconFont}" FontSize="11" Glyph="&#xE898;" />
-                            </Button>
-                            <Button x:Name="DownloadButton" Grid.Column="4" Style="{ThemeResource SfGhostButtonStyle}" AutomationProperties.Name="Download selected remote files and folders to local pane" ToolTipService.ToolTip="Download selected remote files and folders to local pane">
-                                <FontIcon FontFamily="{ThemeResource SfIconFont}" FontSize="11" Glyph="&#xE896;" />
-                            </Button>
-                            <Button x:Name="RenameButton" Grid.Column="5" Style="{ThemeResource SfGhostButtonStyle}" AutomationProperties.Name="Rename selected remote item" ToolTipService.ToolTip="Rename selected remote item">
-                                <FontIcon FontFamily="{ThemeResource SfIconFont}" FontSize="11" Glyph="&#xE8AC;" />
-                            </Button>
-                            <Button x:Name="DeleteEntriesButton" Grid.Column="6" Style="{ThemeResource SfGhostButtonStyle}" AutomationProperties.Name="Delete selected remote items" ToolTipService.ToolTip="Delete selected remote items">
-                                <FontIcon FontFamily="{ThemeResource SfIconFont}" FontSize="11" Glyph="&#xE74D;" />
-                            </Button>
-                            <Button x:Name="RemoteRefreshButton" Grid.Column="7" Style="{ThemeResource SfGhostButtonStyle}" ToolTipService.ToolTip="Refresh remote directory" AutomationProperties.Name="Refresh remote directory">
+                            <Button x:Name="RemoteRefreshButton" Grid.Column="3" Style="{ThemeResource SfGhostButtonStyle}" ToolTipService.ToolTip="Refresh remote directory" AutomationProperties.Name="Refresh remote directory">
                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                     <FontIcon FontFamily="{ThemeResource SfIconFont}" FontSize="11" Glyph="&#xE72C;" />
                                     <TextBlock Text="Refresh" />
                                 </StackPanel>
                             </Button>
                         </Grid>
-                        <ListView x:Name="RemoteListView" Grid.Row="1" IsItemClickEnabled="True" SelectionMode="Extended" AutomationProperties.Name="Remote files" />
-                        <ListView x:Name="TransferListView" Grid.Row="2" MaxHeight="112" SelectionMode="None" AutomationProperties.Name="Finished transfers" />
+                        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
+                            <Button x:Name="NewFolderButton" Style="{ThemeResource SfGhostButtonStyle}" AutomationProperties.Name="Create remote folder" ToolTipService.ToolTip="Create remote folder">
+                                <FontIcon FontFamily="{ThemeResource SfIconFont}" FontSize="11" Glyph="&#xE8F4;" />
+                            </Button>
+                            <Button x:Name="RemoteUploadButton" Style="{ThemeResource SfGhostButtonStyle}" AutomationProperties.Name="Upload selected local files to remote pane" ToolTipService.ToolTip="Upload selected local files to remote pane">
+                                <FontIcon FontFamily="{ThemeResource SfIconFont}" FontSize="11" Glyph="&#xE898;" />
+                            </Button>
+                            <Button x:Name="DownloadButton" Style="{ThemeResource SfGhostButtonStyle}" AutomationProperties.Name="Download selected remote files and folders to local pane" ToolTipService.ToolTip="Download selected remote files and folders to local pane">
+                                <FontIcon FontFamily="{ThemeResource SfIconFont}" FontSize="11" Glyph="&#xE896;" />
+                            </Button>
+                            <Button x:Name="RenameButton" Style="{ThemeResource SfGhostButtonStyle}" AutomationProperties.Name="Rename selected remote item" ToolTipService.ToolTip="Rename selected remote item">
+                                <FontIcon FontFamily="{ThemeResource SfIconFont}" FontSize="11" Glyph="&#xE8AC;" />
+                            </Button>
+                            <Button x:Name="DeleteEntriesButton" Style="{ThemeResource SfGhostButtonStyle}" AutomationProperties.Name="Delete selected remote items" ToolTipService.ToolTip="Delete selected remote items">
+                                <FontIcon FontFamily="{ThemeResource SfIconFont}" FontSize="11" Glyph="&#xE74D;" />
+                            </Button>
+                        </StackPanel>
+                        <Grid Grid.Row="2" Margin="16,0,12,0" ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="16" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="72" />
+                                <ColumnDefinition Width="124" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="1" FontSize="12" Foreground="{ThemeResource SfTextMutedBrush}" Text="Name" />
+                            <TextBlock Grid.Column="2" HorizontalAlignment="Right" FontSize="12" Foreground="{ThemeResource SfTextMutedBrush}" Text="Size" />
+                            <TextBlock Grid.Column="3" HorizontalAlignment="Right" FontSize="12" Foreground="{ThemeResource SfTextMutedBrush}" Text="Modified" />
+                        </Grid>
+                        <ListView x:Name="RemoteListView" Grid.Row="3" SelectionMode="Extended" AutomationProperties.Name="Remote files" />
+                        <ListView x:Name="TransferListView" Grid.Row="4" MaxHeight="112" SelectionMode="None" AutomationProperties.Name="Finished transfers" />
                     </Grid>
                 </Border>
             </Grid>
@@ -198,6 +228,10 @@ internal sealed partial class RemoteManagerWindow : Window
     private readonly IPluginHost _host;
     private readonly RemoteManagerViewModel _viewModel;
     private readonly FrameworkElement _root;
+    private readonly Grid _panesGrid;
+    private readonly ColumnDefinition _profilesColumn;
+    private readonly ColumnDefinition _localColumn;
+    private readonly ColumnDefinition _remoteColumn;
     private readonly TextBlock _summaryText;
     private readonly Button _refreshButton;
     private readonly Button _connectButton;
@@ -210,6 +244,7 @@ internal sealed partial class RemoteManagerWindow : Window
     private readonly Button _uploadButton;
     private readonly Button _remoteUploadButton;
     private readonly TextBox _remotePathBox;
+    private readonly Button _remoteGoButton;
     private readonly Button _remoteUpButton;
     private readonly Button _newFolderButton;
     private readonly Button _downloadButton;
@@ -223,6 +258,7 @@ internal sealed partial class RemoteManagerWindow : Window
     private readonly TextBlock _tuningText;
     private readonly TextBlock _statusText;
     private string _localPathShown = "";
+    private string _remotePathShown = "";
     private bool _loaded;
 
     public RemoteManagerWindow(IPluginHost host, RemoteManagerViewModel viewModel)
@@ -232,6 +268,10 @@ internal sealed partial class RemoteManagerWindow : Window
         Title = WindowTitle;
 
         _root = Xaml.Load<FrameworkElement>(Layout);
+        _panesGrid = Xaml.Find<Grid>(_root, "PanesGrid");
+        _profilesColumn = Xaml.Find<ColumnDefinition>(_root, "ProfilesColumn");
+        _localColumn = Xaml.Find<ColumnDefinition>(_root, "LocalColumn");
+        _remoteColumn = Xaml.Find<ColumnDefinition>(_root, "RemoteColumn");
         _summaryText = Xaml.Find<TextBlock>(_root, "SummaryText");
         _refreshButton = Xaml.Find<Button>(_root, "RefreshButton", RemoteAutomationIds.Refresh);
         _connectButton = Xaml.Find<Button>(_root, "ConnectButton", RemoteAutomationIds.Connect);
@@ -245,6 +285,7 @@ internal sealed partial class RemoteManagerWindow : Window
         _uploadButton = Xaml.Find<Button>(_root, "UploadButton", RemoteAutomationIds.Upload);
         _localList = Xaml.Find<ListView>(_root, "LocalListView", RemoteAutomationIds.LocalList);
         _remotePathBox = Xaml.Find<TextBox>(_root, "RemotePathBox", RemoteAutomationIds.RemotePath);
+        _remoteGoButton = Xaml.Find<Button>(_root, "RemoteGoButton", RemoteAutomationIds.RemoteGo);
         _remoteUpButton = Xaml.Find<Button>(_root, "RemoteUpButton");
         _newFolderButton = Xaml.Find<Button>(_root, "NewFolderButton", RemoteAutomationIds.NewFolder);
         _remoteUploadButton = Xaml.Find<Button>(_root, "RemoteUploadButton");
@@ -285,9 +326,11 @@ internal sealed partial class RemoteManagerWindow : Window
         Xaml.Find<Button>(_root, "LocalRefreshButton").Click += (_, _) => _ = RunRemoteActionAsync(() => _viewModel.RefreshLocalDirectoryAsync());
         _uploadButton.Click += (_, _) => _ = UploadSelectedLocalEntriesAsync();
         _remoteUploadButton.Click += (_, _) => _ = UploadSelectedLocalEntriesAsync();
+        _remoteGoButton.Click += (_, _) => _ = GoToTypedRemotePathAsync();
+        _remotePathBox.KeyDown += OnRemotePathKeyDown;
         _remoteUpButton.Click += (_, _) => _ = RunRemoteActionAsync(() => _viewModel.GoToParentRemoteDirectoryAsync());
         _newFolderButton.Click += (_, _) => _ = CreateRemoteDirectoryAsync();
-        _downloadButton.Click += (_, _) => _ = RunRemoteActionAsync(() => _viewModel.DownloadRemoteEntriesToLocalAsync(SelectedRemoteEntries()));
+        _downloadButton.Click += (_, _) => _ = DownloadSelectedRemoteEntriesAsync();
         _renameButton.Click += (_, _) => _ = RenameRemoteEntryAsync();
         _deleteEntriesButton.Click += (_, _) => _ = DeleteRemoteEntriesAsync();
         _remoteRefreshButton.Click += (_, _) => _ = RunRemoteActionAsync(() => _viewModel.RefreshRemoteDirectoryAsync());
@@ -303,6 +346,8 @@ internal sealed partial class RemoteManagerWindow : Window
         };
 
         AttachLists();
+        AttachGestures();
+        AttachSplitters();
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
         ApplyViewModelState();
 
@@ -404,6 +449,7 @@ internal sealed partial class RemoteManagerWindow : Window
         _uploadButton.IsEnabled = _viewModel.CanUseWorkspaceTransfers;
         _remoteUploadButton.IsEnabled = _viewModel.CanUseWorkspaceTransfers;
         _downloadButton.IsEnabled = _viewModel.CanUseWorkspaceTransfers;
+        _remoteGoButton.IsEnabled = _viewModel.CanMutateRemoteEntries;
         _remoteUpButton.IsEnabled = _viewModel.CanMutateRemoteEntries;
         _newFolderButton.IsEnabled = _viewModel.CanMutateRemoteEntries;
         _renameButton.IsEnabled = _viewModel.CanMutateRemoteEntries;
@@ -411,10 +457,15 @@ internal sealed partial class RemoteManagerWindow : Window
         _remoteRefreshButton.IsEnabled = _viewModel.CanDisconnect;
         _cancelTransferButton.IsEnabled = _viewModel.CanCancelTransfer;
         _retryTransferButton.IsEnabled = _viewModel.CanRetryTransfers;
-        _remotePathBox.Text = _viewModel.RemotePath;
+        if (!string.Equals(_remotePathShown, _viewModel.RemotePath, StringComparison.Ordinal))
+        {
+            // Both path boxes are editable: what the user typed is replaced only when the folder itself changed.
+            _remotePathBox.Text = _viewModel.RemotePath;
+            _remotePathShown = _viewModel.RemotePath;
+        }
+
         if (!string.Equals(_localPathShown, _viewModel.LocalPath, StringComparison.Ordinal))
         {
-            // The box is editable: replace what the user typed only when the local folder itself changed.
             _localPathBox.Text = _viewModel.LocalPath;
             _localPathShown = _viewModel.LocalPath;
         }
@@ -651,6 +702,9 @@ internal sealed partial class RemoteManagerWindow : Window
     private Task UploadSelectedLocalEntriesAsync() =>
         RunRemoteActionAsync(() => _viewModel.UploadLocalEntriesToRemoteAsync(SelectedLocalEntries()));
 
+    private Task DownloadSelectedRemoteEntriesAsync() =>
+        RunRemoteActionAsync(() => _viewModel.DownloadRemoteEntriesToLocalAsync(SelectedRemoteEntries()));
+
     private async Task ChooseLocalFolderAsync()
     {
         string? folder;
@@ -677,6 +731,45 @@ internal sealed partial class RemoteManagerWindow : Window
             e.Handled = true;
             _ = GoToTypedLocalPathAsync();
         }
+        else if (e.Key == VirtualKey.Escape)
+        {
+            // Back to the folder the list shows.
+            e.Handled = true;
+            _localPathBox.Text = _viewModel.LocalPath;
+        }
+    }
+
+    private void OnRemotePathKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key == VirtualKey.Enter)
+        {
+            e.Handled = true;
+            _ = GoToTypedRemotePathAsync();
+        }
+        else if (e.Key == VirtualKey.Escape)
+        {
+            e.Handled = true;
+            _remotePathBox.Text = _viewModel.RemotePath;
+        }
+    }
+
+    /// <summary>
+    /// Navigates the remote pane to the folder typed into <see cref="RemoteAutomationIds.RemotePath"/>. A folder the
+    /// server does not list is reported, and the typed text stays so it can be corrected. Like the Go button, Enter
+    /// does nothing while the session is busy or closed.
+    /// </summary>
+    private Task GoToTypedRemotePathAsync()
+    {
+        var path = _remotePathBox.Text.Trim();
+        return path.Length == 0 || !_viewModel.CanMutateRemoteEntries
+            ? Task.CompletedTask
+            : RunRemoteActionAsync(async () =>
+            {
+                await _viewModel.NavigateRemotePathAsync(path);
+                // Show the folder the server settled on, even when it equals the last one shown.
+                _remotePathBox.Text = _viewModel.RemotePath;
+                _remotePathShown = _viewModel.RemotePath;
+            });
     }
 
     /// <summary>Navigates the local pane to the folder typed into <see cref="RemoteAutomationIds.LocalPath"/>.</summary>

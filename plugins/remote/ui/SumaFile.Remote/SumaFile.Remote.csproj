@@ -8,6 +8,8 @@
     <Description>FTP/SFTP plugin UI: the manager window, its dialogs, the Connections sidebar section and the settings page</Description>
     <IsPackable>false</IsPackable>
     <EnableDynamicLoading>true</EnableDynamicLoading>
+    <!-- Xaml and ListRows, from plugins\shared\ui (see plugins\Directory.Build.targets). -->
+    <UsesPluginUiHelpers>true</UsesPluginUiHelpers>
   </PropertyGroup>
   <ItemGroup>
     <!-- Compile-only (spec §12): the SDK comes from the host at run time. -->

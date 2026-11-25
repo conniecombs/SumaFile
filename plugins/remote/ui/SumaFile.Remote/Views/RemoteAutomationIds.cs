@@ -18,7 +18,13 @@ public static class RemoteAutomationIds
     public const string LocalGo = "Remote.LocalGo";
     public const string LocalList = "Remote.LocalList";
     public const string RemotePath = "Remote.RemotePath";
+    public const string RemoteGo = "Remote.RemoteGo";
     public const string RemoteList = "Remote.RemoteList";
+
+    /// <summary>A context menu item's id is this followed by its command: <c>Remote.Menu.Download</c>.</summary>
+    public const string MenuItemPrefix = "Remote.Menu.";
+    public const string ProfilesSplitter = "Remote.ProfilesSplitter";
+    public const string PanesSplitter = "Remote.PanesSplitter";
     public const string Upload = "Remote.Upload";
     public const string Download = "Remote.Download";
     public const string NewFolder = "Remote.NewFolder";

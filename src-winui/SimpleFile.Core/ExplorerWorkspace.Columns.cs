@@ -11,6 +11,20 @@ public sealed partial class ExplorerWorkspace
         NotifyChanged();
     }
 
+    /// <summary>
+    /// Moves one of <paramref name="pane"/>'s shown columns to another position; see <see cref="ColumnLayout.Move"/>.
+    /// </summary>
+    public bool MoveColumn(PaneId pane, string columnId, int index)
+    {
+        if (!ColumnsFor(pane).Move(columnId, index))
+        {
+            return false;
+        }
+
+        NotifyChanged();
+        return true;
+    }
+
     /// <summary>Replaces <paramref name="pane"/>'s columns with a preset's and remembers the preset's name.</summary>
     public void ApplyColumnPreset(PaneId pane, string preset)
     {

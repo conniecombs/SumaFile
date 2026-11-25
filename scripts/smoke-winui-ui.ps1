@@ -12,23 +12,37 @@ param(
     [string]$PluginsDir,
     [switch]$NoPlugins,
     # Keep test-results\ui-smoke\<run> after a passing run too. A failed run always keeps it.
-    [switch]$KeepResults
+    [switch]$KeepResults,
+    # Also make the gestures that need a real mouse (double-click, right-click, drag and drop). This moves the
+    # pointer and presses its buttons for a few seconds, so leave the mouse alone while it runs.
+    [switch]$PointerInput
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 3.0
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 . (Join-Path $PSScriptRoot 'lib\plugin-staging.ps1')
 . (Join-Path $PSScriptRoot 'lib\credentials.ps1')
+# ConvertTo-NativeArgument and Invoke-GitProcess.
+. (Join-Path $PSScriptRoot 'lib\smoke-common.ps1')
 if ($PluginsDir -and $NoPlugins) { throw 'Use -PluginsDir or -NoPlugins, not both.' }
 
-# One command-line argument for a Windows program: quoted when it holds whitespace or a quote, with the backslashes
-# before a quote, and a trailing run of them, doubled (the CommandLineToArgvW rules git follows).
-function ConvertTo-SmokeCommandLineArgument {
-    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
-    if ($Value.Length -gt 0 -and $Value -notmatch '[\s"]') { return $Value }
-    $escaped = [regex]::Replace($Value, '(\\*)"', [System.Text.RegularExpressions.MatchEvaluator] { param($match) $match.Groups[1].Value + $match.Groups[1].Value + '\"' })
-    $escaped = [regex]::Replace($escaped, '(\\+)$', [System.Text.RegularExpressions.MatchEvaluator] { param($match) $match.Groups[1].Value + $match.Groups[1].Value })
-    return '"' + $escaped + '"'
+# git for the Git plugin's fixtures: the smoke's own configuration, no repository found above the test root, and
+# none taken from the environment this script was started in.
+function Invoke-SmokeGit {
+    param(
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+        [Parameter(Mandatory = $true)][string[]]$Arguments
+    )
+    Invoke-GitProcess -GitExe $smokeGitExe -WorkingDirectory $WorkingDirectory -Arguments (@('-c', 'core.fsmonitor=false') + $Arguments) -Environment @{
+        GIT_DIR                 = $null
+        GIT_WORK_TREE           = $null
+        GIT_INDEX_FILE          = $null
+        GIT_OBJECT_DIRECTORY    = $null
+        GIT_CONFIG_GLOBAL       = $smokeGitConfig
+        GIT_CONFIG_NOSYSTEM     = '1'
+        GIT_CEILING_DIRECTORIES = $testRoot
+        GIT_TERMINAL_PROMPT     = '0'
+    }
 }
 
 # A run folder's name: test-results\ui-smoke\<UTC yyyyMMdd-HHmmss>-<8 hex>.
@@ -120,7 +134,8 @@ function Clear-UiSmokeLastPassed {
     }
 }
 
-# Copies the polish screenshots the run produced (workspace-, conflict- and rename-polish.png; none for -Baseline)
+# Copies the polish screenshots the run produced (workspace-, conflict- and rename-polish.png, and with plugins
+# remote-manager-polish.png; none for -Baseline)
 # from the top of the run folder into Destination, so they outlive the folder. $false, with a warning, when a copy
 # fails: the caller then keeps the run folder, which still holds them.
 function Copy-UiSmokePassedScreenshots {
@@ -308,40 +323,6 @@ function New-SmokePhotoFixture {
     }
 }
 
-function Invoke-SmokeGit {
-    param(
-        [Parameter(Mandatory = $true)][string]$WorkingDirectory,
-        [Parameter(Mandatory = $true)][string[]]$Arguments
-    )
-    $gitStart = New-Object System.Diagnostics.ProcessStartInfo
-    $gitStart.FileName = $smokeGitExe
-    $gitStart.WorkingDirectory = $WorkingDirectory
-    $gitStart.Arguments = ((@('-c', 'core.fsmonitor=false') + $Arguments) | ForEach-Object { ConvertTo-SmokeCommandLineArgument -Value $_ }) -join ' '
-    $gitStart.UseShellExecute = $false
-    $gitStart.CreateNoWindow = $true
-    $gitStart.RedirectStandardOutput = $true
-    $gitStart.RedirectStandardError = $true
-    foreach ($name in @('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY')) {
-        if ($gitStart.EnvironmentVariables.ContainsKey($name)) { $gitStart.EnvironmentVariables.Remove($name) }
-    }
-    $gitStart.EnvironmentVariables['GIT_CONFIG_GLOBAL'] = $smokeGitConfig
-    $gitStart.EnvironmentVariables['GIT_CONFIG_NOSYSTEM'] = '1'
-    $gitStart.EnvironmentVariables['GIT_CEILING_DIRECTORIES'] = $testRoot
-    $gitStart.EnvironmentVariables['GIT_TERMINAL_PROMPT'] = '0'
-    $line = 'git ' + ($Arguments -join ' ')
-    $gitProcess = [System.Diagnostics.Process]::Start($gitStart)
-    try {
-        $stdout = $gitProcess.StandardOutput.ReadToEndAsync()
-        $stderr = $gitProcess.StandardError.ReadToEndAsync()
-        if (-not $gitProcess.WaitForExit(30000)) {
-            try { $gitProcess.Kill() } catch { Write-Warning "Could not stop '$line': $($_.Exception.Message)" }
-            throw "'$line' did not finish within 30 s in $WorkingDirectory."
-        }
-        $gitProcess.WaitForExit()
-        if ($gitProcess.ExitCode -ne 0) { throw "'$line' failed in $WorkingDirectory (exit $($gitProcess.ExitCode)): $($stderr.Result.Trim())" }
-        return $stdout.Result
-    } finally { $gitProcess.Dispose() }
-}
 $pluginRoots = $null
 if ($PluginsDir) {
     $pluginsPath = if ([System.IO.Path]::IsPathRooted($PluginsDir)) { $PluginsDir } else { Join-Path $root $PluginsDir }
@@ -516,6 +497,7 @@ $start.UseShellExecute = $false
 $start.EnvironmentVariables['SIMPLEFILE_UI_SMOKE_ROOT'] = $testRoot
 $start.EnvironmentVariables['SIMPLEFILE_UI_SMOKE_BASELINE'] = $(if ($Baseline) { '1' } else { '0' })
 $start.EnvironmentVariables['SIMPLEFILE_UI_SMOKE_MAX_WIDTH'] = [string]$MaxWindowWidth
+$start.EnvironmentVariables['SUMAFILE_SMOKE_POINTER'] = $(if ($PointerInput) { '1' } else { '0' })
 $start.EnvironmentVariables['SIMPLEFILE_SERVICE_PATH'] = $service
 $start.EnvironmentVariables['SIMPLEFILE_APP_DATA_DIR'] = Join-Path $testRoot 'state'
 $start.EnvironmentVariables['SIMPLEFILE_METADATA_DB'] = Join-Path $testRoot 'state\metadata.db'

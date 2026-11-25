@@ -111,6 +111,57 @@ public class DualPaneAndTabsTests
     }
 
     [Fact]
+    public async Task MoveTab_ReordersTheStripAndKeepsTheActiveTab()
+    {
+        var workspace = await Started();
+        var first = workspace.Primary.ActiveTabId!;
+        await workspace.OpenNewTabAsync(PaneId.Primary, @"C:\Users\test\Desktop");
+        var second = workspace.Primary.ActiveTabId!;
+        await workspace.OpenNewTabAsync(PaneId.Primary, @"C:\");
+        var third = workspace.Primary.ActiveTabId!;
+        var changes = 0;
+        workspace.Changed += (_, _) => changes++;
+
+        Assert.True(workspace.MoveTab(third, PaneId.Primary, 0));
+
+        Assert.Equal([third, first, second], workspace.Primary.Tabs.Select(tab => tab.Id));
+        Assert.Equal(third, workspace.Primary.ActiveTabId);
+        Assert.Equal(@"C:\", workspace.Primary.Path);
+        Assert.Equal(1, changes);
+
+        // A tab that is not the active one moves without becoming it; a place past the end is the end.
+        Assert.True(workspace.MoveTab(first, PaneId.Primary, 99));
+        Assert.Equal([third, second, first], workspace.Primary.Tabs.Select(tab => tab.Id));
+        Assert.Equal(third, workspace.Primary.ActiveTabId);
+        Assert.True(workspace.MoveTab(second, PaneId.Primary, -5));
+        Assert.Equal([second, third, first], workspace.Primary.Tabs.Select(tab => tab.Id));
+
+        // Nothing changes, and nothing is announced, for a tab already in its place or one that is not there.
+        changes = 0;
+        Assert.False(workspace.MoveTab(second, PaneId.Primary, 0));
+        Assert.False(workspace.MoveTab("no-such-tab", PaneId.Primary, 1));
+        Assert.Equal(0, changes);
+        Assert.Equal([second, third, first], workspace.Primary.Tabs.Select(tab => tab.Id));
+    }
+
+    [Fact]
+    public async Task MoveColumn_MovesOnePanesColumnAndAnnouncesIt()
+    {
+        var workspace = await Started();
+        var changes = 0;
+        workspace.Changed += (_, _) => changes++;
+
+        Assert.True(workspace.MoveColumn(PaneId.Primary, "type", 1));
+
+        Assert.Equal(["name", "type", "size", "date"], workspace.ColumnsFor(PaneId.Primary).VisibleIds);
+        // The other pane keeps its own order. (With one pane open, ColumnsFor answers with the left pane's for both.)
+        Assert.Equal(["name", "size", "date", "type"], workspace.SecondaryColumns.VisibleIds);
+        Assert.Equal(1, changes);
+        Assert.False(workspace.MoveColumn(PaneId.Primary, "type", 1));
+        Assert.Equal(1, changes);
+    }
+
+    [Fact]
     public async Task CloseActiveTab_SelectsNeighbor()
     {
         var workspace = await Started();

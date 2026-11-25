@@ -131,6 +131,16 @@ public sealed partial class MainWindow
 
             if (baseline) return true;
 
+            await CheckpointAsync("typing-and-columns");
+            await SmokeTypingAndColumnsAsync(results, root);
+
+            // With -PointerInput, the panes' gestures that only a real mouse makes.
+            if (SmokePointerInput)
+            {
+                await CheckpointAsync("pane-pointer-gestures");
+                await SmokePanePointerAsync(results, root);
+            }
+
             // Thumbnails of a camera-like photo folder: viewport, cold and warm timings; portraits upright.
             await CheckpointAsync("thumbnails");
             var photos = Path.Combine(root, "photos");

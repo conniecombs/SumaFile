@@ -27,6 +27,11 @@ public sealed partial class MainWindow
     private void OnOmnibarLostFocus(object sender, RoutedEventArgs e)
     {
         _omnibarFocused = false;
+        if (!_acceptingPathSuggestion)
+        {
+            HideSuggestions(OmnibarInput);
+        }
+
         if (IsOmnibarModeButtonFocused())
         {
             // A mode toggle took focus; keep what the user typed so the switch can carry it.
@@ -66,6 +71,7 @@ public sealed partial class MainWindow
         if (e.Key == VirtualKey.Enter)
         {
             e.Handled = true;
+            HideSuggestions(OmnibarInput);
             await RunUiActionAsync("Omnibar", ExecuteOmnibarAsync);
             return;
         }
@@ -73,6 +79,7 @@ public sealed partial class MainWindow
         if (e.Key == VirtualKey.Escape)
         {
             e.Handled = true;
+            HideSuggestions(OmnibarInput);
             SyncOmnibarFromWorkspace(force: true);
             OmnibarInput.SelectAll();
         }
@@ -132,15 +139,22 @@ public sealed partial class MainWindow
         _ => _workspace?.Active.Path ?? "",
     };
 
-    /// <summary>Filter mode applies as the user types, like the old filter box did.</summary>
+    /// <summary>
+    /// Filter mode applies as the user types, like the old filter box did. The other modes offer suggestions for
+    /// what is typed: folders for a path, commands after <c>&gt;</c> or in command mode.
+    /// </summary>
     private void OnOmnibarTextChanged(object sender, TextChangedEventArgs e)
     {
-        if (_syncingOmnibar || _applyingWorkspace || _omnibarMode != OmnibarMode.Filter || !_omnibarFocused)
+        if (_syncingOmnibar || _applyingWorkspace || !_omnibarFocused)
         {
             return;
         }
 
-        _workspace?.SetFilterQuery(ActiveUiPane, OmnibarInput.Text);
+        _ = UpdateOmnibarSuggestionsAsync();
+        if (_omnibarMode == OmnibarMode.Filter)
+        {
+            _workspace?.SetFilterQuery(ActiveUiPane, OmnibarInput.Text);
+        }
     }
 
     private void FocusOmnibar(OmnibarMode mode)

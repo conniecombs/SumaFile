@@ -11,44 +11,10 @@ $ErrorActionPreference = "Stop"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $bundleDir = Join-Path $root "dist\winui"
+# Invoke-Native and Resolve-NewInstaller.
+. (Join-Path $PSScriptRoot "lib\smoke-common.ps1")
 $previousWorktree = Join-Path ([System.IO.Path]::GetTempPath()) ("sumafile-previous-ref-" + [System.Guid]::NewGuid().ToString("N"))
 $createdWorktree = $false
-
-function Invoke-Native {
-    param(
-        [Parameter(Mandatory = $true)][string]$FilePath,
-        [string[]]$ArgumentList = @(),
-        [string]$WorkingDirectory = $root
-    )
-
-    Write-Host ""
-    Write-Host "==> $FilePath $($ArgumentList -join ' ')"
-    Push-Location -LiteralPath $WorkingDirectory
-    try {
-        & $FilePath @ArgumentList
-        if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) {
-            throw "Command failed with exit code ${LASTEXITCODE}: $FilePath $($ArgumentList -join ' ')"
-        }
-    }
-    finally {
-        Pop-Location
-    }
-}
-
-function Resolve-NewInstaller {
-    if ($NewInstaller) {
-        return (Resolve-Path -LiteralPath $NewInstaller -ErrorAction Stop).Path
-    }
-
-    $installer = Get-ChildItem -Path $bundleDir -Filter "SumaFile_*_x64-winui-setup.exe" -File -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1
-    if (-not $installer) {
-        throw "No current WinUI NSIS installer found in $bundleDir. Run 'npm run build:winui:release' first."
-    }
-
-    return $installer.FullName
-}
 
 function Resolve-PreviousInstaller {
     param([Parameter(Mandatory = $true)][string]$Worktree)
@@ -86,7 +52,7 @@ if (-not $PreviousRef) {
     throw "Pass -PreviousRef <git-ref> or set SUMAFILE_PREVIOUS_REF before running this smoke test."
 }
 
-$newInstallerPath = Resolve-NewInstaller
+$newInstallerPath = Resolve-NewInstaller -Explicit $NewInstaller -BundleDir $bundleDir
 
 try {
     Invoke-Native git @("worktree", "add", "--detach", $previousWorktree, $PreviousRef)

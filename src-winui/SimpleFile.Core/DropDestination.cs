@@ -30,6 +30,19 @@ public static class DropDestination
     }
 
     /// <summary>
+    /// Whether a location can take dropped files at all: a tab, a breadcrumb or a sidebar entry may show a place
+    /// that is not a folder. The Recycle Bin is filled by deleting, not by dropping.
+    /// </summary>
+    public static bool CanReceive(string? destination) =>
+        !string.IsNullOrWhiteSpace(destination) && !PathRules.IsRecycleBinPath(destination);
+
+    /// <summary>
+    /// Whether a drop moves its files. A drag that started in one of the app's own panes moves them unless Ctrl is
+    /// held; files dragged in from another program are copied.
+    /// </summary>
+    public static bool IsMove(bool internalDrag, bool controlHeld) => internalDrag && !controlHeld;
+
+    /// <summary>
     /// Whether <paramref name="sources"/> may be copied or moved to <paramref name="destination"/>.
     /// Nothing is dropped onto itself or into itself. Into the folder the items are already in, a
     /// copy is allowed and makes duplicates (the conflict prompt offers to keep both), while a

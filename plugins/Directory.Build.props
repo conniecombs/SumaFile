@@ -1,0 +1,12 @@
+<Project>
+  <!-- The bundled plugins' C# projects share src-winui's build settings (warnings as errors, nullable, lock files). -->
+  <Import Project="..\src-winui\Directory.Build.props" />
+  <PropertyGroup>
+    <!-- A plugin versions on its own. Its manifest holds the version: plugins\<name>\plugin.json, two folders above
+         each of its projects (plugins\<name>\ui\<project>). Directory.Build.targets fails the build when none is found. -->
+    <PluginManifestPath>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '..', '..', 'plugin.json'))</PluginManifestPath>
+    <PluginManifestVersion Condition="Exists('$(PluginManifestPath)')">$([System.Text.RegularExpressions.Regex]::Match($([System.IO.File]::ReadAllText('$(PluginManifestPath)')), '"version"\s*:\s*"([^"]+)"').Groups.get_Item(1).Value)</PluginManifestVersion>
+    <Version Condition="'$(PluginManifestVersion)' != ''">$(PluginManifestVersion)</Version>
+    <InformationalVersion Condition="'$(PluginManifestVersion)' != ''">$(PluginManifestVersion)</InformationalVersion>
+  </PropertyGroup>
+</Project>

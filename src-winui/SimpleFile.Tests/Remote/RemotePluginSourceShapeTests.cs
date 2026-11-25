@@ -26,7 +26,11 @@ public class RemotePluginSourceShapeTests
         ["LocalGo"] = "Remote.LocalGo",
         ["LocalList"] = "Remote.LocalList",
         ["RemotePath"] = "Remote.RemotePath",
+        ["RemoteGo"] = "Remote.RemoteGo",
         ["RemoteList"] = "Remote.RemoteList",
+        ["MenuItemPrefix"] = "Remote.Menu.",
+        ["ProfilesSplitter"] = "Remote.ProfilesSplitter",
+        ["PanesSplitter"] = "Remote.PanesSplitter",
         ["Upload"] = "Remote.Upload",
         ["Download"] = "Remote.Download",
         ["NewFolder"] = "Remote.NewFolder",
@@ -229,7 +233,7 @@ public class RemotePluginSourceShapeTests
             Assert.Equal(templates, Regex.Matches(text, @"Xaml\.Load").Count);
         }
 
-        var rows = File.ReadAllText(Path.Combine(ViewsRoot(), "ListRows.cs"));
+        var rows = File.ReadAllText(SharedListRows());
         Assert.Contains(".ItemTemplate = template", rows);
         Assert.Contains("ContainerContentChanging += ", rows);
         Assert.Contains("ContentTemplateRoot", rows);
@@ -242,12 +246,13 @@ public class RemotePluginSourceShapeTests
 
     /// <summary>
     /// <c>ItemClick</c> reports the data item for an <c>ItemsSource</c> list; the shared resolver also maps a
-    /// container, or a container's content, back to its item, so no handler depends on which one WinUI passes.
+    /// container, or a container's content, back to its item, so no handler depends on which one WinUI passes. Only
+    /// the sidebar's profile list opens on a click; the manager's file lists select on a click (see below).
     /// </summary>
     [Fact]
     public void RemoteUi_ItemClickHandlersResolveTheClickedRow()
     {
-        var rows = File.ReadAllText(Path.Combine(ViewsRoot(), "ListRows.cs"));
+        var rows = File.ReadAllText(SharedListRows());
         Assert.Contains("ItemFromContainer(", rows);
         Assert.Contains("ContainerFromItem(", rows);
         Assert.Contains("ContentTemplateRoot", rows);
@@ -255,13 +260,136 @@ public class RemotePluginSourceShapeTests
         var views = AllViews();
         Assert.DoesNotContain("ClickedItem is ListViewItem", views);
         var handlers = Regex.Matches(views, @"ItemClick \+= (\w+);").Select(m => m.Groups[1].Value).ToArray();
-        Assert.Equal(3, handlers.Length);
+        Assert.Equal(["OnItemClick"], handlers);
         foreach (var handler in handlers)
         {
             var body = Regex.Match(views, @"void " + handler + @"\(object sender, ItemClickEventArgs e\)\s*\{(?<body>.*?)\n    \}", RegexOptions.Singleline);
             Assert.True(body.Success, $"{handler} is not declared.");
             Assert.Contains("ListRows.Clicked<", body.Groups["body"].Value);
         }
+    }
+
+    /// <summary>
+    /// A click on a folder used to open it, so a folder could not be selected with the mouse for Download, Rename or
+    /// Delete. The two file lists select on a click and open on a double-click or Enter, and their keys, context
+    /// menu and drops follow the rules in the model, which the tests of <c>RemotePaneGestureTests</c> cover.
+    /// </summary>
+    [Fact]
+    public void ManagerWindow_FileListsSelectOnAClickAndOpenOnADoubleClickOrEnter()
+    {
+        var window = File.ReadAllText(Path.Combine(ViewsRoot(), "RemoteManagerWindow.cs"));
+        var lists = File.ReadAllText(Path.Combine(ViewsRoot(), "RemoteManagerWindow.Lists.cs"));
+        var gestures = File.ReadAllText(Path.Combine(ViewsRoot(), "RemoteManagerWindow.Gestures.cs"));
+
+        Assert.DoesNotContain("IsItemClickEnabled", window);
+        Assert.DoesNotContain("ItemClick", lists);
+        Assert.Contains("AttachPaneGestures(_localList, RemotePane.Local);", gestures);
+        Assert.Contains("AttachPaneGestures(_remoteList, RemotePane.Remote);", gestures);
+        Assert.Contains("list.DoubleTapped += doubleTapped;", gestures);
+        Assert.Contains("list.PreviewKeyDown += keyDown;", gestures);
+        Assert.Contains("list.ContextRequested += contextRequested;", gestures);
+        Assert.Contains("ListRows.RowOf<RemoteFileEntry>(list, e.OriginalSource) is { IsDir: true } folder", gestures);
+        Assert.Contains("RemotePaneKeys.CommandFor(", gestures);
+        Assert.Contains("RemotePaneCommands.IsAvailable(command, PaneState(list, pane))", gestures);
+        Assert.Contains("RemotePaneMenu.Build(PaneState(list, pane))", gestures);
+        Assert.Contains("RemoteAutomationIds.MenuItemPrefix + command", gestures);
+
+        // A key or a menu item runs the method its toolbar button runs, so the name prompt and the delete
+        // confirmation are not passed by: the view model's changing calls stay in RemoteManagerWindow.cs.
+        Assert.Contains("(RemotePane.Remote, RemotePaneCommand.Rename) => RenameRemoteEntryAsync(),", gestures);
+        Assert.Contains("(RemotePane.Remote, RemotePaneCommand.Delete) => DeleteRemoteEntriesAsync(),", gestures);
+        Assert.Contains("(RemotePane.Remote, RemotePaneCommand.NewFolder) => CreateRemoteDirectoryAsync(),", gestures);
+        foreach (var call in new[] { "_viewModel.RenameRemoteEntryAsync(", "_viewModel.DeleteRemoteEntriesAsync(", "_viewModel.CreateRemoteDirectoryAsync(" })
+        {
+            Assert.DoesNotContain(call, gestures);
+        }
+
+        var rows = File.ReadAllText(SharedListRows());
+        Assert.Contains("public static T? RowOf<T>(ListViewBase list, object? source)", rows);
+        Assert.Contains("VisualTreeHelper.GetParent(element)", rows);
+    }
+
+    [Fact]
+    public void ManagerWindow_FileListsTakeDropsToUploadAndDownload()
+    {
+        var gestures = File.ReadAllText(Path.Combine(ViewsRoot(), "RemoteManagerWindow.Gestures.cs"));
+
+        Assert.Contains("list.CanDragItems = true;", gestures);
+        Assert.Contains("list.AllowDrop = true;", gestures);
+        Assert.DoesNotContain("CanReorderItems", gestures);
+        Assert.Contains("RemoteDrop.Decide(target, DragSourceOf(e), _viewModel.CanMutateRemoteEntries, _viewModel.LocalPath, _viewModel.RemotePath)", gestures);
+        Assert.Contains("e.AcceptedOperation = decision.Accepted ? DataPackageOperation.Copy : DataPackageOperation.None;", gestures);
+        Assert.Contains("_viewModel.UploadLocalEntriesToRemoteAsync(dragged)", gestures);
+        Assert.Contains("_viewModel.DownloadRemoteEntriesToLocalAsync(dragged)", gestures);
+        // Files from Explorer or a file pane: read under a deferral, which is completed whatever happens.
+        Assert.Contains("e.DataView.Contains(StandardDataFormats.StorageItems)", gestures);
+        var drop = UiAuditSprint3Tests.Slice(gestures, "private async void OnPaneDrop(", "private void AttachSplitters()");
+        Assert.Contains("var deferral = e.GetDeferral();", drop);
+        Assert.Matches(@"finally\s*\{\s*deferral\.Complete\(\);", drop);
+        Assert.Contains("_viewModel.UploadLocalFilesAsync(paths)", drop);
+        // An async void handler: nothing it awaits may throw past it.
+        Assert.Equal(Regex.Matches(drop, @"\bawait ").Count,
+            Regex.Matches(drop, @"await RunRemoteActionAsync\(|await ShowErrorAsync\(|await e\.DataView\.GetStorageItemsAsync\(\)").Count);
+    }
+
+    [Fact]
+    public void ManagerWindow_RemotePathIsEditableAndTheListsHaveAHeaderWithSize()
+    {
+        var window = File.ReadAllText(Path.Combine(ViewsRoot(), "RemoteManagerWindow.cs"));
+        var lists = File.ReadAllText(Path.Combine(ViewsRoot(), "RemoteManagerWindow.Lists.cs"));
+
+        var pathBox = Regex.Match(window, @"<TextBox x:Name=""RemotePathBox""[^>]*/>").Value;
+        Assert.NotEqual("", pathBox);
+        Assert.DoesNotContain("IsReadOnly", pathBox);
+        Assert.Contains("_remotePathBox.KeyDown += OnRemotePathKeyDown;", window);
+        Assert.Contains("_remoteGoButton.Click += (_, _) => _ = GoToTypedRemotePathAsync();", window);
+        Assert.Contains("_remoteGoButton.IsEnabled = _viewModel.CanMutateRemoteEntries;", window);
+        Assert.Contains("await _viewModel.NavigateRemotePathAsync(path);", window);
+        // Typing is not overwritten by the next progress or status change.
+        Assert.DoesNotContain("        _remotePathBox.Text = _viewModel.RemotePath;\n        if", window.Replace("\r\n", "\n"));
+        Assert.Contains("if (!string.Equals(_remotePathShown, _viewModel.RemotePath, StringComparison.Ordinal))", window);
+
+        // One header above each file list, with the row template's columns.
+        string[] columns = ["<ColumnDefinition Width=\"16\" />", "<ColumnDefinition Width=\"72\" />", "<ColumnDefinition Width=\"124\" />"];
+        foreach (var column in columns)
+        {
+            Assert.Equal(2, Regex.Matches(window, Regex.Escape(column)).Count);
+            Assert.Single(Regex.Matches(lists, Regex.Escape(column)));
+        }
+
+        foreach (var title in new[] { "Text=\"Name\"", "Text=\"Size\"", "Text=\"Modified\"" })
+        {
+            Assert.Equal(2, Regex.Matches(window, Regex.Escape(title)).Count);
+        }
+
+        Assert.Contains("Xaml.Find<TextBlock>(row, \"SizeText\").Text = RemoteEntryText.Size(entry);", lists);
+        Assert.Contains("Xaml.Find<TextBlock>(row, \"ModifiedText\").Text = RemoteEntryText.Modified(entry.Modified);", lists);
+    }
+
+    [Fact]
+    public void ManagerWindow_PanelsAreResizedByMouseOrKeyboard()
+    {
+        var window = File.ReadAllText(Path.Combine(ViewsRoot(), "RemoteManagerWindow.cs"));
+        var gestures = File.ReadAllText(Path.Combine(ViewsRoot(), "RemoteManagerWindow.Gestures.cs"));
+        var splitter = File.ReadAllText(Path.Combine(ViewsRoot(), "RemotePaneSplitter.cs"));
+
+        Assert.Contains("<ColumnDefinition x:Name=\"ProfilesColumn\" Width=\"260\" />", window);
+        Assert.Contains("<ColumnDefinition x:Name=\"LocalColumn\" Width=\"*\" />", window);
+        Assert.Contains("<ColumnDefinition x:Name=\"RemoteColumn\" Width=\"*\" />", window);
+        Assert.Equal(2, Regex.Matches(gestures, @"new RemotePaneSplitter\(").Count);
+        Assert.Contains("RemotePaneLayout.ClampProfiles(requested, _panesGrid.ActualWidth)", gestures);
+        Assert.Contains("RemotePaneLayout.SplitPanes(requestedLocal, _localColumn.ActualWidth + _remoteColumn.ActualWidth)", gestures);
+        // The file lists share the rest as weights, so they keep their proportion when the window is resized.
+        Assert.Contains("_localColumn.Width = new GridLength(local, GridUnitType.Star);", gestures);
+
+        // A tab stop with arrow keys: a pointer is not the only way to resize.
+        Assert.Matches(@"class RemotePaneSplitter\s*:\s*ContentControl\b", splitter);
+        Assert.Contains("IsTabStop = true;", splitter);
+        Assert.Contains("UseSystemFocusVisuals = true;", splitter);
+        Assert.Contains("case VirtualKey.Left:", splitter);
+        Assert.Contains("case VirtualKey.Right:", splitter);
+        Assert.Contains("case VirtualKey.Home:", splitter);
+        Assert.Contains("AutomationProperties.SetName(this, name);", splitter);
     }
 
     /// <summary>
@@ -405,6 +533,9 @@ public class RemotePluginSourceShapeTests
             .ToArray();
 
     private static string UiRoot() => Path.Combine(RepoRoot(), "plugins", "remote", "ui");
+
+    /// <summary>The row helper the bundled plugins share (plugins\shared\ui).</summary>
+    private static string SharedListRows() => Path.Combine(RepoRoot(), "plugins", "shared", "ui", "ListRows.cs");
 
     private static string PluginRoot() => Path.Combine(UiRoot(), "SumaFile.Remote");
 

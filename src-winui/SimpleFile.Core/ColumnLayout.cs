@@ -163,6 +163,45 @@ public sealed class ColumnLayout
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>
+    /// Moves a shown column to <paramref name="index"/> among the shown ones. The name column stays where it is, the
+    /// first, and no column moves in front of it. False when nothing moved.
+    /// </summary>
+    public bool Move(string id, int index)
+    {
+        var from = VisibleIds.FindIndex(visible => string.Equals(visible, id, StringComparison.Ordinal));
+        if (from < 0 || id == "name")
+        {
+            return false;
+        }
+
+        var first = VisibleIds.Count > 0 && VisibleIds[0] == "name" ? 1 : 0;
+        var to = Math.Clamp(index, first, VisibleIds.Count - 1);
+        if (to == from)
+        {
+            return false;
+        }
+
+        VisibleIds.RemoveAt(from);
+        VisibleIds.Insert(to, id);
+        Changed?.Invoke(this, EventArgs.Empty);
+        return true;
+    }
+
+    /// <summary>Whether <see cref="Move"/> can take a shown column one place left (-1) or right (+1).</summary>
+    public bool CanMove(string id, int delta)
+    {
+        var from = VisibleIds.FindIndex(visible => string.Equals(visible, id, StringComparison.Ordinal));
+        if (from < 0 || id == "name" || delta == 0)
+        {
+            return false;
+        }
+
+        var first = VisibleIds[0] == "name" ? 1 : 0;
+        var to = from + Math.Sign(delta);
+        return to >= first && to < VisibleIds.Count;
+    }
+
     public List<string> SnapshotVisibleIds()
     {
         return VisibleIds

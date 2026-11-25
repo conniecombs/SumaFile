@@ -15,24 +15,15 @@ $bundleDir = Join-Path $root "dist\winui"
 
 # Assert-BundledPlugins, the app-owned plugin state and the installer smoke helpers (guards, seed, launch, snapshots).
 . (Join-Path $PSScriptRoot "lib\plugin-staging.ps1")
+# The install, uninstall and wait helpers the installer smokes share.
+. (Join-Path $PSScriptRoot "lib\smoke-common.ps1")
 $installer = Get-ChildItem -Path $bundleDir -Filter "SumaFile_*_x64-winui-setup.exe" -File |
     Sort-Object LastWriteTime -Descending |
     Select-Object -First 1
 
-$props = Get-Content -Path (Join-Path $root "src-winui\Directory.Build.props") -Raw
-if ($props -match '<InformationalVersion>([^<]+)</InformationalVersion>') {
-    $expectedVersion = $Matches[1]
-} elseif ($props -match '<Version>([^<]+)</Version>') {
-    $expectedVersion = $Matches[1]
-} else {
-    throw "Could not read InformationalVersion or Version from src-winui\Directory.Build.props."
-}
+$expectedVersion = Get-SumaFileDisplayVersion -Root $root
 $timeoutSeconds = 25
 $defaultInstallDir = Join-Path $env:LOCALAPPDATA "Programs\SumaFile-WinUI"
-
-function Get-WinUIInstall {
-    @(Get-SumaFileUninstallEntries -Scope CurrentUser) | Select-Object -First 1
-}
 
 function Wait-WinUIInstall {
     $installed = $null
@@ -45,62 +36,12 @@ function Wait-WinUIInstall {
     throw "WinUI NSIS install completed, but no uninstall registry entry was found."
 }
 
-function Test-SameFolder([string]$Left, [string]$Right) {
-    $a = [System.IO.Path]::GetFullPath($Left.Trim().Trim('"')).TrimEnd('\')
-    $b = [System.IO.Path]::GetFullPath($Right.Trim().Trim('"')).TrimEnd('\')
-    [string]::Equals($a, $b, [System.StringComparison]::OrdinalIgnoreCase)
-}
-
-function Find-WinUIExecutable($installed, [string]$InstallDir) {
-    # Only the HKCU entry's InstallLocation, and only when it is this smoke's folder: the smoke never launches another
-    # install's executable.
-    if (-not $installed.InstallLocation -or -not (Test-SameFolder $installed.InstallLocation $InstallDir)) {
-        throw "The SumaFile uninstall entry's InstallLocation is '$($installed.InstallLocation)'; expected $InstallDir."
-    }
-    $exe = Join-Path $InstallDir "SumaFile.exe"
-    if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "Installed SumaFile.exe was not found at $exe." }
-    return $exe
-}
-
-function Invoke-Uninstall($installed) {
-    $uninstallCommand = $installed.Values.QuietUninstallString
-    if (-not $uninstallCommand) {
-        $uninstallCommand = $installed.Values.UninstallString
-    }
-
-    $uninstallerPath = $null
-    if ($uninstallCommand -match '^\s*"([^"]+)"') {
-        $uninstallerPath = $Matches[1]
-    } elseif ($uninstallCommand) {
-        $uninstallerPath = ($uninstallCommand -split "\s+", 2)[0]
-    }
-
-    if (-not $uninstallerPath -or -not (Test-Path -LiteralPath $uninstallerPath)) {
-        throw "Could not find SumaFile uninstaller. UninstallString: '$uninstallCommand'."
-    }
-
-    $uninstall = Start-Process -FilePath $uninstallerPath -ArgumentList "/S" -Wait -PassThru
-    if ($uninstall.ExitCode -ne 0) {
-        throw "WinUI NSIS uninstall failed with exit code $($uninstall.ExitCode)."
-    }
-}
-
 function Wait-UninstallEntryGone {
     $deadline = (Get-Date).AddSeconds(60)
     while (Get-WinUIInstall) {
         if ((Get-Date) -ge $deadline) { throw "The SumaFile uninstall entry is still registered 60 s after uninstall." }
         Start-Sleep -Milliseconds 500
     }
-}
-
-function Wait-PathsExist([string[]]$Paths, [int]$Seconds, [string]$Because) {
-    $deadline = (Get-Date).AddSeconds($Seconds)
-    do {
-        $missing = @($Paths | Where-Object { -not (Test-Path -LiteralPath $_) })
-        if ($missing.Count -eq 0) { return }
-        Start-Sleep -Milliseconds 500
-    } while ((Get-Date) -lt $deadline)
-    throw "$Because Missing after $Seconds s: $($missing -join ', ')"
 }
 
 if (-not $installer) {
@@ -146,7 +87,7 @@ try {
     if ($installed.DisplayVersion -ne $expectedVersion) {
         throw "Installed WinUI version '$($installed.DisplayVersion)' did not match expected '$expectedVersion'."
     }
-    $exePath = Find-WinUIExecutable $installed $installDir
+    $exePath = Find-WinUIExecutable -Installed $installed -InstallDir $installDir -Required
     if (-not (Test-Path -LiteralPath (Join-Path $installDir "simplefile-service.exe"))) {
         throw "Installed simplefile-service.exe was not found next to SumaFile.exe."
     }

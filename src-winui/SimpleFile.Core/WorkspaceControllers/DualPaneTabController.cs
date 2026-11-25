@@ -221,6 +221,33 @@ internal sealed class DualPaneTabController
             .ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Moves a tab to <paramref name="index"/> in its pane's strip; an index past either end is the end. The active
+    /// tab stays the active one. False when the tab is not in the pane or is already there.
+    /// </summary>
+    public bool MoveTab(ExplorerWorkspace workspace, string tabId, PaneId pane, int index)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        var target = workspace.Normalize(pane);
+        lock (workspace.Gate)
+        {
+            var tabs = workspace.Pane(target).Tabs;
+            var from = tabs.FindIndex(tab => tab.Id == tabId);
+            var to = Math.Clamp(index, 0, Math.Max(0, tabs.Count - 1));
+            if (from < 0 || from == to)
+            {
+                return false;
+            }
+
+            var tab = tabs[from];
+            tabs.RemoveAt(from);
+            tabs.Insert(to, tab);
+        }
+
+        workspace.NotifyChanged();
+        return true;
+    }
+
     public async Task CloseTabAsync(
         ExplorerWorkspace workspace,
         string tabId,

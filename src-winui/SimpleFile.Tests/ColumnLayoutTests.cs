@@ -32,6 +32,58 @@ public class ColumnLayoutTests
     }
 
     [Fact]
+    public void Move_ReordersTheShownColumnsAndKeepsNameFirst()
+    {
+        var columns = new ColumnLayout();
+        var changes = 0;
+        columns.Changed += (_, _) => changes++;
+
+        Assert.True(columns.Move("type", 1));
+        Assert.Equal(["name", "type", "size", "date"], columns.VisibleIds);
+        Assert.True(columns.Move("type", 99));
+        Assert.Equal(["name", "size", "date", "type"], columns.VisibleIds);
+        Assert.Equal(2, changes);
+
+        // Nothing goes in front of the name column, and the name column does not move.
+        Assert.True(columns.Move("date", 0));
+        Assert.Equal(["name", "date", "size", "type"], columns.VisibleIds);
+        Assert.False(columns.Move("date", 0));
+        Assert.False(columns.Move("name", 2));
+        // A column that is not shown has no place to move from.
+        Assert.False(columns.Move("dimensions", 1));
+        Assert.False(columns.Move("no-such-column", 1));
+        Assert.Equal(["name", "date", "size", "type"], columns.VisibleIds);
+        Assert.Equal(3, changes);
+    }
+
+    [Fact]
+    public void CanMove_SaysWhichWayAShownColumnCanGo()
+    {
+        var columns = new ColumnLayout();
+
+        Assert.False(columns.CanMove("size", -1));
+        Assert.True(columns.CanMove("size", 1));
+        Assert.True(columns.CanMove("date", -1));
+        Assert.True(columns.CanMove("type", -1));
+        Assert.False(columns.CanMove("type", 1));
+        Assert.False(columns.CanMove("name", 1));
+        Assert.False(columns.CanMove("dimensions", 1));
+        Assert.False(columns.CanMove("size", 0));
+    }
+
+    [Fact]
+    public void Move_TheNewOrderIsWhatIsSavedAndRestored()
+    {
+        var columns = new ColumnLayout();
+        columns.Move("type", 1);
+
+        var restored = new ColumnLayout();
+        restored.RestoreVisibleIds(columns.SnapshotVisibleIds());
+
+        Assert.Equal(["name", "type", "size", "date"], restored.VisibleIds);
+    }
+
+    [Fact]
     public void LazyColumns_NameTheirFactKindAndWhichEntriesCanHaveAValue()
     {
         var columns = new ColumnLayout();

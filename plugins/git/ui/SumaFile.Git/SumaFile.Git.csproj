@@ -8,6 +8,8 @@
     <Description>Git plugin UI: the workbench panel, its diff splitter and the commit and discard dialogs</Description>
     <IsPackable>false</IsPackable>
     <EnableDynamicLoading>true</EnableDynamicLoading>
+    <!-- Xaml and ListRows, from plugins\shared\ui (see plugins\Directory.Build.targets). -->
+    <UsesPluginUiHelpers>true</UsesPluginUiHelpers>
   </PropertyGroup>
   <ItemGroup>
     <!-- Compile-only (spec §12): the SDK comes from the host at run time. -->

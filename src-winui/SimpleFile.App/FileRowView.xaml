@@ -4,6 +4,15 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     HorizontalAlignment="Stretch">
     <Grid x:Name="RowRoot" HorizontalAlignment="Stretch">
+        <!-- Shown while a drag is over this folder's row and a drop would go into the folder. -->
+        <Border
+            x:Name="DropTargetOutline"
+            Background="{ThemeResource SfAccentSoftBrush}"
+            BorderBrush="{ThemeResource SfAccentBrush}"
+            BorderThickness="1"
+            CornerRadius="4"
+            IsHitTestVisible="False"
+            Visibility="Collapsed" />
         <Grid
             x:Name="RowGrid"
             MinHeight="28"

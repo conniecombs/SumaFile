@@ -6,6 +6,8 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
+using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
@@ -216,6 +218,34 @@ public sealed partial class MainWindow
             await SmokeRemoteWaitAsync(() => remotePath.Text == "/", () => $"Remote.RemotePath to read '/' again, reads '{remotePath.Text}'");
             await SmokeRemoteWaitRowsAsync(remoteList, rootNames, "Remote.RemoteList back at /");
 
+            // 5b. The remote path box is editable: a typed folder is listed, and Backspace in the list goes back up.
+            remotePath.Text = SmokeRemoteUnicodeFolder;
+            SmokeInvoke(await SmokeRemoteEnabledButtonAsync(root, "Remote.RemoteGo"));
+            await SmokeRemoteWaitAsync(() => remotePath.Text == "/" + SmokeRemoteUnicodeFolder,
+                () => $"Remote.RemotePath to read '/{SmokeRemoteUnicodeFolder}' after Go, reads '{remotePath.Text}'");
+            await SmokeRemoteWaitRowsAsync(remoteList, ["hello.txt"], $"Remote.RemoteList in the typed /{SmokeRemoteUnicodeFolder}");
+            // The keys follow the buttons' enabled state, so wait out the listing before pressing one.
+            await SmokeRemoteEnabledButtonAsync(root, "Remote.RemoteGo");
+            await SmokePressRowKeyAsync(remoteList()!, "hello.txt", SmokeVkBack);
+            await SmokeRemoteWaitAsync(() => remotePath.Text == "/", () => $"Remote.RemotePath to read '/' after Backspace, reads '{remotePath.Text}'");
+            await SmokeRemoteWaitRowsAsync(remoteList, rootNames, "Remote.RemoteList back at / after Backspace");
+
+            // 5c. A file row shows its size, a folder row none.
+            string SizeOf(string name) => SmokeDescendants<TextBlock>(SmokeRow(remoteList(), name)!).Single(text => text.Name == "SizeText").Text;
+            SmokeAssert(System.Text.RegularExpressions.Regex.IsMatch(SizeOf("big.bin"), @"^\d+([.,]\d)? (B|KB|MB|GB)$"),
+                $"big.bin's Size cell reads '{SizeOf("big.bin")}'");
+            SmokeAssert(SizeOf(SmokeRemoteUnicodeFolder) == "", $"The folder's Size cell reads '{SizeOf(SmokeRemoteUnicodeFolder)}'");
+
+            // 5d. The splitter beside the profiles list takes the keyboard: Right widens the list, Home resets it.
+            var splitter = SmokeRemoteControl<ContentControl>(root, "Remote.ProfilesSplitter");
+            var profilesWidth = profileList()!.ActualWidth;
+            await SmokePressKeyAsync(splitter, SmokeVkRight, "Remote.ProfilesSplitter");
+            await SmokeRemoteWaitAsync(() => Math.Abs(profileList()!.ActualWidth - profilesWidth - 24) < 1,
+                () => $"the profiles list to be 24 wider than {profilesWidth} after Right, it is {profileList()!.ActualWidth}");
+            await SmokePressKeyAsync(splitter, SmokeVkHome, "Remote.ProfilesSplitter");
+            await SmokeRemoteWaitAsync(() => Math.Abs(profileList()!.ActualWidth - profilesWidth) < 1,
+                () => $"the profiles list to be {profilesWidth} wide again after Home, it is {profileList()!.ActualWidth}");
+
             // 6. Upload upload.txt from the typed local folder.
             var localList = () => SmokeFindById<ListView>(root, "Remote.LocalList");
             var localPath = SmokeRemoteControl<TextBox>(root, "Remote.LocalPath");
@@ -248,6 +278,16 @@ public sealed partial class MainWindow
             SmokeAssert(File.Exists(downloaded) && File.ReadAllText(downloaded) == "literal", $"{downloaded} does not read 'literal'");
             // Likewise the local relist after a download: wait it out before the next transfer.
             await SmokeRemoteWaitRowsAsync(localList, ["upload.txt", "download", SmokeRemoteLiteralFile], "Remote.LocalList after the download", SmokeRemoteTransferWait);
+            // The connected manager with both lists filled, for a look at its columns and headers; after the rows
+            // of the relist have faded in.
+            await Task.Delay(500);
+            await SmokeCaptureAsync(root, Path.Combine(UiSmokeRoot()!, "remote-manager-polish.png"));
+
+            // 7b. With -PointerInput, the gestures that only a real mouse makes.
+            if (SmokePointerInput)
+            {
+                await SmokeRemotePointerAsync(root, server, localRoot);
+            }
 
             // 8. Cancel a throttled download over an existing file from its Transfers row.
             var downloadFolder = Path.Combine(localRoot, "download");
@@ -306,6 +346,42 @@ public sealed partial class MainWindow
             SmokeInvoke(SmokeDialogButton(confirmDelete, "PrimaryButton"));
             await SmokeRemoteWaitAsync(() => SmokeRow(remoteList(), renamed) is null && !Directory.Exists(Path.Combine(server.Root, renamed)),
                 () => $"'{renamed}' to leave the list and the server");
+
+            // 9b. The same with the keyboard and the context menu: F2 renames, Delete asks first, and the menu key
+            // opens the row's menu, whose Delete runs the same confirmation.
+            SmokeInvoke(await SmokeRemoteEnabledButtonAsync(root, "Remote.NewFolder"));
+            await SmokeRemoteAnswerNamePromptAsync(root, "New remote folder", "key-folder");
+            await SmokeRemoteWaitAsync(() => SmokeRow(remoteList(), "key-folder") is not null, () => "the key-folder row");
+            await SmokeRemoteEnabledButtonAsync(root, "Remote.Rename");
+            await SmokeSelectRowAsync(remoteList, "key-folder");
+            await SmokePressRowKeyAsync(remoteList()!, "key-folder", SmokeVkF2);
+            const string keyRenamed = "key folder 2";
+            await SmokeRemoteAnswerNamePromptAsync(root, "Rename remote item", keyRenamed);
+            await SmokeRemoteWaitAsync(() => SmokeRow(remoteList(), keyRenamed) is not null && SmokeRow(remoteList(), "key-folder") is null,
+                () => $"the '{keyRenamed}' row in place of key-folder after F2");
+            await SmokeRemoteEnabledButtonAsync(root, "Remote.DeleteEntries");
+            await SmokeSelectRowAsync(remoteList, keyRenamed);
+            await SmokePressRowKeyAsync(remoteList()!, keyRenamed, SmokeVkDelete);
+            var keyDelete = await SmokeOpenDialogAsync(root.XamlRoot!, "Delete remote item");
+            SmokeInvoke(SmokeDialogButton(keyDelete, "CloseButton"));
+            await SmokeRemoteWaitAsync(() => SmokeOpenDialog(root.XamlRoot!) is null, () => "the Delete confirmation to close after Cancel");
+            SmokeAssert(SmokeRow(remoteList(), keyRenamed) is not null && Directory.Exists(Path.Combine(server.Root, keyRenamed)),
+                $"Cancelling the Delete key's confirmation removed '{keyRenamed}'");
+            await SmokePressRowKeyAsync(remoteList()!, keyRenamed, SmokeVkApps);
+            MenuFlyoutItem[] menu = [];
+            await SmokeRemoteWaitAsync(() => (menu = SmokeOpenMenuItems(root.XamlRoot!)).Length > 0, () => "the remote list's context menu after the menu key");
+            string[] menuIds = ["Open", "Download", "Rename", "Delete", "NewFolder", "Parent", "Refresh"];
+            var shownIds = menu.Select(AutomationProperties.GetAutomationId).ToArray();
+            SmokeAssert(shownIds.SequenceEqual(menuIds.Select(id => "Remote.Menu." + id)),
+                $"The folder row's context menu holds [{string.Join(", ", shownIds)}]");
+            SmokeAssert(menu.All(item => item.IsEnabled), "The idle remote list's context menu has a disabled item");
+            var menuDelete = menu.Single(item => AutomationProperties.GetAutomationId(item) == "Remote.Menu.Delete");
+            ((IInvokeProvider)new MenuFlyoutItemAutomationPeer(menuDelete).GetPattern(PatternInterface.Invoke)).Invoke();
+            var menuConfirm = await SmokeOpenDialogAsync(root.XamlRoot!, "Delete remote item");
+            SmokeInvoke(SmokeDialogButton(menuConfirm, "PrimaryButton"));
+            await SmokeRemoteWaitAsync(() => SmokeRow(remoteList(), keyRenamed) is null && !Directory.Exists(Path.Combine(server.Root, keyRenamed)),
+                () => $"'{keyRenamed}' to leave the list and the server after the menu's Delete");
+            SmokeAssert(SmokeOpenMenuItems(root.XamlRoot!).Length == 0, "The context menu is still open after its Delete ran");
 
             // 10. Disable the plugin while a throttled download runs.
             var (disabledRow, stoppedBackend) = await SmokeRemoteDisableDuringTransferAsync(manager, fileOps, transfers, installRoot, window, root, downloadTitle);
@@ -750,44 +826,195 @@ public sealed partial class MainWindow
             $"Selecting '{name}' in {AutomationProperties.GetAutomationId(owner)} selected {owner.SelectedItems.Count} rows");
     }
 
+    private const int SmokeVkBack = 0x08;
+    private const int SmokeVkTab = 0x09;
+    private const int SmokeVkEnter = 0x0D;
+    private const int SmokeVkEscape = 0x1B;
+    private const int SmokeVkDown = 0x28;
+    private const int SmokeVkHome = 0x24;
+    private const int SmokeVkRight = 0x27;
+    private const int SmokeVkDelete = 0x2E;
+    private const int SmokeVkApps = 0x5D;
+    private const int SmokeVkF2 = 0x71;
+
     /// <summary>
-    /// Raises the list's real <c>ItemClick</c> for the row named <paramref name="name"/>. List item automation peers
-    /// expose no Invoke pattern, so this focuses the row with the keyboard and posts Enter to its window's focused
-    /// input HWND, which <c>ListViewBase</c> turns into <c>ItemClick</c>.
+    /// Opens the row named <paramref name="name"/> as Enter does. List item automation peers expose no Invoke pattern,
+    /// so this focuses the row with the keyboard and posts Enter to its window's focused input HWND.
     /// </summary>
-    private async Task SmokeActivateRowAsync(ListViewBase list, string name)
+    private Task SmokeActivateRowAsync(ListViewBase list, string name) => SmokePressRowKeyAsync(list, name, SmokeVkEnter);
+
+    /// <summary>Presses one key on the row named <paramref name="name"/>, once it is realized.</summary>
+    private async Task SmokePressRowKeyAsync(ListViewBase list, string name, int virtualKey)
     {
         SelectorItem? row = null;
         await SmokeRemoteWaitAsync(() => (row = SmokeRow(list, name)) is { IsLoaded: true },
             () => $"a realized '{name}' row in {AutomationProperties.GetAutomationId(list)}, rows [{string.Join(" | ", SmokeRowNames(list))}]");
-        var owner = SmokeOwnerWindow(list) ?? throw new InvalidOperationException($"No window hosts {AutomationProperties.GetAutomationId(list)}");
+        await SmokePressKeyAsync(row!, virtualKey, $"the '{name}' row");
+    }
+
+    /// <summary>
+    /// Gives <paramref name="target"/> the keyboard focus and posts one press of <paramref name="virtualKey"/> to its
+    /// window's focused input HWND, which XAML routes to the focused element as a real key.
+    /// </summary>
+    private async Task SmokePressKeyAsync(Control target, int virtualKey, string what)
+    {
+        var owner = SmokeOwnerWindow(target) ?? throw new InvalidOperationException($"No window hosts {what}");
         var top = WinRT.Interop.WindowNative.GetWindowHandle(owner);
         if (GetActiveWindow() != top)
         {
             SetActiveWindow(top);
         }
 
-        row!.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false });
+        target.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false });
         await SmokeRemoteWaitAsync(
             () =>
             {
-                if (!ReferenceEquals(FocusManager.GetFocusedElement(list.XamlRoot), row))
+                if (!ReferenceEquals(FocusManager.GetFocusedElement(target.XamlRoot), target))
                 {
-                    row.Focus(FocusState.Keyboard);
+                    target.Focus(FocusState.Keyboard);
                 }
 
-                return ReferenceEquals(FocusManager.GetFocusedElement(list.XamlRoot), row);
+                return ReferenceEquals(FocusManager.GetFocusedElement(target.XamlRoot), target);
             },
-            () => $"keyboard focus on the '{name}' row, focus is on {FocusManager.GetFocusedElement(list.XamlRoot)?.GetType().Name ?? "nothing"}");
-        var target = SmokeFocusedInputWindow(top);
+            () => $"keyboard focus on {what}, focus is on {FocusManager.GetFocusedElement(target.XamlRoot)?.GetType().Name ?? "nothing"}");
+        var input = SmokeFocusedInputWindow(top);
         const uint WM_KEYDOWN = 0x0100;
         const uint WM_KEYUP = 0x0101;
-        const int VK_RETURN = 0x0D;
-        var scan = (long)MapVirtualKeyW(VK_RETURN, 0) << 16;
-        SmokeAssert(PostMessageW(target, WM_KEYDOWN, VK_RETURN, (nint)(1 | scan)), $"PostMessage(WM_KEYDOWN) failed: {Marshal.GetLastWin32Error()}");
-        SmokeAssert(PostMessageW(target, WM_KEYUP, VK_RETURN, (nint)(1 | scan | (1L << 30) | (1L << 31))),
+        // Home, the arrows, Delete and the menu key are extended keys.
+        var extended = virtualKey is SmokeVkHome or SmokeVkRight or SmokeVkDown or SmokeVkDelete or SmokeVkApps ? 1L << 24 : 0L;
+        var scan = ((long)MapVirtualKeyW((uint)virtualKey, 0) << 16) | extended;
+        SmokeAssert(PostMessageW(input, WM_KEYDOWN, virtualKey, (nint)(1 | scan)), $"PostMessage(WM_KEYDOWN) failed: {Marshal.GetLastWin32Error()}");
+        SmokeAssert(PostMessageW(input, WM_KEYUP, virtualKey, (nint)(1 | scan | (1L << 30) | (1L << 31))),
             $"PostMessage(WM_KEYUP) failed: {Marshal.GetLastWin32Error()}");
     }
+
+    /// <summary>
+    /// The file lists' mouse gestures, made with the real mouse: a click selects a folder and a double-click opens
+    /// it, a right-click selects the row under it and opens its menu, a drag between the lists uploads and
+    /// downloads, and the splitter between them resizes them. It leaves both folders as it found them.
+    /// </summary>
+    private async Task SmokeRemotePointerAsync(FrameworkElement root, SmokeRemoteServer server, string localRoot)
+    {
+        var remoteList = () => SmokeFindById<ListView>(root, "Remote.RemoteList");
+        var localList = () => SmokeFindById<ListView>(root, "Remote.LocalList");
+        var remotePath = SmokeRemoteControl<TextBox>(root, "Remote.RemotePath");
+        Button Named(string name) => SmokeLogicalDescendants<Button>(root).Single(button => AutomationProperties.GetName(button) == name);
+        // The view model is idle (and so takes the next gesture) when the transfer buttons are enabled again.
+        Task IdleAsync() => SmokeRemoteEnabledButtonAsync(root, "Remote.Download");
+        var cursor = SmokeMousePosition();
+        try
+        {
+            // A click selects a folder; it used to open it.
+            await IdleAsync();
+            await SmokeClickAsync(SmokeRow(remoteList(), SmokeRemoteUnicodeFolder)!);
+            await SmokeRemoteWaitAsync(
+                () => remoteList() is { SelectedItems.Count: 1 } && SmokeRow(remoteList(), SmokeRemoteUnicodeFolder) is { IsSelected: true },
+                () => $"a click to select '{SmokeRemoteUnicodeFolder}' alone, {remoteList()?.SelectedItems.Count} rows are selected");
+            await Task.Delay(700);
+            SmokeAssert(remotePath.Text == "/" && SmokeRow(remoteList(), "big.bin") is not null, $"A click on a remote folder opened it: the path reads '{remotePath.Text}'");
+
+            // A double-click opens it.
+            await SmokeClickAsync(SmokeRow(remoteList(), SmokeRemoteUnicodeFolder)!, count: 2);
+            await SmokeRemoteWaitAsync(() => remotePath.Text == "/" + SmokeRemoteUnicodeFolder,
+                () => $"a double-click to open '/{SmokeRemoteUnicodeFolder}', the path reads '{remotePath.Text}'");
+            await SmokeRemoteWaitRowsAsync(remoteList, ["hello.txt"], "Remote.RemoteList after the double-click");
+            await SmokeRemoteEnabledButtonAsync(root, "Remote.RemoteGo");
+            SmokeInvoke(Named("Go to parent remote folder"));
+            await SmokeRemoteWaitAsync(() => remotePath.Text == "/" && SmokeRow(remoteList(), "big.bin") is not null,
+                () => $"the remote root again, the path reads '{remotePath.Text}'");
+
+            // A right-click on a row outside the selection selects that row alone and opens its menu.
+            await IdleAsync();
+            await SmokeSelectRowAsync(remoteList, "big.bin");
+            await SmokeClickAsync(SmokeRow(remoteList(), "upload.txt")!, SmokeMouseButton.Right);
+            MenuFlyoutItem[] menu = [];
+            await SmokeRemoteWaitAsync(() => (menu = SmokeOpenMenuItems(root.XamlRoot!)).Length > 0, () => "the remote list's context menu after a right-click");
+            var ids = menu.Select(AutomationProperties.GetAutomationId).ToArray();
+            string[] fileMenu = ["Download", "Rename", "Delete", "NewFolder", "Parent", "Refresh"];
+            SmokeAssert(ids.SequenceEqual(fileMenu.Select(id => "Remote.Menu." + id)), $"A file row's context menu holds [{string.Join(", ", ids)}]");
+            SmokeAssert(remoteList() is { SelectedItems.Count: 1 } && SmokeRow(remoteList(), "upload.txt") is { IsSelected: true },
+                $"The right-clicked row is not the only selection: {remoteList()?.SelectedItems.Count} rows are selected");
+            var refresh = menu.Single(item => AutomationProperties.GetAutomationId(item) == "Remote.Menu.Refresh");
+            ((IInvokeProvider)new MenuFlyoutItemAutomationPeer(refresh).GetPattern(PatternInterface.Invoke)).Invoke();
+            await SmokeRemoteWaitAsync(() => SmokeOpenMenuItems(root.XamlRoot!).Length == 0, () => "the context menu to close after Refresh");
+
+            // A local file dragged onto the remote list is uploaded.
+            var local = Path.Combine(localRoot, "dragged.txt");
+            var remote = Path.Combine(server.Root, "dragged.txt");
+            File.WriteAllText(local, "dragged");
+            await IdleAsync();
+            SmokeInvoke(Named("Refresh local folder"));
+            await SmokeRemoteWaitAsync(() => SmokeRow(localList(), "dragged.txt") is not null, () => "the dragged.txt row in the local list");
+            await IdleAsync();
+            await SmokeDragAsync(SmokeRow(localList(), "dragged.txt")!, remoteList()!);
+            await SmokeWaitWithinAsync(
+                () => Task.FromResult(File.Exists(remote) && SmokeRow(remoteList(), "dragged.txt") is not null),
+                SmokeRemoteTransferWait,
+                () => $"the drag onto the remote list to upload dragged.txt (on the server: {File.Exists(remote)})");
+            SmokeAssert(File.ReadAllText(remote) == "dragged", $"{remote} does not read 'dragged'");
+
+            // And a remote file dragged onto the local list is downloaded.
+            await IdleAsync();
+            File.Delete(local);
+            SmokeInvoke(Named("Refresh local folder"));
+            await SmokeRemoteWaitAsync(() => SmokeRow(localList(), "dragged.txt") is null, () => "the dragged.txt row to leave the local list");
+            await IdleAsync();
+            await SmokeDragAsync(SmokeRow(remoteList(), "dragged.txt")!, localList()!);
+            await SmokeWaitWithinAsync(
+                () => Task.FromResult(File.Exists(local) && SmokeRow(localList(), "dragged.txt") is not null),
+                SmokeRemoteTransferWait,
+                () => $"the drag onto the local list to download dragged.txt (on disk: {File.Exists(local)})");
+            SmokeAssert(File.ReadAllText(local) == "dragged", $"{local} does not read 'dragged'");
+
+            // A list does not take its own rows: dragging a remote row onto the remote list transfers nothing.
+            await IdleAsync();
+            var transfersBefore = SmokeFindById<ListView>(root, "Remote.TransferList")!.Items.Count;
+            await SmokeDragAsync(SmokeRow(remoteList(), "dragged.txt")!, SmokeRow(remoteList(), "big.bin")!);
+            await Task.Delay(500);
+            SmokeAssert(SmokeFindById<ListView>(root, "Remote.TransferList")!.Items.Count == transfersBefore && SmokeOpenDialog(root.XamlRoot!) is null,
+                "A drag inside the remote list started a transfer or opened a dialog");
+
+            // The splitter between the lists: a drag widens the local list, a double-click evens them again.
+            var splitter = SmokeRemoteControl<ContentControl>(root, "Remote.PanesSplitter");
+            var width = localList()!.ActualWidth;
+            await SmokeDragByAsync(splitter, 60, 0);
+            await SmokeRemoteWaitAsync(() => Math.Abs(localList()!.ActualWidth - width - 60) < 4,
+                () => $"the local list to be 60 wider than {width} after the drag, it is {localList()!.ActualWidth}");
+            await SmokeClickAsync(splitter, count: 2);
+            await SmokeRemoteWaitAsync(() => Math.Abs(localList()!.ActualWidth - width) < 2,
+                () => $"the local list to be {width} wide again after the double-click, it is {localList()!.ActualWidth}");
+
+            // Put both folders back.
+            await IdleAsync();
+            await SmokeSelectRowAsync(remoteList, "dragged.txt");
+            SmokeInvoke(await SmokeRemoteEnabledButtonAsync(root, "Remote.DeleteEntries"));
+            SmokeInvoke(SmokeDialogButton(await SmokeOpenDialogAsync(root.XamlRoot!, "Delete remote item"), "PrimaryButton"));
+            await SmokeRemoteWaitAsync(() => SmokeRow(remoteList(), "dragged.txt") is null && !File.Exists(remote), () => "dragged.txt to leave the server");
+            File.Delete(local);
+            await IdleAsync();
+            SmokeInvoke(Named("Refresh local folder"));
+            await SmokeRemoteWaitAsync(() => SmokeRow(localList(), "dragged.txt") is null, () => "the dragged.txt row to leave the local list");
+            await IdleAsync();
+        }
+        finally
+        {
+            // Hand the pointer back where it was. A failure here would hide the one that led to it.
+            try
+            {
+                SmokeMouseMove(cursor.X, cursor.Y);
+            }
+            catch (InvalidOperationException)
+            {
+            }
+        }
+    }
+
+    /// <summary>The items of the context menu open on <paramref name="root"/>, or none.</summary>
+    private static MenuFlyoutItem[] SmokeOpenMenuItems(XamlRoot root) =>
+        VisualTreeHelper.GetOpenPopupsForXamlRoot(root)
+            .Where(popup => popup.Child is MenuFlyoutPresenter)
+            .SelectMany(popup => SmokeDescendants<MenuFlyoutItem>(popup.Child))
+            .ToArray();
 
     /// <summary>The main window or the remote plugin window whose content shares the list's XamlRoot.</summary>
     private Window? SmokeOwnerWindow(UIElement element) =>

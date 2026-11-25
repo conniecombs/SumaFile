@@ -1,15 +1,17 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Media;
 using Windows.Foundation;
 
-namespace SumaFile.Remote.Views;
+namespace SumaFile.Plugins.Ui;
 
 /// <summary>
 /// Virtualized rows without bindings. A list binds model objects through <c>ItemsSource</c> and one row template
 /// parsed once; WinUI realizes (and recycles) containers only for the rows in view, and <see cref="Attach{T}"/> fills
 /// each realized row's named elements from its model in <c>ContainerContentChanging</c>. Plugin windows share the
-/// host's UI thread, so a listing of tens of thousands of entries must not build one element tree per entry.
+/// host's UI thread, so a listing of tens of thousands of entries, or a repository with thousands of changes, must
+/// not build one element tree per row.
 /// </summary>
 internal static class ListRows
 {
@@ -77,6 +79,26 @@ internal static class ListRows
                 {
                     return list.ItemFromContainer(container) as T;
                 }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The model of the row that holds <paramref name="source"/>, the <c>OriginalSource</c> of a pointer, key or
+    /// context menu event on <paramref name="list"/>; null when the event came from outside every row.
+    /// </summary>
+    public static T? RowOf<T>(ListViewBase list, object? source) where T : class
+    {
+        ArgumentNullException.ThrowIfNull(list);
+        for (var element = source as DependencyObject;
+             element is not null && !ReferenceEquals(element, list);
+             element = VisualTreeHelper.GetParent(element))
+        {
+            if (element is SelectorItem container)
+            {
+                return list.ItemFromContainer(container) as T;
             }
         }
 

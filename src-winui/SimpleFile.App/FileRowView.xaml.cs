@@ -63,16 +63,32 @@ public sealed partial class FileRowView : UserControl
             return false;
         }
 
+        RenameBox.HorizontalAlignment = HorizontalAlignment.Left;
+        RenameBox.VerticalAlignment = VerticalAlignment.Top;
         try
         {
+            // The box goes where the name is: on the row's one line in Details and List, on the first of a tile's
+            // two lines, under the icon in a tile that stacks them.
             var origin = _nameText.TransformToVisual(RowRoot).TransformPoint(new Windows.Foundation.Point(0, 0));
-            var left = Math.Max(0, origin.X - 6);
-            var available = RowRoot.ActualWidth > 0 ? RowRoot.ActualWidth - left : double.PositiveInfinity;
-            RenameBox.Margin = new Thickness(left, 0, 0, 0);
-            RenameBox.Width = Math.Max(80, Math.Min(Math.Max(160, _nameText.ActualWidth + 24), available));
+            var top = RenameBoxLayout.Top(origin.Y);
+            if (RenameBoxLayout.NameIsBelowIcon(origin.Y, _nameText.ActualHeight, RowRoot.ActualHeight))
+            {
+                // Across the tile: the name is centred under the icon and wraps.
+                RenameBox.HorizontalAlignment = HorizontalAlignment.Stretch;
+                RenameBox.Margin = new Thickness(2, top, 2, 0);
+                RenameBox.Width = double.NaN;
+            }
+            else
+            {
+                var left = Math.Max(0, origin.X - 6);
+                var available = RowRoot.ActualWidth > 0 ? RowRoot.ActualWidth - left : double.PositiveInfinity;
+                RenameBox.Margin = new Thickness(left, top, 0, 0);
+                RenameBox.Width = RenameBoxLayout.RowWidth(_nameText.ActualWidth, available);
+            }
         }
         catch (ArgumentException)
         {
+            RenameBox.VerticalAlignment = VerticalAlignment.Center;
             RenameBox.Margin = new Thickness(0);
             RenameBox.Width = double.NaN;
         }
@@ -105,6 +121,13 @@ public sealed partial class FileRowView : UserControl
 
     /// <summary>Hides the rename box without renaming.</summary>
     public void CancelRename() => EndRename(restoreFocus: true);
+
+    /// <summary>Whether the row is shown as the folder a drag would drop into.</summary>
+    public bool IsDropTarget => DropTargetOutline.Visibility == Visibility.Visible;
+
+    /// <summary>Shows, or stops showing, this row as the folder a drag would drop into.</summary>
+    public void SetDropTarget(bool active) =>
+        DropTargetOutline.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
 
     private void SelectRenameStem(FileRow row)
     {
@@ -254,6 +277,8 @@ public sealed partial class FileRowView : UserControl
                 view.EndRename(restoreFocus: false);
             }
 
+            // Nor mark another row as the folder a drag is over.
+            view.SetDropTarget(false);
             view.ApplyRow();
         }
     }

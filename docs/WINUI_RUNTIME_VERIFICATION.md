@@ -37,6 +37,7 @@ rendering performance measurement.
 | `-NoPlugins` | Plugins-off mode: load no plugin. It cannot be combined with `-PluginsDir` |
 | `-Baseline` | Record only the large-folder and navigation scenarios, without the virtualization assertion |
 | `-KeepResults` | Keep the run folder after a passing run |
+| `-PointerInput` | Also make the gestures that have no keyboard or automation route, with the real mouse: a marquee selection and a drag onto a folder's row in a file pane, the mouse's side buttons, middle-clicks, drops onto a tab, a breadcrumb and a bookmark, a tab drag and a column header drag (the `pane-pointer-gestures` scenario, in every mode), and a click, a double-click, a right-click and drags in the FTP/SFTP manager (plugins-on mode). The pointer moves and its buttons are pressed for a few seconds, so leave the mouse alone meanwhile. A step fails, without clicking, if another window covers the point it is about to click. Off by default, and not used in CI |
 
 ## Modes
 
@@ -78,7 +79,7 @@ What the additional scenarios check:
 | `plugins` | The Hello fixture is discovered and enabled, its command is in the command palette and runs, its backend starts and registers the `.hello` archive format, and its sidebar section, window, dialog, settings page, panels and row decorations work, including decorations of the folder shown at startup | No plugin, plugin command, plugin sidebar section or row decoration provider exists |
 | `sevenzip` | The bundled 7-Zip plugin is trusted through `bundled.json` and serves `.7z` listing, browsing, folder creation inside the archive, create and extract as Transfers rows, Cancel of a long create, and its executable override setting | `.7z` is unavailable everywhere, with the note that names the plugin |
 | `sevenzip-backend-loss` | Killing the 7-Zip backend faults the plugin and shows the note in the pane; a restart brings the listing back | Not run |
-| `remote` | The bundled FTP/SFTP plugin against the SFTP test server: a profile imported from a 1.0.4 database, the manager window, a new profile with a saved password, host-key trust, browsing, upload, download, Cancel from the Transfers row, folder operations, disabling the plugin during a transfer, profile deletion and the settings page | No remote command, toolbar action, menu entry or Settings text exists |
+| `remote` | The bundled FTP/SFTP plugin against the SFTP test server: a profile imported from a 1.0.4 database, the manager window, a new profile with a saved password, host-key trust, browsing (Enter on a folder, a typed remote path, Backspace), the Size column, a splitter moved with the keyboard, upload, download, Cancel from the Transfers row, folder operations by button, by F2 and Delete and from the context menu, disabling the plugin during a transfer, profile deletion and the settings page | No remote command, toolbar action, menu entry or Settings text exists |
 | `remote-backend-loss` | Killing the remote backend faults the plugin and removes its sidebar section; a restart brings both back | Not run |
 | `git` | The bundled Git plugin: trust and commands, the legacy setting migration, row decorations, the workbench panel, stage, unstage, diff, discard, fetch, pull, commit and push (each checked with the `git` command line), detaching and disabling, and a removed toolbar toggle staying removed | No Git command, toolbar action, menu entry, Settings text, decoration or backend exists |
 | `service-reconnect` | Killing the service reconnects the application; `.7z` is served through the plugin again and the remote and Git backends keep running | Not run |
@@ -161,10 +162,15 @@ run folder by hand.
 - The conflict dialog renders incoming/existing metadata and Keep both names.
   Choosing Keep both is checked against an actual backend copy without
   overwriting the existing file.
+- Typing in the omnibar and in a pane's path box brings up suggestions that
+  the keyboard works (Down, Tab, Enter, Esc); F2 renames in place in the List
+  and Tiles views with the box over the name; and a Details column moves from
+  its header's menu without passing Name (the `typing-and-columns` scenario).
 - Advanced Rename renders its Before/After columns aligned with their headers,
   disables Rename while the new names conflict, and preserves extensions. The
   run captures `workspace-polish.png`, `conflict-polish.png`, and
-  `rename-polish.png` alongside the JSON report.
+  `rename-polish.png` alongside the JSON report. The plugins-on run also
+  captures the connected FTP/SFTP manager as `remote-manager-polish.png`.
 
 ## Manual folder merge checks
 

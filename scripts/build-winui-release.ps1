@@ -23,32 +23,8 @@ $appProject = Join-Path $root "src-winui\SimpleFile.App\SimpleFile.App.csproj"
 . (Join-Path $PSScriptRoot "lib\plugin-staging.ps1")
 # Resolve-WixBin and New-WinUIMsi build the MSI (WiX v3 with WixUtilExtension).
 . (Join-Path $PSScriptRoot "lib\wix-msi.ps1")
-
-function Write-Step {
-    param([Parameter(Mandatory = $true)][string]$Message)
-    Write-Host ""
-    Write-Host "==> $Message"
-}
-
-function Invoke-Native {
-    param(
-        [Parameter(Mandatory = $true)][string]$FilePath,
-        [string[]]$ArgumentList = @(),
-        [string]$WorkingDirectory = $root
-    )
-
-    Write-Step ("{0} {1}" -f $FilePath, ($ArgumentList -join " "))
-    Push-Location -LiteralPath $WorkingDirectory
-    try {
-        & $FilePath @ArgumentList
-        if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) {
-            throw "Command failed with exit code ${LASTEXITCODE}: $FilePath $($ArgumentList -join ' ')"
-        }
-    }
-    finally {
-        Pop-Location
-    }
-}
+# Write-Step and Invoke-Native.
+. (Join-Path $PSScriptRoot "lib\smoke-common.ps1")
 
 function Get-ReleaseMetadata {
     $props = Get-Content -LiteralPath (Join-Path $root "src-winui\Directory.Build.props") -Raw
@@ -408,30 +384,28 @@ foreach ($pluginUiProject in $pluginUiProjects) {
 New-WinUIPayload -PublishDir $publishDir -ServiceExe $serviceExe -Destination $payloadDir
 
 $portableZip = Join-Path $distRoot "SumaFile_${version}_x64-winui-portable.zip"
-if (Test-Path -LiteralPath $portableZip) {
-    Remove-PathWithRetry -Path $portableZip -Context "existing portable ZIP"
-}
-Compress-Archive -Path (Join-Path $payloadDir "*") -DestinationPath $portableZip -Force
-Write-Host "Wrote $portableZip"
-
 $setupName = "SumaFile_${version}_x64-winui-setup.exe"
 $setupPath = Join-Path $distRoot $setupName
 $msiPath = Join-Path $distRoot "SumaFile_${version}_x64-winui.msi"
 $builtSetup = $false
 $builtMsi = $false
 
+# The setup, the portable ZIP and the MSI are three packagings of the same payload, and each only reads it. The
+# setup is the slowest (about a minute of compression on one processor), so it is started first and runs while the
+# ZIP and the MSI are made. One after the other they took the sum of the three; this way they take the longest.
+$setupJob = $null
+try {
 if (-not $SkipInstaller) {
     $makensis = Resolve-Tool "makensis.exe" @(
         "C:\Program Files (x86)\NSIS",
         "C:\Program Files\NSIS"
     )
     if ($makensis) {
-        Write-Step "Build NSIS WinUI setup"
         $nsi = Join-Path $root "packaging\winui\sumafile-winui.nsi"
         $payloadNsis = $payloadDir.Replace('\', '/')
         $setupNsis = $setupPath.Replace('\', '/')
         $iconNsis = $iconPath.Replace('\', '/')
-        Invoke-Native $makensis @(
+        $setupJob = Start-BackgroundNative -Title "Build NSIS WinUI setup" -FilePath $makensis -ArgumentList @(
             "/DVERSION=$version",
             "/DNUMERIC_VERSION=$numericVersion",
             "/DPAYLOAD=$payloadNsis",
@@ -439,14 +413,25 @@ if (-not $SkipInstaller) {
             "/DICON=$iconNsis",
             $nsi
         )
-        $builtSetup = Test-Path -LiteralPath $setupPath
     }
     else {
         $message = "makensis.exe was not found; skipped NSIS WinUI setup."
         if ($RequireInstaller) { throw $message }
         Write-Warning $message
     }
+}
 
+Write-Step "Write the portable ZIP"
+if (Test-Path -LiteralPath $portableZip) {
+    Remove-PathWithRetry -Path $portableZip -Context "existing portable ZIP"
+}
+# The same entries as Compress-Archive wrote, in about half the time.
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[System.IO.Compression.ZipFile]::CreateFromDirectory(
+    $payloadDir, $portableZip, [System.IO.Compression.CompressionLevel]::Optimal, $false)
+Write-Host "Wrote $portableZip"
+
+if (-not $SkipInstaller) {
     # WiX v3 with WixUtilExtension (Product.wxs purges the app-owned plugin items on uninstall); New-WinUIMsi in
     # scripts\lib\wix-msi.ps1 is shared with the MSI lifecycle smoke.
     $wixBin = Resolve-WixBin
@@ -497,6 +482,18 @@ if (-not $SkipInstaller) {
         if ($RequireInstaller) { throw $message }
         Write-Warning $message
     }
+}
+
+if ($setupJob) {
+    $finished = $setupJob
+    $setupJob = $null
+    Wait-BackgroundNative -Job $finished
+    $builtSetup = Test-Path -LiteralPath $setupPath
+}
+}
+finally {
+    # Something above failed while the setup was still being built.
+    Stop-BackgroundNative -Job $setupJob
 }
 
 $signature = ""

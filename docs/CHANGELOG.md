@@ -76,6 +76,82 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
   versions are still cleaned up, and an earlier version leaves the new
   records alone. See [Recovery](TRANSFER_TUNING.md#recovery).
 
+### File lists
+
+- Rubber-band selection works in the Details view. Press on the blank space
+  below the rows and drag over the files to select; with Ctrl held, the
+  files the rectangle touches are added to the selection or taken out of
+  it. A click on the blank space clears the selection, as it does in the
+  other views. Details was the one view without it.
+- While files are dragged over a folder's row, that row is marked as where
+  they will go. The pane's border is now highlighted only when the files
+  would go into the pane's own folder; it used to light up either way, so
+  nothing told the two apart but the tooltip.
+- The highlight of a pane's border is cleared when a drag that started in
+  the Details view ends outside the panes.
+
+### Typing, renaming and columns
+
+- The omnibar suggests as you type. A path gets the folders that complete
+  it, and a bare name the folders of the current folder that start with it;
+  after `>`, or in Command mode, it lists the commands that match, best match
+  first. A search or a filter gets no list, as its results are the file list.
+- The suggestion list works from the keyboard, under the omnibar and under a
+  pane's path box: Down and Up choose a line, Tab takes the chosen line or
+  the first, Enter takes the chosen line, and Esc closes the list and leaves
+  what you typed. With no line chosen, Enter runs what you typed, as before.
+  The list under the path box could only be clicked.
+- F2 renames in place in the List, Tiles and Content views, as it did in
+  Details. In a tile the box sits under the icon, over the name. These views
+  used to open the Rename dialog.
+- A Details column can be moved: drag its header onto another column's, or
+  use Move Column Left and Move Column Right on the header's menu. The Name
+  column stays first. The order is saved with the rest of the column layout.
+
+### Tabs, breadcrumbs and sidebar
+
+- The mouse's side buttons go back and forward, in the pane the pointer is
+  over, or in the active pane when it is elsewhere in the window.
+- A middle-click on a folder opens it in a new tab: on its row in a file
+  list, on a breadcrumb, and on a sidebar entry (Quick Access, drives, the
+  folder tree, bookmarks and recent folders). A middle-click on a tab still
+  closes it.
+- Files can be dropped onto a tab, a breadcrumb or one of those sidebar
+  entries, and go into its folder: moved when dragged from a pane, copied
+  with Ctrl held or when they come from another program, as in a pane. The
+  tab, breadcrumb or entry is marked while the files are over it. The Recycle
+  Bin takes no drop.
+- A tab can be dragged along its strip to another position; it takes the
+  place of the tab it is dropped on. From the keyboard, Ctrl+Shift+PageUp and
+  Ctrl+Shift+PageDown move the focused tab one place left or right.
+
+### FTP/SFTP manager
+
+- A click on a folder selects it, and a double-click or Enter opens it, in
+  the local and in the remote list. A click used to open the folder, so a
+  folder could not be selected with the mouse to download, rename or delete
+  it.
+- The remote folder box takes a typed path: press Enter, or the Go button
+  beside it. A folder the server does not have is reported, and what you
+  typed stays so you can correct it. Esc puts back the folder the list
+  shows, in the local box as well.
+- The two lists have a Size column and a header, and show when a file was
+  modified as a local date and time. They used to show the server's
+  timestamp as it was sent.
+- Keys in the lists: Backspace or Alt+Up goes to the parent folder and F5
+  refreshes. In the remote list F2 renames, Delete deletes after asking, and
+  Ctrl+Shift+N makes a folder.
+- A right-click, or the menu key, opens a menu of the same commands for what
+  is selected.
+- Drag files from the local list onto the remote list to upload them, and
+  from the remote list onto the local list to download them. Files dragged
+  from Explorer or from a SumaFile pane onto the remote list are uploaded as
+  well. A drop goes into the folder the list shows, also when it lands on a
+  folder's row.
+- The gaps between the profiles, the local list and the remote list are
+  splitters. Drag one, or move to it with Tab and press Left or Right; a
+  double-click or Home resets it. The widths last until the window closes.
+
 ### Plugins
 
 - A plugin's backend answers only SumaFile. Each time SumaFile starts a

@@ -325,6 +325,63 @@ public sealed class DetailsFileListView : UserControl
         }
     }
 
+    /// <summary>Whether <paramref name="source"/>, the original source of a pointer event, lies in one of the rows.</summary>
+    public bool IsInsideRow(DependencyObject? source)
+    {
+        for (var element = source; element is not null && !ReferenceEquals(element, this); element = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(element))
+        {
+            if (element is ListViewItem)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>The rows on screen whose bounds, as <paramref name="relativeTo"/> sees them, meet <paramref name="bounds"/>.</summary>
+    public IReadOnlyList<FileRow> RowsIntersecting(Rect bounds, UIElement relativeTo)
+    {
+        var rows = new List<FileRow>();
+        foreach (var (index, container) in RealizedContainers(_list))
+        {
+            var row = container.TransformToVisual(relativeTo)
+                .TransformBounds(new Rect(0, 0, container.ActualWidth, container.ActualHeight));
+            if (index < _rows.Count
+                && MarqueeSelection.Intersects(bounds.X, bounds.Y, bounds.Width, bounds.Height, row.X, row.Y, row.Width, row.Height))
+            {
+                rows.Add(_rows[index]);
+            }
+        }
+
+        return rows;
+    }
+
+    /// <summary>
+    /// Makes <paramref name="rows"/> the selection by removing and adding only the rows that differ, so
+    /// <see cref="SelectionChanged"/> reports each change as it does for a click. For a marquee, which changes the
+    /// selection a little on every pointer move.
+    /// </summary>
+    public void SelectRows(IReadOnlySet<FileRow> rows)
+    {
+        foreach (var selected in _selectedRows.Where(row => !rows.Contains(row)).ToArray())
+        {
+            _list.SelectedItems.Remove(selected);
+        }
+
+        foreach (var row in rows)
+        {
+            if (!_selectedRows.Contains(row))
+            {
+                _list.SelectedItems.Add(row);
+            }
+        }
+    }
+
+    /// <summary>The view of <paramref name="row"/> while it is on screen. Unlike <see cref="RowViewFor"/>, it scrolls nothing.</summary>
+    public FileRowView? RealizedRowView(FileRow row) =>
+        _list.ContainerFromItem(row) is ListViewItem item ? FindDescendant<FileRowView>(item) : null;
+
     public FileRow? RowFromPoint(Point point)
     {
         foreach (var (index, container) in RealizedContainers(_list))

@@ -328,13 +328,19 @@ public class UxShellTests
         Assert.DoesNotContain("if (", toggle.Replace("if (workspace is null)", ""));
     }
 
-    // Add: inline rename in the Details view.
+    // Add: inline rename, at first in the Details view only; audit U6 took the view condition out.
     [Fact]
-    public void InlineRename_EditsTheDetailsRowInPlace()
+    public void InlineRename_EditsTheRowInPlaceInEveryView()
     {
         var events = Read("MainWindow.FileListEvents.cs");
         var begin = Slice(events, "private bool TryBeginInlineRename()", "private void CancelInlineRename()");
-        Assert.Contains("\"details\"", begin);
+        Assert.DoesNotContain("\"details\"", begin);
+        Assert.Contains("var selected = SelectedRowsForPane(pane);", begin);
+        Assert.Contains("PathRules.IsRecycleBinPath(workspace.Pane(pane).Path)", begin);
+        Assert.Contains("RowViewForRename(pane, target)", begin);
+        // The plain list of the List, Tiles and Content views realizes the row before its view is asked for.
+        Assert.Contains("list.ScrollIntoView(row);", begin);
+        Assert.Contains("FindDescendant<FileRowView>(item)", begin);
         Assert.Contains("selected.Count != 1", begin);
         Assert.Contains("BeginRename(CommitInlineRenameAsync)", begin);
         var commit = events[events.IndexOf("private async Task CommitInlineRenameAsync(", StringComparison.Ordinal)..];
@@ -343,6 +349,11 @@ public class UxShellTests
 
         Assert.Contains("x:Name=\"RenameBox\"", Read("FileRowView.xaml"));
         var row = Read("FileRowView.xaml.cs");
+        // The box goes where the name is, which in a tile is not the middle of the row.
+        Assert.Contains("var top = RenameBoxLayout.Top(origin.Y);", row);
+        Assert.Contains("RenameBoxLayout.NameIsBelowIcon(origin.Y, _nameText.ActualHeight, RowRoot.ActualHeight)", row);
+        Assert.Contains("RenameBox.VerticalAlignment = VerticalAlignment.Top;", row);
+        Assert.Contains("RenameBox.Width = RenameBoxLayout.RowWidth(_nameText.ActualWidth, available);", row);
         Assert.Contains("NewItemTemplate.RenameSelectionLength(row.Name, row.IsDir)", row);
         Assert.Contains("VirtualKey.Escape", row);
         Assert.Contains("OnRenameBoxLostFocus", row);

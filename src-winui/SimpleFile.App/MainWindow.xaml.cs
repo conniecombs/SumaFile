@@ -70,7 +70,11 @@ public sealed partial class MainWindow : Window
     private int _pathLostFocusToken;
     private Flyout? _pathSuggestFlyout;
     private ListView? _pathSuggestList;
-    private PaneId _pathSuggestPane;
+
+    // The box the suggestion list is open under (a pane's path box or the omnibar), and its lines.
+    private TextBox? _suggestBox;
+    private IReadOnlyList<OmnibarSuggestion> _suggestions = [];
+    private bool _suggestionsOpen;
 
     public ObservableCollection<FileRow> PrimaryFiles { get; } = [];
     public ObservableCollection<FileRow> SecondaryFiles { get; } = [];
@@ -176,6 +180,12 @@ public sealed partial class MainWindow : Window
         PrimaryDetailsFileList.ItemsSource = PrimaryFiles;
         SecondaryDetailsFileList.ItemsSource = SecondaryFiles;
         AttachPaneActivationHandlers();
+        AttachPaneGestureHandlers();
+        // Before the box itself: a single-line box uses Up and Down, and Tab would leave it.
+        foreach (var box in new[] { OmnibarInput, PrimaryPathInput, SecondaryPathInput })
+        {
+            box.PreviewKeyDown += OnSuggestBoxPreviewKeyDown;
+        }
         DriveList.ItemsSource = Drives;
         QuickAccessList.ItemsSource = QuickAccess;
         Closed += OnClosed;

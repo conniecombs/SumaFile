@@ -13,7 +13,8 @@ namespace SumaFile.Remote.Views;
 /// <see cref="CoalescingSnapshot{T}"/> copy of its view model collection as <c>ItemsSource</c>, so WinUI virtualizes
 /// it and a folder of tens of thousands of entries realizes only the rows in view. Each row template is parsed once;
 /// <see cref="ListRows"/> fills the realized rows, whose container carries the automation name the row shows and a
-/// <c>Tag</c> with the path (or, for a profile, the profile id). No bindings.
+/// <c>Tag</c> with the path (or, for a profile, the profile id). No bindings. What the two file lists do on a
+/// double-click, a key, a right-click or a drop is in <c>RemoteManagerWindow.Gestures.cs</c>.
 /// </summary>
 internal sealed partial class RemoteManagerWindow
 {
@@ -39,13 +40,15 @@ internal sealed partial class RemoteManagerWindow
         <DataTemplate>
             <Grid MinWidth="0" ColumnSpacing="10">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="16" />
                     <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="96" />
+                    <ColumnDefinition Width="72" />
+                    <ColumnDefinition Width="124" />
                 </Grid.ColumnDefinitions>
-                <FontIcon x:Name="KindIcon" FontFamily="{ThemeResource SfIconFont}" FontSize="12" Foreground="{ThemeResource SfTextMutedBrush}" AutomationProperties.AccessibilityView="Raw" />
+                <FontIcon x:Name="KindIcon" HorizontalAlignment="Left" FontFamily="{ThemeResource SfIconFont}" FontSize="12" Foreground="{ThemeResource SfTextMutedBrush}" AutomationProperties.AccessibilityView="Raw" />
                 <TextBlock x:Name="NameText" Grid.Column="1" FontSize="13" Foreground="{ThemeResource SfTextPrimaryBrush}" TextTrimming="CharacterEllipsis" />
-                <TextBlock x:Name="ModifiedText" Grid.Column="2" HorizontalAlignment="Right" FontSize="12" Foreground="{ThemeResource SfTextMutedBrush}" TextTrimming="CharacterEllipsis" />
+                <TextBlock x:Name="SizeText" Grid.Column="2" HorizontalAlignment="Right" FontSize="12" Foreground="{ThemeResource SfTextMutedBrush}" />
+                <TextBlock x:Name="ModifiedText" Grid.Column="3" HorizontalAlignment="Right" FontSize="12" Foreground="{ThemeResource SfTextMutedBrush}" TextTrimming="CharacterEllipsis" />
             </Grid>
         </DataTemplate>
         """;
@@ -97,14 +100,7 @@ internal sealed partial class RemoteManagerWindow
         _snapshots.Add(new CoalescingSnapshot<RemoteTransferRecord>(_viewModel.Transfers, Enqueue, ShowTransfers));
 
         _profileList.SelectionChanged += OnProfileSelectionChanged;
-        _localList.ItemClick += OnLocalItemClick;
-        _remoteList.ItemClick += OnRemoteItemClick;
-        _listDetachers.Add(() =>
-        {
-            _profileList.SelectionChanged -= OnProfileSelectionChanged;
-            _localList.ItemClick -= OnLocalItemClick;
-            _remoteList.ItemClick -= OnRemoteItemClick;
-        });
+        _listDetachers.Add(() => _profileList.SelectionChanged -= OnProfileSelectionChanged);
     }
 
     private void DetachLists()
@@ -237,7 +233,8 @@ internal sealed partial class RemoteManagerWindow
     {
         Xaml.Find<FontIcon>(row, "KindIcon").Glyph = entry.IsDir ? FolderGlyph : FileGlyph;
         Xaml.Find<TextBlock>(row, "NameText").Text = entry.Name;
-        Xaml.Find<TextBlock>(row, "ModifiedText").Text = entry.Modified;
+        Xaml.Find<TextBlock>(row, "SizeText").Text = RemoteEntryText.Size(entry);
+        Xaml.Find<TextBlock>(row, "ModifiedText").Text = RemoteEntryText.Modified(entry.Modified);
         Label(container, entry.Name, entry.Path);
     }
 
@@ -305,22 +302,6 @@ internal sealed partial class RemoteManagerWindow
 
         var index = _profileList.SelectedIndex;
         _viewModel.SelectedProfile = index >= 0 && index < _shownProfiles.Count ? _shownProfiles[index] : null;
-    }
-
-    private void OnLocalItemClick(object sender, ItemClickEventArgs e)
-    {
-        if (ListRows.Clicked<RemoteFileEntry>(_localList, e.ClickedItem) is { IsDir: true } entry)
-        {
-            _ = RunRemoteActionAsync(() => _viewModel.NavigateLocalEntryAsync(entry));
-        }
-    }
-
-    private void OnRemoteItemClick(object sender, ItemClickEventArgs e)
-    {
-        if (ListRows.Clicked<RemoteFileEntry>(_remoteList, e.ClickedItem) is { IsDir: true } entry)
-        {
-            _ = RunRemoteActionAsync(() => _viewModel.NavigateRemoteEntryAsync(entry));
-        }
     }
 
     private IReadOnlyList<RemoteFileEntry> SelectedLocalEntries() => SelectedModels<RemoteFileEntry>(_localList);
