@@ -98,6 +98,16 @@ on-demand column values have shipped. What remains:
   limit.
 - An FTP/SFTP transfer that is interrupted starts its file again from the
   first byte.
+- An FTP/SFTP download that is part of a move deletes the remote file once
+  the local one is complete, and its record does not say it is a move. When
+  the local rename, or the record's removal, has not reached the disk, the
+  next transfer into the folder deletes the local file. The rule for local
+  moves cannot be used as it is: a remote source cannot be looked up.
+- On FAT and exFAT a file's ID can change when it is renamed. Recovery then
+  does not recognise a file a Replace had moved aside and keeps it under its
+  backup name instead of putting it back. This was not tried on such a drive.
+- Whether an FTP/SFTP download can empty a partial file that still has the
+  Hidden attribute was not checked on Windows.
 - A destination whose file system reports no file ID cannot be copied to:
   ownership cannot be recorded there, and the file fails.
 - Whether two paths are on the same volume is decided from the first path
