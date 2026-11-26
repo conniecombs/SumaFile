@@ -8,8 +8,8 @@ use crate::transfer_reliability::{Failure, FailureKind, Retry};
 use crate::transfer_staging::{
     capture_source_version_for_path, capture_source_version_from_open_file, cleanup_owned_path,
     conflict_for_existing_destination, hash_file_contents, preallocate_file,
-    promote_leased_with_policy, remove_path, staging_path_for, verify_source_unchanged,
-    ContentHasher, SourceVersion,
+    promote_leased_with_policy, staging_path_for, verify_source_unchanged, ContentHasher,
+    SourceVersion,
 };
 use simplefile_core::path_conflict::path_exists_no_follow;
 use simplefile_core::utils::recreate_symlink;
@@ -1348,6 +1348,22 @@ fn swap_source_into_place(source: &Path, dst: &Path) -> Result<(), Failure> {
     let backup = crate::transfer_staging::unique_backup_path(dst).map_err(Failure::from)?;
     rename_exclusive(dst, &backup)
         .map_err(|error| Failure::io("Prepare destination replacement", dst, error))?;
+    // The caller saw a file under this name a moment ago. A folder that has
+    // taken it since is somebody's data: it goes back under its name and is
+    // reported, never deleted as the backup of a replaced file.
+    if is_real_directory(&backup) {
+        return Err(match rename_exclusive(&backup, dst) {
+            Ok(()) => Failure::conflict(format!(
+                "destination exists with a different type: {}",
+                dst.display()
+            )),
+            Err(restore) => Failure::from(format!(
+                "A folder took the name [{}] and was moved to [{}]; moving it back failed: {restore}",
+                dst.display(),
+                backup.display()
+            )),
+        });
+    }
     if let Err(error) = rename_exclusive(source, dst) {
         let restore = rename_exclusive(&backup, dst);
         return Err(match restore {
@@ -1364,7 +1380,7 @@ fn swap_source_into_place(source: &Path, dst: &Path) -> Result<(), Failure> {
         });
     }
     // Promotion already committed: never replay it just because backup cleanup failed.
-    remove_path(&backup, "destination backup").map_err(|error| {
+    crate::transfer_staging::remove_file_or_link(&backup, "destination backup").map_err(|error| {
         Failure::from(format!(
             "Transferred, but backup remains [{}]: {error}",
             backup.display()

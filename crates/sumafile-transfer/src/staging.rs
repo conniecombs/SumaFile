@@ -776,16 +776,49 @@ pub fn remove_path(path: &Path, label: &str) -> Result<(), String> {
     }
 }
 
+/// Whether `path` is a folder itself, not a link to one.
+pub fn is_real_directory(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir() && !meta.file_type().is_symlink())
+}
+
+/// Removes a file or a link, never a folder. Recovery and the clean-up after a
+/// Replace deal in single files: a folder under one of their names is not
+/// theirs, and removing it would take everything in it along.
+pub fn remove_file_or_link(path: &Path, label: &str) -> Result<(), String> {
+    if is_real_directory(path) {
+        return Err(format!(
+            "{label} [{}] is a folder; it was not removed",
+            path.display()
+        ));
+    }
+    remove_path(path, label)
+}
+
 /// Workers must already be joined. Windows directory watchers can briefly keep
 /// deletion pending; finish bounded cleanup even when the job was cancelled.
 pub fn cleanup_owned_path(path: &Path) -> Result<(), String> {
+    cleanup_owned(path, remove_path)
+}
+
+/// [`cleanup_owned_path`] for what can only be a file: a folder is kept.
+pub fn cleanup_owned_file(path: &Path) -> Result<(), String> {
+    if is_real_directory(path) {
+        return Err(format!(
+            "Temporary path [{}] is a folder; it was not removed",
+            path.display()
+        ));
+    }
+    cleanup_owned(path, remove_file_or_link)
+}
+
+fn cleanup_owned(path: &Path, remove: fn(&Path, &str) -> Result<(), String>) -> Result<(), String> {
     let mut last = String::new();
     for attempt in 0..5 {
         match fs::symlink_metadata(path) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(error) => last = error.to_string(),
             Ok(_) => {
-                if let Err(error) = remove_path(path, "operation temporary path") {
+                if let Err(error) = remove(path, "operation temporary path") {
                     last = error;
                 }
                 if matches!(fs::symlink_metadata(path), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
@@ -940,7 +973,7 @@ fn promote_attempt_leased(
         });
     }
     // Promotion already committed: never replay it just because backup cleanup failed.
-    remove_path(&backup_path, "destination backup").map_err(|e| {
+    remove_file_or_link(&backup_path, "destination backup").map_err(|e| {
         Failure::new(
             format!(
                 "Transferred, but backup remains [{}]: {e}",
@@ -977,6 +1010,18 @@ fn move_existing_to_backup_leased(
         .file_name()
         .ok_or_else(|| Failure::new("Cannot get destination file name", false))?
         .to_string_lossy();
+    // The type was checked before the bytes were copied, which can be long
+    // ago. A folder that has taken the name since is somebody's data: it is
+    // reported, never moved aside to be deleted with everything in it.
+    let folder_in_the_way = || {
+        Failure::conflict(format!(
+            "destination exists with a different type: {}",
+            final_path.display()
+        ))
+    };
+    if is_real_directory(final_path) {
+        return Err(folder_in_the_way());
+    }
     let process_id = std::process::id();
     for index in 0..10_000u32 {
         let candidate = parent.join(format!(
@@ -989,6 +1034,21 @@ fn move_existing_to_backup_leased(
             owner.backup_intent(&candidate, final_path)?;
         }
         match rename_exclusive(final_path, &candidate) {
+            // A folder that appeared between the check and the rename is put
+            // back under its name.
+            Ok(()) if is_real_directory(&candidate) => {
+                return Err(match rename_exclusive(&candidate, final_path) {
+                    Ok(()) => folder_in_the_way(),
+                    Err(restore) => Failure::new(
+                        format!(
+                            "A folder took the name [{}] and was moved to [{}]; moving it back failed: {restore}",
+                            final_path.display(),
+                            candidate.display()
+                        ),
+                        false,
+                    ),
+                });
+            }
             Ok(()) => return Ok(candidate),
             Err(e) if is_already_exists_error(&e) => continue,
             Err(e) => {
@@ -1088,7 +1148,7 @@ mod tests {
     use super::{
         capture_source_version_for_path, capture_source_version_for_path_hashed,
         delete_verified_source, delete_verified_source_tree, existing_file_matches_source,
-        promote_staged_path, resumable_staging_path_for, TreeCopyManifest,
+        promote_staged_path, remove_file_or_link, resumable_staging_path_for, TreeCopyManifest,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -1214,6 +1274,56 @@ mod tests {
             "backup should not be left behind after successful restore"
         );
 
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// The type of the destination is checked before the bytes are copied. A
+    /// folder that takes the name in the meantime (the old file deleted, a
+    /// folder created) is somebody's data: Replace must report it, never move
+    /// it aside and delete it with everything in it.
+    #[test]
+    fn replace_keeps_a_folder_that_took_the_destination_name() {
+        let root = unique_temp_dir("replace_folder_appeared");
+        let destination = root.join("report");
+        let staged = root.join(".report.partial");
+        fs::write(&staged, b"new file").unwrap();
+        fs::create_dir(&destination).unwrap();
+        fs::write(destination.join("inside.txt"), b"kept").unwrap();
+
+        let error = promote_staged_path(&staged, &destination, true)
+            .expect_err("a folder under the final name is a conflict");
+
+        assert!(
+            error.starts_with("CONFLICT: destination exists with a different type:"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(fs::read(destination.join("inside.txt")).unwrap(), b"kept");
+        assert_eq!(fs::read(&staged).unwrap(), b"new file");
+        let leftovers: Vec<_> = fs::read_dir(&root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.ends_with(".sumafile-replace-backup"))
+            .collect();
+        assert!(leftovers.is_empty(), "a backup was left: {leftovers:?}");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn remove_file_or_link_refuses_a_folder_and_removes_a_file() {
+        let root = unique_temp_dir("remove_file_or_link");
+        let folder = root.join("folder");
+        fs::create_dir(&folder).unwrap();
+        fs::write(folder.join("inside.txt"), b"kept").unwrap();
+        let file = root.join("file.txt");
+        fs::write(&file, b"x").unwrap();
+
+        remove_file_or_link(&file, "test file").unwrap();
+        let error = remove_file_or_link(&folder, "test folder").unwrap_err();
+
+        assert!(!file.exists());
+        assert!(error.contains("is a folder"), "unexpected error: {error}");
+        assert_eq!(fs::read(folder.join("inside.txt")).unwrap(), b"kept");
         let _ = fs::remove_dir_all(root);
     }
 

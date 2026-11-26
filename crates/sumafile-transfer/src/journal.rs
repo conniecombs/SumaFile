@@ -10,7 +10,7 @@
 //!   by every file the pass copies into that folder, a line per file. See
 //!   [`FolderRecords`].
 use crate::path_conflict::{path_collision_key, path_exists_no_follow, rename_exclusive};
-use crate::staging::{cleanup_owned_path, file_identity, FileIdentity};
+use crate::staging::{cleanup_owned_file, cleanup_owned_path, file_identity, FileIdentity};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
@@ -60,19 +60,21 @@ enum Home {
     },
 }
 
-fn record_path(staged: &Path) -> PathBuf {
+/// Where the own record of the file staged at `staged` lies. `None` for a
+/// path without a file name, which no transfer stages; a record that names
+/// one is not a transfer's.
+fn record_path(staged: &Path) -> Option<PathBuf> {
     let base = if staged
         .file_name()
         .is_some_and(|n| n.to_string_lossy().ends_with(".sumafile-partial"))
     {
         staged.to_path_buf()
     } else {
-        crate::staging::staging_path_for(staged, "ownership")
-            .expect("transfer has a destination filename")
+        crate::staging::staging_path_for(staged, "ownership").ok()?
     };
     let mut name = base.as_os_str().to_os_string();
     name.push(".state");
-    PathBuf::from(name)
+    Some(PathBuf::from(name))
 }
 
 /// A record left by an earlier attempt at the same staged path whose cleanup
@@ -134,7 +136,12 @@ impl StagingLease {
         staged: &Path,
         overwrite: bool,
     ) -> Result<Self, String> {
-        let path = record_path(staged);
+        let path = record_path(staged).ok_or_else(|| {
+            format!(
+                "Transfer destination has no file name: {}",
+                staged.display()
+            )
+        })?;
         // Recovery runs once per directory before scheduling. An existing
         // unrecorded partial cannot establish ownership and is left intact.
         let file = match open_locked(&path, true) {
@@ -160,7 +167,12 @@ impl StagingLease {
     }
 
     pub fn record_created(source: &str, destination: &Path, staged: &Path) -> Result<Self, String> {
-        let path = record_path(staged);
+        let path = record_path(staged).ok_or_else(|| {
+            format!(
+                "Transfer destination has no file name: {}",
+                staged.display()
+            )
+        })?;
         let file = open_locked(&path, true)?;
         Self::with_record(source, destination, staged, path, file, None)
     }
@@ -679,7 +691,7 @@ fn recover(record: &Record) -> Result<(), String> {
                     )
                 })?;
             } else if matches(&record.destination, &record.staged_id) {
-                cleanup_owned_path(backup)?;
+                cleanup_owned_file(backup)?;
             } else {
                 return Err(format!(
                     "Interrupted replacement needs recovery; original retained at {}",
@@ -700,7 +712,21 @@ fn recover(record: &Record) -> Result<(), String> {
                 record.staged.display()
             ));
         }
-        cleanup_owned_path(&record.staged)?;
+        // Versions that staged whole folders left a tree under a partial
+        // name, and its record is the folder's own. Everything else a record
+        // names is one file: a file written under its final name can carry
+        // any name, so a folder found under it is never removed.
+        let staged_tree = record.version == OWN_RECORD
+            && record.staged != record.destination
+            && record
+                .staged
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().ends_with(PARTIAL_SUFFIX));
+        if staged_tree {
+            cleanup_owned_path(&record.staged)?;
+        } else {
+            cleanup_owned_file(&record.staged)?;
+        }
     }
     Ok(())
 }
@@ -844,7 +870,8 @@ pub fn recover_directory(directory: &Path) -> Result<(), String> {
         let owned = match last.version {
             // A file's own record: its last line is its state.
             OWN_RECORD
-                if same_path(&record_path(&last.staged), &path) && within(&last, directory) =>
+                if record_path(&last.staged).is_some_and(|own| same_path(&own, &path))
+                    && within(&last, directory) =>
             {
                 vec![last]
             }
@@ -947,7 +974,7 @@ mod tests {
         let root = root();
         let destination = root.join("movie.mp4");
         let stage = crate::staging::staging_path_for(&destination, "op").unwrap();
-        let record = record_path(&stage);
+        let record = record_path(&stage).unwrap();
         {
             let mut abandoned = StagingLease::begin("source", &destination, &stage, false).unwrap();
             let mut partial = abandoned.take_staged_file().unwrap();
@@ -1069,7 +1096,7 @@ mod tests {
             );
             assert!(!backup.exists());
             assert!(!stage.exists());
-            assert!(!record_path(&stage).exists());
+            assert!(!record_path(&stage).unwrap().exists());
             fs::remove_dir_all(root).unwrap();
         }
     }
@@ -1110,7 +1137,7 @@ mod tests {
         let respelled = PathBuf::from(root.to_string_lossy().to_ascii_lowercase());
         recover_directory(&respelled).unwrap();
         assert!(!stage.exists(), "abandoned partial was not cleaned up");
-        assert!(!record_path(&stage).exists());
+        assert!(!record_path(&stage).unwrap().exists());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1127,7 +1154,7 @@ mod tests {
         // it must not make every later transfer into this folder fail.
         recover_directory(&root).expect("conflicting record is retained, not fatal");
         assert_eq!(fs::read(&stage).unwrap(), b"another transfer");
-        assert!(record_path(&stage).exists());
+        assert!(record_path(&stage).unwrap().exists());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1391,6 +1418,73 @@ mod tests {
 
     /// A build from before folder records reads the last line of a record and
     /// acts only on version 1, so it leaves these alone.
+    /// Writes `record` as the one line of a record file, the way a hand-made
+    /// or damaged record would lie in a folder.
+    fn plant_record(path: &Path, record: &Record) {
+        let mut line = serde_json::to_vec(record).unwrap();
+        line.push(b'\n');
+        fs::write(path, line).unwrap();
+    }
+
+    /// A record of a file written under its final name can name anything in
+    /// its folder. What it names is a file: a folder under that name is
+    /// somebody's data and recovery must leave it alone.
+    #[test]
+    fn recovery_never_removes_a_folder_that_a_write_directly_record_names() {
+        let root = root();
+        let folder = root.join("Projects");
+        fs::create_dir(&folder).unwrap();
+        fs::write(folder.join("report.txt"), b"work").unwrap();
+        let record = Record {
+            version: OWN_RECORD,
+            source: "source".into(),
+            destination: folder.clone(),
+            staged: folder.clone(),
+            staged_id: file_identity(&folder).unwrap(),
+            backup: None,
+            committed: false,
+        };
+        let mut name = crate::staging::staging_path_for(&folder, "ownership")
+            .unwrap()
+            .into_os_string();
+        name.push(".state");
+        plant_record(Path::new(&name), &record);
+
+        recover_directory(&root).unwrap();
+
+        assert_eq!(fs::read(folder.join("report.txt")).unwrap(), b"work");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A record whose staged path has no file name is nobody's record. It is
+    /// skipped; it must not stop the transfer that found it.
+    #[test]
+    fn recovery_skips_a_record_whose_staged_path_has_no_file_name() {
+        for staged in ["", "..", "/"] {
+            let root = root();
+            let kept = root.join("kept.txt");
+            fs::write(&kept, b"x").unwrap();
+            let record = Record {
+                version: OWN_RECORD,
+                source: "source".into(),
+                destination: PathBuf::from(staged),
+                staged: PathBuf::from(staged),
+                staged_id: file_identity(&kept).unwrap(),
+                backup: None,
+                committed: false,
+            };
+            plant_record(
+                &root.join(".x.0000000000000000.sumafile-partial.state"),
+                &record,
+            );
+
+            recover_directory(&root).expect("a malformed record is skipped");
+
+            assert!(kept.exists(), "staged path {staged:?}");
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
     #[test]
     fn a_folder_record_is_not_version_one() {
         let root = root();
