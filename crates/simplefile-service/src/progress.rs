@@ -1483,8 +1483,11 @@ mod tests {
         let _ = fs::remove_dir_all(&dst_dir);
     }
 
+    /// "Write directly" is for new files. A file that replaces an existing one
+    /// is copied under a temporary name like any other, so the existing file
+    /// is there until the new one is complete.
     #[test]
-    fn inplace_policy_replaces_existing_file_without_staging() {
+    fn inplace_policy_replaces_an_existing_file_and_leaves_nothing_else() {
         let src_dir = unique_temp_path("inplace_replace_src");
         let dst_dir = unique_temp_path("inplace_replace_dst");
         fs::create_dir_all(&src_dir).unwrap();
@@ -1493,11 +1496,8 @@ mod tests {
         fs::write(&source, b"source").unwrap();
         let destination = dst_dir.join("a.txt");
         fs::write(&destination, b"original").unwrap();
-        let artifacts = Arc::new(Mutex::new(Vec::<String>::new()));
-        let artifacts_target = artifacts.clone();
         let finalizing_seen = Arc::new(AtomicBool::new(false));
         let finalizing_target = finalizing_seen.clone();
-        let dst_for_emit = dst_dir.clone();
 
         super::transfer_with_policy_blocking(
             "copy",
@@ -1512,10 +1512,6 @@ mod tests {
                 if update.status == "finalizing" {
                     finalizing_target.store(true, Ordering::Relaxed);
                 }
-                artifacts_target
-                    .lock()
-                    .unwrap()
-                    .extend(staging_artifacts_in(&dst_for_emit));
             },
             &|_| {},
             &|| super::tuning::Policy {
@@ -1531,11 +1527,6 @@ mod tests {
             finalizing_seen.load(Ordering::Relaxed),
             "no finalizing update was observed"
         );
-        let artifacts = artifacts.lock().unwrap();
-        assert!(
-            artifacts.is_empty(),
-            "replace used staging artifacts: {artifacts:?}"
-        );
         assert_eq!(fs::read(&destination).unwrap(), b"source");
         assert_eq!(fs::read_dir(&dst_dir).unwrap().count(), 1);
 
@@ -1543,9 +1534,59 @@ mod tests {
         let _ = fs::remove_dir_all(&dst_dir);
     }
 
-    /// "Write directly" with Replace empties the existing file when the copy
-    /// starts and keeps no backup. A source that cannot even be opened used
-    /// to cost the existing file all the same: it was emptied, then deleted.
+    /// "Write directly" with Replace used to empty the existing file when the
+    /// copy started and keep no backup, so a copy that was then cancelled or
+    /// failed left neither the old file nor the new one.
+    #[test]
+    fn inplace_replace_keeps_the_existing_file_when_the_copy_is_cancelled() {
+        let src_dir = unique_temp_path("inplace_cancel_src");
+        let dst_dir = unique_temp_path("inplace_cancel_dst");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&dst_dir).unwrap();
+        let source = src_dir.join("big.bin");
+        // Several progress steps long, so the cancel arrives mid-copy.
+        fs::write(&source, vec![7u8; 24 * 1024 * 1024]).unwrap();
+        let destination = dst_dir.join("big.bin");
+        fs::write(&destination, b"existing").unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_from_progress = cancel.clone();
+
+        let result = super::transfer_with_policy_blocking(
+            "copy",
+            super::Request::Selection {
+                sources: vec![source.to_string_lossy().to_string()],
+                conflict_action: "replace".to_string(),
+            },
+            dst_dir.to_string_lossy().to_string(),
+            "op_inplace_cancelled_replace".to_string(),
+            cancel,
+            &|update| {
+                if update.status == "running" && update.current > 0 {
+                    cancel_from_progress.store(true, Ordering::Relaxed);
+                }
+            },
+            &|_| {},
+            &|| super::tuning::Policy {
+                mode: super::tuning::Mode::Manual,
+                manual_concurrency: 1,
+                inplace: true,
+                buffer_size_kib: 64,
+                ..super::tuning::Policy::default()
+            },
+        );
+
+        // Whether the cancel landed before the last byte or not, the name
+        // never held anything but one complete file.
+        match result {
+            Ok(_) => assert_eq!(fs::metadata(&destination).unwrap().len(), 24 * 1024 * 1024),
+            Err(_) => assert_eq!(fs::read(&destination).unwrap(), b"existing"),
+        }
+
+        let _ = fs::remove_dir_all(&src_dir);
+        let _ = fs::remove_dir_all(&dst_dir);
+    }
+
+    /// A source that cannot even be opened costs the existing file nothing.
     #[test]
     fn inplace_replace_keeps_the_existing_file_when_the_source_cannot_be_opened() {
         let src_dir = unique_temp_path("inplace_unopenable_src");

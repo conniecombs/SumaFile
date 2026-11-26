@@ -269,6 +269,10 @@ impl StagingLease {
         file_identity(&self.record.staged).is_ok_and(|id| id == self.record.staged_id)
     }
 
+    /// Ends the lease of a file that is complete. It fails only when the file
+    /// was written under its final name and its record could neither be
+    /// removed nor marked complete: the caller must then treat the file as
+    /// failed, because recovery will delete it.
     pub fn finish(mut self) -> Result<(), String> {
         if matches!(self.home, Home::Folder { .. }) {
             // A line needs no ending: the file is no longer under its partial
@@ -277,18 +281,36 @@ impl StagingLease {
             self.settled = true;
             return Ok(());
         }
-        if self.record.staged == self.record.destination {
-            // In-place writes need a completion marker. For a renamed staging
-            // object its identity at the final name already proves promotion.
-            self.record.committed = true;
-            self.persist()?;
-        }
-        self.settled = true;
         let Home::Own { path, .. } = &self.home else {
+            self.settled = true;
             return Ok(());
         };
-        fs::remove_file(path)
-            .map_err(|e| format!("Remove transfer ownership record [{}]: {e}", path.display()))
+        let path = path.clone();
+        // Removing the record is the completion: with no record, recovery has
+        // nothing to act on. It needs no space, where writing a completion
+        // mark first failed on a full volume and left a finished file to be
+        // deleted as unfinished.
+        let removed = fs::remove_file(&path)
+            .map_err(|e| format!("Remove transfer ownership record [{}]: {e}", path.display()));
+        let Err(error) = removed else {
+            self.settled = true;
+            return Ok(());
+        };
+        if self.record.staged == self.record.destination {
+            // A file written under its final name whose record cannot be
+            // removed: the record must at least say that the file is
+            // complete. When that cannot be written either, the lease stays
+            // unsettled and the file must not be reported as copied, because
+            // recovery will delete it. This is the one failure of `finish`.
+            self.record.committed = true;
+            self.persist().map_err(|mark| format!("{error}; {mark}"))?;
+        }
+        // The file is complete and recovery will leave it alone: a record that
+        // names a partial file that is gone, or one marked complete, is
+        // removed the next time the folder is visited.
+        log::warn!("{error}");
+        self.settled = true;
+        Ok(())
     }
 
     pub fn abort(self) -> Result<(), String> {
@@ -1179,6 +1201,35 @@ mod tests {
             }
             fs::remove_dir_all(root).unwrap();
         }
+    }
+
+    /// Finishing a file written under its final name must not need to write
+    /// anything. On a full volume the completion mark could not be written,
+    /// the file was reported as copied all the same, and the next recovery
+    /// deleted it as unfinished. Removing the record is the completion.
+    #[test]
+    fn finishing_a_write_directly_file_writes_nothing_to_its_record() {
+        let root = root();
+        let destination = root.join("inplace");
+        let lease = StagingLease::begin("source", &destination, &destination, false).unwrap();
+        fs::write(&destination, b"downloaded").unwrap();
+        let record = record_path(&destination).unwrap();
+        // A second name for the record shows what it held when it was removed.
+        let as_finished = root.join("record-as-finished");
+        fs::hard_link(&record, &as_finished).unwrap();
+
+        lease.finish().unwrap();
+
+        assert!(!record.exists());
+        let lines = fs::read_to_string(&as_finished).unwrap();
+        assert_eq!(
+            lines.lines().count(),
+            1,
+            "finish wrote to the record: {lines}"
+        );
+        recover_directory(&root).unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), b"downloaded");
+        fs::remove_dir_all(root).unwrap();
     }
 
     /// A crash during a transfer planned as `C:\\Dest` is still recovered when

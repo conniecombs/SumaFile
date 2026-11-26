@@ -116,7 +116,7 @@ internal static class TransferOptionsDialog
                 TextWrapping = TextWrapping.Wrap,
                 FontSize = 12,
                 Margin = new Thickness(28, -8, 0, 0),
-                Text = "Files and folders appear under their final names while they copy, and replaced files are overwritten in place. A cancelled or failed transfer leaves partial files behind.",
+                Text = "New files appear under their final names while they copy. A file that replaces an existing one is still copied under a temporary name first, so the existing file stays until the new one is complete.",
             };
             var preallocate = new CheckBox
             {

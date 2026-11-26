@@ -53,6 +53,16 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
   when it is complete and the name is free, and is kept otherwise. A move now
   also writes each file to disk before deleting its source, whatever "Flush
   to disk before finishing each file" says.
+- "Write directly to the destination" no longer applies to a file that
+  replaces an existing one. Written directly, the existing file was emptied
+  before the first byte was copied, so a failed or cancelled Replace left
+  neither the old file nor the new one. Such a file is now copied under a
+  temporary name first, and the existing file stays until the new one is
+  complete. FTP/SFTP downloads follow the same rule.
+- A file written directly to its final name is complete as soon as its
+  record is removed. Finishing it used to write a mark into the record first;
+  on a full drive that failed, the file was reported as copied all the same,
+  and the next transfer into the folder deleted it.
 - Replace no longer removes a folder. A folder that took the destination's
   name while the file was being copied used to be moved aside and deleted
   with everything in it; it is now reported as a conflict.

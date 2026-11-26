@@ -15,8 +15,9 @@ list is in the [changelog](CHANGELOG.md).
   which saves several requests per file on a network share. A file that another
   program holds open is reported as busy; before, it was copied whole and the
   source could not be deleted, leaving the file in both places.
-- **Write directly to the destination.** Replace no longer destroys the existing
-  file when the source cannot be opened. The source is opened first.
+- **Write directly to the destination.** The option no longer applies to a file
+  that replaces an existing one. Such a file is copied under a temporary name
+  first, so a failed or cancelled Replace leaves the existing file as it was.
 - **Moves that leave files behind.** Deciding which source folders stay after a
   move with many skipped or failed files took time in proportion to folders
   times files. A tree of 8,000 folders with 80,000 skipped files took 43 seconds
@@ -101,9 +102,9 @@ together.
 2. Run the seven [Manual verification](#manual-verification) cases above.
 3. Copy a folder of mixed large and small files to a removable drive with
    "Streams per large file" set to 4. The transfer finishes and the files match.
-4. With "Write directly to the destination" on, copy a file onto an existing
-   one while the source is open exclusively in another program, and answer
-   Replace. The existing file is unchanged and the copy reports the source.
+4. With "Write directly to the destination" on, copy a large file onto an
+   existing one, answer Replace, and cancel part-way. The existing file is
+   unchanged.
 5. Move a tree onto a same-name tree, skip every conflict, and check that
    "Finishing" ends promptly and the skipped files' folders stay in the source.
 6. Use **Copy to other pane** (Ctrl+Alt+C) with both panes on the same folder.

@@ -265,30 +265,27 @@ check: its result is ignored.
 ### Write directly to the destination
 
 With "Write directly to the destination instead of a temporary file" on, a
-file is created and written under its final name, and is not hidden. There is
-no partial file and no rename. Such a file has an ownership record of its
-own beside it, `.<name>.<16 hex digits>.sumafile-partial.state`, which is
+**new** file is created and written under its final name, and is not hidden.
+There is no partial file and no rename. Such a file has an ownership record of
+its own beside it, `.<name>.<16 hex digits>.sumafile-partial.state`, which is
 forced to disk before the file is written and deleted when the file is
-complete.
+complete. Deleting the record is what marks the file as complete, so
+finishing a file needs no free space.
 
 * A new file is visible under its final name while it is being copied.
-* With Replace, the existing file is emptied and written over in place. There
-  is no backup: once the copy starts, the old content is gone. The source is
-  opened first; when it cannot be opened (another program holds it, or it is
-  not readable) the file fails before the existing one is touched.
+* The option does not apply to a file that replaces an existing one. With
+  Replace the new file is copied under a temporary name and renamed into
+  place like any other, so the existing file is there until the new one is
+  complete, and a failed or cancelled copy leaves it as it was. The same goes
+  for FTP/SFTP downloads with the plugin's own setting.
 * An existing destination for which no answer was given is reported as a
   conflict before anything is written. Skip and Keep both work as they do
   without this option.
-* If the copy fails or is cancelled, the service deletes the file it was
-  writing. After a failed or cancelled Replace neither the old file nor the
-  new one is left at the destination. The source is not touched.
+* If the copy of a new file fails or is cancelled, the service deletes the
+  file it was writing. The source is not touched.
 * If the service stops while such a file is being written, the half-written
   file stays under its final name with its record, and the next transfer into
   that folder deletes it (see [Recovery](#recovery)).
-
-The note under this option in the dialog says that a cancelled or failed
-transfer leaves partial files behind. The engine deletes them, as described
-here; what stays behind is the folders it created and the files it finished.
 Folders are created under their final names with or without this option.
 
 ## What a transfer can leave in a destination folder

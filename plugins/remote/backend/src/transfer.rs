@@ -936,7 +936,11 @@ fn transfer_file(
         let expected_size = expected_entry.size;
         let expected_modified = expected_entry.modified.clone();
 
-        let use_inplace = progress.policy.inplace;
+        // Writing directly is for new files: an existing local file would be
+        // emptied before the first byte arrived, and a failed download would
+        // leave neither the old file nor the new one.
+        let use_inplace = progress.policy.inplace
+            && !sumafile_transfer::path_conflict::path_exists_no_follow(Path::new(&target));
         let staging = if use_inplace {
             Path::new(&target).to_path_buf()
         } else {
@@ -949,7 +953,7 @@ fn transfer_file(
             source,
             Path::new(&target),
             &staging,
-            use_inplace && replace,
+            false,
         )?;
         let result = retry_stream(provider, progress, source, &target, |provider, progress| {
             if !lease.owns_staged() {
@@ -1664,13 +1668,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn inplace_download_replaces_existing_file_without_staging() {
-        let fixture = Fixture::new();
+    /// Downloads `/source` (holding "new") with "write directly" on and returns
+    /// the names seen in the local folder while it ran.
+    fn inplace_download_names(fixture: &Fixture) -> Vec<String> {
         let mut provider = fixture.provider();
         fs::write(provider.path("/source"), b"new").unwrap();
-        let local = Path::new(&fixture.local()).join("source");
-        fs::write(&local, b"original").unwrap();
         let names = Arc::new(std::sync::Mutex::new(Vec::new()));
         provider.snapshot_local_during_download =
             Some((PathBuf::from(fixture.local()), names.clone()));
@@ -1687,12 +1689,45 @@ mod tests {
         )
         .unwrap();
         assert!(outcome.retry_sources.is_empty());
-        let names = names.lock().unwrap();
+        let names = names.lock().unwrap().clone();
         assert!(!names.is_empty(), "download never started");
+        names
+    }
+
+    #[test]
+    fn inplace_download_of_a_new_file_uses_no_temporary_name() {
+        let fixture = Fixture::new();
+        let local = Path::new(&fixture.local()).join("source");
+
+        let names = inplace_download_names(&fixture);
+
         assert!(
             names.iter().all(|name| !name.ends_with(".sumafile-partial")
                 && !name.ends_with(".sumafile-replace-backup")),
             "download used staging artifacts: {names:?}"
+        );
+        assert_eq!(fs::read(&local).unwrap(), b"new");
+        assert_eq!(fs::read_dir(fixture.local()).unwrap().count(), 1);
+    }
+
+    /// Writing directly over an existing file empties it before the first
+    /// byte arrives, so a failed download left neither file. A download that
+    /// replaces a file goes through a temporary name whatever the setting.
+    #[test]
+    fn inplace_download_replaces_an_existing_file_through_a_temporary_name() {
+        let fixture = Fixture::new();
+        let local = Path::new(&fixture.local()).join("source");
+        fs::write(&local, b"original").unwrap();
+
+        let names = inplace_download_names(&fixture);
+
+        assert!(
+            names.iter().any(|name| name.ends_with(".sumafile-partial")),
+            "the existing file was written over in place: {names:?}"
+        );
+        assert!(
+            names.iter().any(|name| name == "source"),
+            "the existing file was not there during the download: {names:?}"
         );
         assert_eq!(fs::read(&local).unwrap(), b"new");
         assert_eq!(fs::read_dir(fixture.local()).unwrap().count(), 1);

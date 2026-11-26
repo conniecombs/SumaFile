@@ -1004,7 +1004,11 @@ pub(crate) fn copy_file_with_progress_versioned(
     let dst = dst.as_path();
 
     let exists = path_exists_no_follow(dst);
-    let use_inplace = ctx.policy.inplace;
+    // Writing directly is for new files. A file that replaces an existing one
+    // is always copied under a temporary name first: written directly, the
+    // existing file would be emptied before the first byte was copied, and a
+    // failed or cancelled copy would leave neither the old file nor the new.
+    let use_inplace = ctx.policy.inplace && !exists;
     if exists && is_real_directory(dst) {
         return Err(Failure::conflict(format!(
             "destination exists with a different type: {}",
@@ -1024,14 +1028,6 @@ pub(crate) fn copy_file_with_progress_versioned(
     // never deletes what may by then be the only copy; and its bytes are
     // flushed before it gets that name, whatever the setting says.
     let moving = ctx.progress.operation_type == "move";
-    if use_inplace && exists {
-        // Writing directly over an existing file empties it the moment the
-        // lease is taken, and there is no backup. A source that cannot even
-        // be opened (held by another program, unreadable) must fail before
-        // that, not after: the existing file was otherwise emptied and then
-        // deleted without one byte having been read.
-        drop(open_source_sequential(src).map_err(|e| Failure::io("Open source", src, e))?);
-    }
     // A file written under a temporary name is a line in its folder's
     // record. One written straight to its final name keeps a record of its
     // own, which carries the mark that says the file was completed.
@@ -1040,7 +1036,7 @@ pub(crate) fn copy_file_with_progress_versioned(
             &src.to_string_lossy(),
             dst,
             &staged_path,
-            exists,
+            false,
         )?
     } else {
         ctx.records.begin(
@@ -1148,12 +1144,13 @@ pub(crate) fn copy_file_with_progress_versioned(
                 }
             }
             if let Some(owner) = lease.take() {
-                // The file is published. A record that cannot be removed right
-                // now is cleaned up when the folder is next visited; reporting
-                // the file as failed would only make a retry collide with it.
-                if let Err(error) = owner.finish() {
-                    log::warn!("{error}");
-                }
+                // `finish` fails only for a file written under its final name
+                // whose record could be neither removed nor marked complete.
+                // Recovery would delete such a file, so it is not reported as
+                // copied, and a move keeps its source.
+                owner.finish().map_err(|error| {
+                    Failure::from(format!("Finish destination [{}]: {error}", dst.display()))
+                })?;
             }
             *completed_bytes += written;
             ctx.progress
@@ -1255,6 +1252,8 @@ pub(crate) fn copy_symlink_with_progress(
             )
         });
     }
+    // A link's record names a partial name that is gone by now: `finish`
+    // cannot fail for it.
     if let Err(error) = lease.finish() {
         log::warn!("{error}");
     }

@@ -72,12 +72,6 @@ on-demand column values have shipped. What remains:
 
 - Benchmark copy and move against Windows Explorer on SSD, HDD, USB, a network
   share and many small files, and on a physical NAS.
-- The options dialog says "Write directly to the destination" leaves partial
-  files behind after a failure. The engine deletes the file it was writing,
-  so after a failed or cancelled Replace with this option neither the old
-  file nor the new one is left. [Transfers](TRANSFER_TUNING.md) records what
-  the engine does today; make the text and the behaviour agree, and keep the
-  old file until the new one is complete.
 - "Always copy" does not always copy: in a second pass it compares content
   like Checksum, and in a first pass no check mode skips anything. Rename the
   choice or change what it does.
