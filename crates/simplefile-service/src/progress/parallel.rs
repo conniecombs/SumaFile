@@ -797,6 +797,26 @@ fn copy_task(
     Ok(outcome)
 }
 
+/// The failure reported for a file whose copy panicked.
+fn worker_panic_failure(task: &FileTask, panic: &(dyn std::any::Any + Send)) -> Failure {
+    let reason = panic
+        .downcast_ref::<&str>()
+        .map(|text| (*text).to_string())
+        .or_else(|| panic.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "no reason given".into());
+    log::error!(
+        "Copying [{}] stopped unexpectedly: {reason}",
+        task.source.display()
+    );
+    Failure::with_kind(
+        format!(
+            "Copying stopped unexpectedly [{}]: {reason}",
+            task.source.display()
+        ),
+        FailureKind::Permanent,
+    )
+}
+
 #[cfg(test)]
 type CopyFunction<'a> =
     dyn Fn(&FileTask, &CopyContext<'_>, &mut u64) -> Result<(), String> + Sync + 'a;
@@ -1038,6 +1058,7 @@ fn copy_files_streaming_with_sink(
         let mut carried = BTreeMap::<usize, u64>::new();
         let mut file_hl_attempts = BTreeMap::<usize, usize>::new();
         let mut first_snapshot = true;
+        let mut workers_lost = false;
         let mut last_display = Instant::now();
         let mut last_retries = [0u64; 2];
         if let Some(&first_idx) = ready.iter().filter_map(VecDeque::front).min() {
@@ -1081,76 +1102,86 @@ fn copy_files_streaming_with_sink(
                     let Ok((index, lane, task, policy)) = next_item else {
                         break;
                     };
-                    let total_bytes = Arc::new(AtomicU64::new(task.size));
-                    let total_files = Arc::new(AtomicU64::new(1));
-                    let completed_files = Arc::new(AtomicU64::new(0));
-                    let emit = |update: ProgressUpdate| {
-                        if completed_files.load(Ordering::Relaxed) > 0 && update.status == "running"
-                        {
-                            return;
-                        }
-                        // Byte counts are thinned to one in 50 ms. A change of
-                        // state (finalizing, an error) is reported whenever it
-                        // happens: a small file finishes within the 50 ms of
-                        // its own first report, and this thread may have
-                        // reported another file a moment ago.
-                        let now = Instant::now();
-                        if update.status == "running"
-                            && update.error.is_none()
-                            && now.duration_since(last_worker_emit.get())
-                                < Duration::from_millis(50)
-                        {
-                            return;
-                        }
-                        last_worker_emit.set(now);
-                        let _ = tx.send(Message::Progress(index, update));
-                    };
-                    let progress = ProgressContext {
-                        emit: &emit,
-                        operation_id,
-                        operation_type,
-                        cancel,
-                        total_bytes: &total_bytes,
-                        total_files: &total_files,
-                        completed_files: &completed_files,
-                        last_running_emit: Mutex::new(Instant::now()),
-                        retry_count: Some(&retries[lane]),
-                        rate_limit: Some(&limiter),
-                        // A custom limit is never tuned, so nothing is timed.
-                        write_latency: (policy.mode != super::tuning::Mode::Manual)
-                            .then_some(&*latency[lane]),
-                    };
-                    let context = CopyContext {
-                        progress: &progress,
-                        operation_id,
-                        records,
-                        network: task.network,
-                        policy: policy.clone(),
-                    };
-                    let mut copied = 0;
-                    let permit_buffer = context
-                        .buffer_size()
-                        .min(usize::try_from(task.size.max(4096)).unwrap_or(usize::MAX));
-                    // The drives are asked only for a file the settings
-                    // would copy in several streams.
-                    let several_streams = context
-                        .policy
-                        .multistream_candidate(task.network, task.size)
-                        && simplefile_core::utils::is_local_fixed_volume(&task.source)
-                        && simplefile_core::utils::is_local_fixed_volume(&task.destination);
-                    let chunks =
-                        context
+                    // A panic while copying one file fails that file. Left to
+                    // unwind, it ended this thread with the file in its hands:
+                    // the coordinator stopped listening, the other threads
+                    // blocked on reporting to it, and the pass never ended.
+                    let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let total_bytes = Arc::new(AtomicU64::new(task.size));
+                        let total_files = Arc::new(AtomicU64::new(1));
+                        let completed_files = Arc::new(AtomicU64::new(0));
+                        let emit = |update: ProgressUpdate| {
+                            if completed_files.load(Ordering::Relaxed) > 0
+                                && update.status == "running"
+                            {
+                                return;
+                            }
+                            // Byte counts are thinned to one in 50 ms. A change of
+                            // state (finalizing, an error) is reported whenever it
+                            // happens: a small file finishes within the 50 ms of
+                            // its own first report, and this thread may have
+                            // reported another file a moment ago.
+                            let now = Instant::now();
+                            if update.status == "running"
+                                && update.error.is_none()
+                                && now.duration_since(last_worker_emit.get())
+                                    < Duration::from_millis(50)
+                            {
+                                return;
+                            }
+                            last_worker_emit.set(now);
+                            let _ = tx.send(Message::Progress(index, update));
+                        };
+                        let progress = ProgressContext {
+                            emit: &emit,
+                            operation_id,
+                            operation_type,
+                            cancel,
+                            total_bytes: &total_bytes,
+                            total_files: &total_files,
+                            completed_files: &completed_files,
+                            last_running_emit: Mutex::new(Instant::now()),
+                            retry_count: Some(&retries[lane]),
+                            rate_limit: Some(&limiter),
+                            // A custom limit is never tuned, so nothing is timed.
+                            write_latency: (policy.mode != super::tuning::Mode::Manual)
+                                .then_some(&*latency[lane]),
+                        };
+                        let context = CopyContext {
+                            progress: &progress,
+                            operation_id,
+                            records,
+                            network: task.network,
+                            policy: policy.clone(),
+                        };
+                        let mut copied = 0;
+                        let permit_buffer = context
+                            .buffer_size()
+                            .min(usize::try_from(task.size.max(4096)).unwrap_or(usize::MAX));
+                        // The drives are asked only for a file the settings
+                        // would copy in several streams.
+                        let several_streams = context
                             .policy
-                            .buffer_count(task.network, task.size, several_streams);
-                    let status = Permit::acquire_for_job(
-                        permit_buffer
-                            .saturating_mul(chunks)
-                            .saturating_add(128 * 1024),
-                        memory.clone(),
-                        cancel,
-                    )
-                    .map_err(Failure::from)
-                    .and_then(|_permit| copy(&task, &context, &mut copied));
+                            .multistream_candidate(task.network, task.size)
+                            && simplefile_core::utils::is_local_fixed_volume(&task.source)
+                            && simplefile_core::utils::is_local_fixed_volume(&task.destination);
+                        let chunks =
+                            context
+                                .policy
+                                .buffer_count(task.network, task.size, several_streams);
+                        let status = Permit::acquire_for_job(
+                            permit_buffer
+                                .saturating_mul(chunks)
+                                .saturating_add(128 * 1024),
+                            memory.clone(),
+                            cancel,
+                        )
+                        .map_err(Failure::from)
+                        .and_then(|_permit| copy(&task, &context, &mut copied));
+                        (copied, status)
+                    }));
+                    let (copied, status) = attempt
+                        .unwrap_or_else(|panic| (0, Err(worker_panic_failure(&task, &*panic))));
                     if tx.send(Message::Finished(index, copied, status)).is_err() {
                         break;
                     }
@@ -1458,6 +1489,7 @@ fn copy_files_streaming_with_sink(
                     // now has died with a file in its hands.
                     if workers.iter().any(|worker| worker.is_finished()) {
                         result.scan_error = Some("Copy workers stopped unexpectedly".into());
+                        workers_lost = true;
                         break;
                     }
                 }
@@ -1508,6 +1540,16 @@ fn copy_files_streaming_with_sink(
         }
         drop(scan_rx);
         drop(work_tx);
+        if workers_lost {
+            // The loop above no longer reads what the remaining threads
+            // report, and a full channel would hold them, and with them the
+            // end of this scope, for good. They are told to stop, and their
+            // reports are read and dropped until the last one has ended.
+            worker_cancel.store(true, Ordering::Relaxed);
+            while workers.iter().any(|worker| !worker.is_finished()) {
+                let _ = event_rx.recv_timeout(Duration::from_millis(50));
+            }
+        }
         if ctx.check_cancelled().is_err() {
             result.cancelled = true;
         }
@@ -2649,6 +2691,95 @@ mod tests {
             assert_eq!(*dispatched_sizes.lock().unwrap(), expected_sizes);
         }
 
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A panic while one file is copied used to end its worker thread with
+    /// the file in its hands. The pass then stopped listening to the other
+    /// threads, which blocked for good, or it ended by a panic of its own.
+    #[test]
+    fn a_panic_while_copying_one_file_fails_that_file_and_the_rest_is_copied() {
+        let root = std::env::temp_dir().join(format!(
+            "sumafile_worker_panic_{}",
+            crate::progress::generate_transfer_operation_id()
+        ));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("dst")).unwrap();
+        let tasks: Vec<_> = (0..12)
+            .map(|index| {
+                let source = root.join("src").join(format!("{index}.bin"));
+                fs::write(&source, vec![index as u8; 4096]).unwrap();
+                FileTask {
+                    source,
+                    destination: root.join("dst").join(format!("{index}.bin")),
+                    size: 4096,
+                    network: false,
+                    conflict: ConflictAction::Error,
+                    symlink: false,
+                    top_level: true,
+                    merge_root: None,
+                    delete_source: false,
+                    retry: false,
+                }
+            })
+            .collect();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let total = Arc::new(AtomicU64::new(12 * 4096));
+        let files = Arc::new(AtomicU64::new(12));
+        let completed = Arc::new(AtomicU64::new(0));
+        let ctx = ProgressContext {
+            emit: &|_| {},
+            operation_id: "worker-panic-test",
+            operation_type: "copy",
+            cancel: &cancel,
+            total_bytes: &total,
+            total_files: &files,
+            completed_files: &completed,
+            last_running_emit: Mutex::new(Instant::now()),
+            retry_count: None,
+            rate_limit: None,
+            write_latency: None,
+        };
+        let policy = || Policy {
+            mode: Mode::Manual,
+            manual_concurrency: 4,
+            ..Policy::default()
+        };
+        let mut session = Session::new(
+            "worker-panic-test",
+            "copy",
+            &[],
+            &root.to_string_lossy(),
+            &policy,
+            &|_| {},
+        );
+        let copy = |task: &FileTask, context: &CopyContext<'_>, bytes: &mut u64| {
+            if task.source.ends_with("5.bin") {
+                panic!("planted for the test");
+            }
+            copy_task(task, context, bytes)
+                .map(|_| ())
+                .map_err(String::from)
+        };
+
+        let result = copy_files_using(&tasks, &ctx, &mut session, 0, &copy);
+
+        assert_eq!(result.failed.len(), 1, "{:?}", result.failed);
+        let (_, failure) = &result.failed[0];
+        assert!(failure.source.ends_with("5.bin"), "{failure:?}");
+        assert!(
+            failure.failure.message.contains("stopped unexpectedly")
+                && failure.failure.message.contains("planted for the test"),
+            "{failure:?}"
+        );
+        assert!(result.scan_error.is_none(), "{:?}", result.scan_error);
+        assert_eq!(result.completed.len(), 11);
+        for task in tasks.iter().filter(|task| !task.source.ends_with("5.bin")) {
+            assert_eq!(
+                fs::read(&task.source).unwrap(),
+                fs::read(&task.destination).unwrap()
+            );
+        }
         fs::remove_dir_all(&root).unwrap();
     }
 
