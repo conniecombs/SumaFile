@@ -3,9 +3,12 @@
 Prepared November 24, 2026 for Windows x64.
 
 This release fixes the open medium-severity findings of the
-[November 23 code audit](CODEBASE_AUDIT_2026-11-23.md) and the transfer engine
-problems found in a review of that engine. It adds no features. The complete
-list is in the [changelog](CHANGELOG.md).
+[November 23 code audit](CODEBASE_AUDIT_2026-11-23.md), and the ways a
+transfer could lose a file or stop for good that two reviews of the transfer
+engine found. What those reviews found about speed and about file attributes
+is still open and is listed in the [roadmap](ROADMAP.md#transfers). The
+release adds no features. The complete list is in the
+[changelog](CHANGELOG.md).
 
 ## Transfers
 
@@ -30,6 +33,15 @@ list is in the [changelog](CHANGELOG.md).
   whose copy it finds at the destination. A retried item that cannot be
   started fails by itself, and two conflicts with the same destination can no
   longer both be answered with Replace.
+- **Recovery.** What an interrupted transfer of 1.1.5 or earlier left is
+  recognised and cleaned up. One damaged line in a record no longer keeps
+  recovery away from the other files the record names, and a record that
+  names nothing is deleted after a day.
+- **Errors inside the service.** An internal error while one file is copied
+  fails that file and the task carries on; it could stop the task for good.
+- **Logs.** `service.log` gets the service's warnings, such as each retried
+  try with its reason. `operations.jsonl` records, for each transfer, its
+  duration, bytes and files and every item that failed, and is kept to 4 MiB.
 - **Moves that leave files behind.** Deciding which source folders stay after a
   move with many skipped or failed files took time in proportion to folders
   times files. A tree of 8,000 folders with 80,000 skipped files took 43 seconds
@@ -64,6 +76,10 @@ list is in the [changelog](CHANGELOG.md).
 
 ## Other fixes
 
+- **Undo.** An Undo that fails can be taken out of the undo history with a
+  button in its message, so that earlier steps can be undone. Undo no longer
+  fails on an item that is already gone, and undoing a transfer into an
+  existing folder handles 500 files with each request instead of one.
 - **Pack into folder** and **Unpack folder here** remove a folder only when
   it is empty. Undoing a pack, or unpacking a folder with a file that could
   not be moved out, deleted the folder with everything left in it.
@@ -91,6 +107,14 @@ list is in the [changelog](CHANGELOG.md).
    strip, then press Alt+P twice. The strip goes away, then the pane opens.
 6. Open Settings and press Ctrl+2. The tab behind the dialog does not change.
 7. Select `.gitignore` in a repository. The preview pane shows its text.
+8. Find two files with the same name in different folders (a search does
+   it), select both, and move them into a folder that already has a file of
+   that name. Answer the first conflict with Replace and "do this for all".
+   The second file is asked about again, without Replace.
+9. Copy a file, delete the copy, and press Ctrl+Z. The step is undone without
+   an error. Then copy a file, open the copy in a program that locks it, and
+   press Ctrl+Z: the message has a **Remove from undo history** button, and
+   after using it Ctrl+Z undoes the step before.
 
 ## Upgrading
 
@@ -114,7 +138,7 @@ together.
 ## Dogfood 10-Step Script
 
 1. Install 1.2.0 over a disposable v1.1.5 installation.
-2. Run the seven [Manual verification](#manual-verification) cases above.
+2. Run the nine [Manual verification](#manual-verification) cases above.
 3. Copy a folder of mixed large and small files to a removable drive with
    "Streams per large file" set to 4. The transfer finishes and the files match.
 4. With "Write directly to the destination" on, copy a large file onto an
@@ -142,6 +166,13 @@ No manual import is needed for normal SimpleFile-to-SumaFile use. SumaFile keeps
 
 ## Known Limitations
 
+- Recovery after a power loss was tested by putting files and records into
+  the state such a loss leaves, not by cutting power. That records written by
+  1.1.5 are recognised was established from the code of both versions, not
+  by upgrading over an interrupted transfer.
+- A copy does not keep a file's Hidden and System attributes or its alternate
+  data streams, and a file whose name is longer than about 220 characters
+  cannot be copied. See the [roadmap](ROADMAP.md#transfers).
 - Type-ahead, the Alt+P and Ctrl+1 to Ctrl+9 changes, and Quick Look's release
   of a file have no UI smoke test. They are covered by tests of the shared
   logic and of the source, and by the manual cases above.

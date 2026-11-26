@@ -72,6 +72,9 @@ on-demand column values have shipped. What remains:
 
 - Benchmark copy and move against Windows Explorer on SSD, HDD, USB, a network
   share and many small files, and on a physical NAS.
+  The 1.2.0 notes quote one figure, the move clean-up of 8,000 folders with
+  80,000 skipped files going from 43 seconds to 0.1. It came from a single
+  run and nothing in the repository reproduces it; make it a benchmark case.
 - "Always copy" does not always copy: in a second pass it compares content
   like Checksum, and in a first pass no check mode skips anything. Rename the
   choice or change what it does.
@@ -86,11 +89,30 @@ on-demand column values have shipped. What remains:
   itself, is reported with the "CONFLICT:" prefix of a name conflict. What
   the app offers the user then was not checked.
 - A partial file's name is 35 characters longer than the file's own, and its
-  record's 41. Whether a file with a name near the 255-character limit can be
-  copied was not tested.
+  record's 41, so a file whose name is longer than about 220 characters
+  cannot be copied. Shorten the temporary names for long names.
+- A copy does not keep a file's Hidden and System attributes or its alternate
+  data streams. The mark Windows puts on a downloaded file is one of those
+  streams, so a copied download no longer asks before it is run.
+- The bandwidth limit is per task: two tasks running at once use twice the
+  limit.
+- An FTP/SFTP transfer that is interrupted starts its file again from the
+  first byte.
+- A destination whose file system reports no file ID cannot be copied to:
+  ownership cannot be recorded there, and the file fails.
 - Whether two paths are on the same volume is decided from the first path
   component, which is wrong for mount points and substituted drives.
 - Learned transfer settings are not saved when any file in the task failed.
+- One bout of retries can take a lane from 32 files at once to 2, and when
+  the task then ends without a failed file that low value is saved for the
+  route.
+- Bytes of skipped files count toward the speed shown.
+- A folder's ownership record is created while a lock that all copy threads
+  share is held. Trees of many small folders may copy more slowly for it;
+  this was not measured.
+- A move within one drive that replaces files flushes one record per
+  replaced file, and Checksum mode flushes every file. Measure what these
+  cost on a hard disk and a share.
 - A pass keeps one ownership record per destination folder, so a folder that
   receives a single file still costs a record of its own. One record per
   worker at the transfer's destination root would cost a fixed number per
