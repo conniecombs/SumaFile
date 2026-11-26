@@ -320,6 +320,16 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ### Other changes
 
+- An Undo that fails can be taken out of the undo history. The message now
+  has a **Remove from undo history** button. A step that could never succeed,
+  such as undoing the copy of a file that is in use for good, used to stand
+  before every earlier step until the window was closed.
+- Undo no longer fails on a file that is already gone. Undoing a copy, a move
+  or a new file whose result had been deleted or moved since failed every
+  time; such an item now counts as undone.
+- Undoing a copy or move into an existing folder asks the file service once
+  for every 500 files instead of once for every file, and an Undo that
+  stopped part-way goes on with the files that are left.
 - A smart folder with a quote in one of its file types or dates no longer
   comes up empty in an indexed folder.
 - Closing a Properties window stops the size calculation of its own folder.

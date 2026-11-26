@@ -21,6 +21,8 @@ public sealed class UndoStack
 
     public bool CanUndo => _undo.Count > 0;
     public bool CanRedo => _redo.Count > 0;
+    /// <summary>The entry Undo would run next.</summary>
+    public UndoEntry? NextUndo => _undo.Count > 0 ? _undo.Peek() : null;
     public string? NextUndoDescription => _undo.Count > 0 ? _undo.Peek().Description : null;
     public string? NextRedoDescription => _redo.Count > 0 ? _redo.Peek().Description : null;
     public IReadOnlyList<string> History => _undo.Reverse().Select(entry => entry.Description).ToList();
@@ -31,6 +33,13 @@ public sealed class UndoStack
         _undo.Push(entry);
         _redo.Clear();
     }
+
+    /// <summary>
+    /// Removes the entry that Undo would run next, without running it, and returns its description. For an
+    /// entry that cannot be undone any more: it would otherwise stand before every older entry for good.
+    /// What can be redone stays.
+    /// </summary>
+    public string? DropNextUndo() => _undo.Count > 0 ? _undo.Pop().Description : null;
 
     public void PushCopy(IReadOnlyList<TransferResult> transferred, FileOperationService ops)
     {
@@ -43,10 +52,31 @@ public sealed class UndoStack
 
         var items = transferred.ToArray();
         var currentDestinations = items.Select(item => item.Destination).ToArray();
+        // Set by an Undo that failed: the copies that were found gone afterwards.
+        var removed = new bool[items.Length];
+        string[] pendingDestinations() => currentDestinations.Where((_, index) => !removed[index]).ToArray();
         Push(new UndoEntry
         {
             Description = $"Copy {Items(items.Length)}",
-            Undo = ct => ops.TrashAsync(currentDestinations.ToArray(), ct),
+            Undo = async ct =>
+            {
+                try
+                {
+                    await ops.TrashAsync(pendingDestinations(), ct).ConfigureAwait(false);
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    // The service goes on past a copy it cannot remove. A copy that is gone by now needs
+                    // nothing more; asked for again, it would fail this step every time.
+                    removed = currentDestinations.Select(path => !NativePath.ExistsNoFollow(path)).ToArray();
+                    if (removed.All(gone => gone))
+                    {
+                        return;
+                    }
+
+                    throw;
+                }
+            },
             Redo = async ct =>
             {
                 for (var index = 0; index < items.Length; index++)
@@ -77,8 +107,17 @@ public sealed class UndoStack
             Description = isDirectory ? "Create folder" : "Create file",
             Undo = async ct =>
             {
-                var recyclePaths = await ops.TrashAsync([currentPath], ct).ConfigureAwait(false);
-                recyclePath = recyclePaths.FirstOrDefault();
+                try
+                {
+                    var recyclePaths = await ops.TrashAsync([currentPath], ct).ConfigureAwait(false);
+                    recyclePath = recyclePaths.FirstOrDefault();
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException
+                    && !NativePath.ExistsNoFollow(currentPath))
+                {
+                    // Gone by now: there is nothing to remove, and Redo creates it again.
+                    recyclePath = null;
+                }
             },
             Redo = async ct =>
             {
@@ -114,8 +153,17 @@ public sealed class UndoStack
             Description = "Create shortcut",
             Undo = async ct =>
             {
-                var recyclePaths = await ops.TrashAsync([currentPath], ct).ConfigureAwait(false);
-                recyclePath = recyclePaths.FirstOrDefault();
+                try
+                {
+                    var recyclePaths = await ops.TrashAsync([currentPath], ct).ConfigureAwait(false);
+                    recyclePath = recyclePaths.FirstOrDefault();
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException
+                    && !NativePath.ExistsNoFollow(currentPath))
+                {
+                    // Gone by now: there is nothing to remove, and Redo creates it again.
+                    recyclePath = null;
+                }
             },
             Redo = async ct =>
             {
@@ -154,6 +202,8 @@ public sealed class UndoStack
         // Per-item bookkeeping lets a failed undo be retried for the items still in place
         // instead of failing forever on the ones already restored.
         var restored = new bool[items.Length];
+        // Items that were no longer at their destination when Undo ran: Undo and Redo leave them alone.
+        var gone = new bool[items.Length];
         Push(new UndoEntry
         {
             Description = $"Move {Items(items.Length)}",
@@ -161,7 +211,7 @@ public sealed class UndoStack
             {
                 for (var index = items.Length - 1; index >= 0; index--)
                 {
-                    if (restored[index])
+                    if (restored[index] || gone[index])
                     {
                         continue;
                     }
@@ -174,7 +224,19 @@ public sealed class UndoStack
                         continue;
                     }
 
-                    var movedBack = await ops.MoveEntryResolvedAsync(currentDestinations[index], parent, "rename", ct).ConfigureAwait(false);
+                    string movedBack;
+                    try
+                    {
+                        movedBack = await ops.MoveEntryResolvedAsync(currentDestinations[index], parent, "rename", ct).ConfigureAwait(false);
+                    }
+                    catch (Exception exception) when (exception is not OperationCanceledException
+                        && !NativePath.ExistsNoFollow(currentDestinations[index]))
+                    {
+                        // No longer where the move put it: there is nothing to move back.
+                        gone[index] = true;
+                        continue;
+                    }
+
                     var desiredName = PathRules.Basename(originalSource);
                     if (!string.IsNullOrEmpty(movedBack)
                         && !string.Equals(PathRules.Basename(movedBack), desiredName, StringComparison.Ordinal))

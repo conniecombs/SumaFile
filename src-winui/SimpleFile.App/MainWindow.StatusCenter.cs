@@ -334,19 +334,60 @@ public sealed partial class MainWindow
         _undoReceiptMessage = receipt;
         ShowMessage(title, receipt, InfoBarSeverity.Success);
         MessageBar.ActionButton = undo;
-        if (!_undoReceiptHooked)
+        RetireMessageActionWithItsMessage();
+    }
+
+    /// <summary>Any later message replaces the one that has an action button, so the button must not linger.</summary>
+    private void RetireMessageActionWithItsMessage()
+    {
+        if (_undoReceiptHooked)
         {
-            _undoReceiptHooked = true;
-            // Any later message replaces the receipt, so its Undo button must not linger.
-            MessageBar.RegisterPropertyChangedCallback(InfoBar.MessageProperty, (_, _) =>
-            {
-                if (_undoReceiptMessage is not null
-                    && !string.Equals(MessageBar.Message, _undoReceiptMessage, StringComparison.Ordinal))
-                {
-                    _undoReceiptMessage = null;
-                    MessageBar.ActionButton = null;
-                }
-            });
+            return;
         }
+
+        _undoReceiptHooked = true;
+        MessageBar.RegisterPropertyChangedCallback(InfoBar.MessageProperty, (_, _) =>
+        {
+            if (_undoReceiptMessage is not null
+                && !string.Equals(MessageBar.Message, _undoReceiptMessage, StringComparison.Ordinal))
+            {
+                _undoReceiptMessage = null;
+                MessageBar.ActionButton = null;
+            }
+        });
+    }
+
+    /// <summary>
+    /// An Undo that failed, with a button that takes the step out of the undo history. The step stays the
+    /// next one to undo, so one that can never succeed would stand before every earlier step.
+    /// </summary>
+    private void ShowUndoFailure(ExplorerWorkspace workspace, UndoEntry? failed, string error)
+    {
+        if (failed is null)
+        {
+            ShowMessage("Undo", error, InfoBarSeverity.Error);
+            return;
+        }
+
+        var remove = new Button { Content = "Remove from undo history" };
+        remove.Click += (_, _) =>
+        {
+            MessageBar.IsOpen = false;
+            MessageBar.ActionButton = null;
+            _undoReceiptMessage = null;
+            // Only the step that failed: one pushed since is not what the button was shown for.
+            if (ReferenceEquals(_workspace, workspace) && ReferenceEquals(workspace.Undo.NextUndo, failed))
+            {
+                workspace.Undo.DropNextUndo();
+                SetStatusText($"Removed from the undo history: {failed.Description}");
+            }
+        };
+
+        var message = $"{error} \"{failed.Description}\" stays the next step to undo. "
+            + "Try again, or remove it to reach the earlier steps.";
+        _undoReceiptMessage = message;
+        ShowMessage("Undo", message, InfoBarSeverity.Error);
+        MessageBar.ActionButton = remove;
+        RetireMessageActionWithItsMessage();
     }
 }

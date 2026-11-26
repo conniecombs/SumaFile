@@ -1061,21 +1061,37 @@ public class Sprint2WindowTests
                 return Task.FromResult(Path.Combine(destination, name));
             },
         };
-        var stack = new UndoStack();
-        stack.PushMove(
-            [
-                new TransferResult { Source = @"C:\src\a", Destination = @"D:\dst\a" },
-                new TransferResult { Source = @"C:\src\b", Destination = @"D:\dst\b" },
-                new TransferResult { Source = @"C:\src\c", Destination = @"D:\dst\c" },
-            ],
-            new FileOperationService(ipc));
+        // The moved items are really at their destination: one that is gone would count as undone.
+        var root = Directory.CreateTempSubdirectory("sumafile-undo-resume-");
+        try
+        {
+            var moved = Directory.CreateDirectory(Path.Combine(root.FullName, "dst")).FullName;
+            foreach (var name in new[] { "a", "b", "c" })
+            {
+                File.WriteAllText(Path.Combine(moved, name), name);
+            }
 
-        await Assert.ThrowsAsync<IOException>(() => stack.UndoAsync());
-        Assert.True(stack.CanUndo);
-        await stack.UndoAsync();
+            var original = Path.Combine(root.FullName, "src");
+            var stack = new UndoStack();
+            stack.PushMove(
+                [
+                    new TransferResult { Source = Path.Combine(original, "a"), Destination = Path.Combine(moved, "a") },
+                    new TransferResult { Source = Path.Combine(original, "b"), Destination = Path.Combine(moved, "b") },
+                    new TransferResult { Source = Path.Combine(original, "c"), Destination = Path.Combine(moved, "c") },
+                ],
+                new FileOperationService(ipc));
 
-        Assert.Equal(["c", "b:fail", "b", "a"], log);
-        Assert.False(stack.CanUndo);
+            await Assert.ThrowsAsync<IOException>(() => stack.UndoAsync());
+            Assert.True(stack.CanUndo);
+            await stack.UndoAsync();
+
+            Assert.Equal(["c", "b:fail", "b", "a"], log);
+            Assert.False(stack.CanUndo);
+        }
+        finally
+        {
+            root.Delete(recursive: true);
+        }
     }
 
     // C7/S12/P5 + X1: every window sized itself in physical pixels and ignored the app theme.

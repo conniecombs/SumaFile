@@ -207,7 +207,11 @@ reuses the answer for subsequent conflicts in the same transfer.
   paths. It removes a newly created directory only while it is empty. Redo
   replays the recorded additions. A replaced file cannot be restored by Undo.
   Skipping all files in a copy into an existing folder creates no Undo entry
-  unless the copy also created a directory.
+  unless the copy also created a directory. The files go to the service 500 at a
+  time. A file that is no longer where the transfer put it counts as undone,
+  so an Undo that failed part-way goes on with what is left when it is run
+  again. An Undo that fails is shown with **Remove from undo history**, which
+  takes that step out so that the earlier ones can be undone.
 
 ### Moves
 

@@ -1393,6 +1393,7 @@ public sealed partial class MainWindow
 
         // Captured before undoing: the entry is gone afterwards.
         var description = workspace.Undo.NextUndoDescription;
+        var failed = workspace.Undo.NextUndo;
         var utilityCts = BeginUtilityOperation("UndoLastAsync");
         try
         {
@@ -1409,7 +1410,7 @@ public sealed partial class MainWindow
         }
         catch (Exception exception)
         {
-            ShowMessage("Undo", exception.Message, InfoBarSeverity.Error);
+            ShowUndoFailure(workspace, failed, exception.Message);
         }
         finally
         {

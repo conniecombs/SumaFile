@@ -18,12 +18,25 @@ public static class NativePath
             return false;
         }
 
+        if (!OperatingSystem.IsWindows())
+        {
+            // The app runs on Windows only; this keeps the shared logic testable elsewhere.
+            return new FileInfo(path).Exists || new DirectoryInfo(path).Exists
+                || new FileInfo(path).LinkTarget is not null;
+        }
+
         var attributes = GetFileAttributesW(path);
         return attributes != INVALID_FILE_ATTRIBUTES;
     }
 
     public static bool IsDirectoryNoFollow(string path)
     {
+        if (!OperatingSystem.IsWindows())
+        {
+            var directory = new DirectoryInfo(path);
+            return directory.Exists && directory.LinkTarget is null;
+        }
+
         var attributes = GetFileAttributesW(path);
         if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & (uint)FileAttributes.Directory) == 0)
             return false;
