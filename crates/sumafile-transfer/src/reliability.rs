@@ -38,6 +38,11 @@ pub const RETRYABLE_PREFIX: &str = "RETRYABLE:";
 pub struct Failure {
     pub message: String,
     pub kind: FailureKind,
+    /// The bytes already in the destination can no longer be trusted: a
+    /// write or a flush failed, or the checksum did not match. Another
+    /// attempt at this file must write it again from its first byte instead
+    /// of continuing where the failed attempt stopped.
+    pub restart: bool,
 }
 
 impl Failure {
@@ -58,6 +63,7 @@ impl Failure {
             return Self {
                 message: rest.trim().to_string(),
                 kind: FailureKind::Retryable,
+                restart: false,
             };
         }
         let kind = if kind == FailureKind::Permanent && message.starts_with(CONFLICT_PREFIX) {
@@ -67,7 +73,18 @@ impl Failure {
         } else {
             kind
         };
-        Self { message, kind }
+        Self {
+            message,
+            kind,
+            restart: false,
+        }
+    }
+
+    /// Marks the failure as one that leaves the destination's bytes in
+    /// doubt; see [`Self::restart`].
+    pub fn restart_file(mut self) -> Self {
+        self.restart = true;
+        self
     }
 
     pub fn cancelled() -> Self {
@@ -85,18 +102,21 @@ impl Failure {
     }
 
     pub fn io(phase: &str, path: impl AsRef<Path>, error: io::Error) -> Self {
-        let kind = error
-            .get_ref()
-            .and_then(|e| e.downcast_ref::<Self>())
-            .map_or_else(|| classify_io(&error), |e| e.kind);
-        Self::with_kind(
+        let inner = error.get_ref().and_then(|e| e.downcast_ref::<Self>());
+        let kind = inner.map_or_else(|| classify_io(&error), |e| e.kind);
+        let restart = inner.is_some_and(|e| e.restart);
+        let mut failure = Self::with_kind(
             format!("{phase} [{}]: {error}", path.as_ref().display()),
             kind,
-        )
+        );
+        failure.restart = restart;
+        failure
     }
 
     pub fn context(self, phase: &str, path: &str) -> Self {
-        Self::with_kind(format!("{phase} [{path}]: {}", self.message), self.kind)
+        let mut failure = Self::with_kind(format!("{phase} [{path}]: {}", self.message), self.kind);
+        failure.restart = self.restart;
+        failure
     }
 
     /// Kept for call sites that only distinguish "try again" from "give up".
@@ -347,6 +367,32 @@ mod tests {
             "{}",
             reported.message
         );
+    }
+
+    #[test]
+    fn a_failure_asks_for_a_restart_only_when_marked() {
+        assert!(!Failure::new("timeout", true).restart);
+        assert!(!Failure::from("boom").restart);
+        assert!(
+            !Failure::io(
+                "Read source",
+                "a.bin",
+                io::Error::from(io::ErrorKind::TimedOut)
+            )
+            .restart
+        );
+        let marked = Failure::new("checksum mismatch", true).restart_file();
+        assert!(marked.restart);
+        assert_eq!(marked.kind, FailureKind::Retryable);
+        assert_eq!(marked.message, "checksum mismatch");
+    }
+
+    #[test]
+    fn the_restart_mark_survives_added_context_and_an_io_wrapper() {
+        let marked = Failure::new("write failed", true).restart_file();
+        assert!(marked.clone().context("Copy", "a.bin").restart);
+        let wrapped = io::Error::other(marked);
+        assert!(Failure::io("Write", "a.bin", wrapped).restart);
     }
 
     #[test]

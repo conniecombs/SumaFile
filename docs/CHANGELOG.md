@@ -66,6 +66,15 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 - Replace no longer removes a folder. A folder that took the destination's
   name while the file was being copied used to be moved aside and deleted
   with everything in it; it is now reported as a conflict.
+- A file is copied again from its first byte after a failed write, a failed
+  flush or a checksum mismatch. The next try used to continue the partial
+  file where it stood. After a checksum mismatch that meant writing nothing
+  and verifying the same wrong bytes until the tries ran out; after a failed
+  write it meant keeping bytes the drive may never have taken. A try that
+  failed while reading the source still continues the partial file.
+- Checksum mode flushes each file to disk before it reads the file back, and
+  verifies it before the file gets the source's read-only attribute. A
+  read-only file whose checksum did not match could not be tried again.
 - Cleaning up after an interrupted transfer never removes a folder that a
   record names, and a damaged record no longer stops the transfer that finds
   it.

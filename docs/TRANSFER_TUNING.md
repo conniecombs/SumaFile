@@ -63,7 +63,7 @@ Advanced. Defaults are the file service's.
 | Decide a file is already up to date by | Size and modification time | Size and modification time, Size only, Checksum, Always copy | See [Check modes](#check-modes). |
 | Write directly to the destination instead of a temporary file | Off | | See [Write directly to the destination](#write-directly-to-the-destination). |
 | Pre-allocate disk space | On | | Reserves a file's size at the destination before writing it. See [Pre-allocation](#pre-allocation). |
-| Flush to disk before finishing each file | On | | Asks Windows to write the file's data to the disk before the file gets its final name. A move always does this, whatever the setting, because it deletes the source afterwards. |
+| Flush to disk before finishing each file | On | | Asks Windows to write the file's data to the disk before the file gets its final name. A move always does this, whatever the setting, because it deletes the source afterwards. So does Checksum mode, before it reads the file back. |
 | Retry a failing file up to | 10 | 1–50 | Tries one file gets in one round, the first included. |
 | Retry rounds for the whole task | 3 | 1–20 | Rounds one failing file gets, the first included. The count is kept per file, not per task. |
 | Wait before retrying (seconds) | 1 | 0.01–60 | Wait after the first failed try. Later waits are longer; see [Failures and retries](#failures-and-retries). |
@@ -128,10 +128,11 @@ is on, every file is copied in these steps:
 4. After the last byte the service checks that the source still has the size
    and times it had when it was opened; if not, the file fails ("Source
    changed during transfer"). It flushes the partial file to disk when "Flush
-   to disk before finishing each file" is on, gives it the source's created,
-   accessed and modified times and its read-only attribute, and clears the
-   Hidden attribute. In Checksum mode it then reads the partial file back and
-   compares it with what was read from the source.
+   to disk before finishing each file" is on, and always in a move and in
+   Checksum mode. In Checksum mode it then reads the partial file back and
+   compares it with what was read from the source. Last, it gives the file the
+   source's created, accessed and modified times and its read-only attribute,
+   and clears the Hidden attribute.
 5. The partial file is renamed to the final name. This rename never
    overwrites: unless Replace was chosen, a file found under that name is a
    conflict.
@@ -451,9 +452,13 @@ There are two levels, with separate limits.
 **Tries within a round.** After a transient or busy error the file waits and
 is tried again. The waits are the "Wait before retrying" value times 1, 2, 4,
 8 and then 16 for every later wait, each at most 60 seconds. With the defaults
-(10 tries, 1 second) one round waits at most 95 seconds in total. A new try
-continues the partial file from its current length; bytes already written are
-not copied again. Before each new try the source is checked, and if its size
+(10 tries, 1 second) one round waits at most 95 seconds in total. What a new
+try does with the partial file depends on what failed. After an error on the
+source's side, such as a failed read, it continues the partial file from its
+current length; bytes already written are not copied again. After a failed
+write or flush, or a checksum mismatch, the bytes in the partial file may be
+wrong, so the new try empties the file and copies it again from its first
+byte. Before each new try the source is checked, and if its size
 or modified time has changed the file fails for good ("Source changed before
 retry"). While a file waits, the Details line shows "Retrying failed I/O" with
 the failing step, the path and the error, and the other files keep running. A
@@ -527,10 +532,12 @@ carries the message of its first failure.
   Keep both choice always performs the requested action, even for two matching files.
 * Checksum also verifies each copy. While a file is copied, a SHA-256 hash of
   the bytes read from the source is computed. After the last write the partial
-  file is read back and hashed, and a difference fails the try as a transient
-  error. In a move, the source is read once more and must still have that hash
-  before it is deleted. Checksum turns copying in several streams off. The
-  extra reads cost time, most of all on slow or cloud storage.
+  file is flushed to disk, whatever the flush setting says, then read back and
+  hashed. A difference fails the try as a transient error, and the next try
+  copies the file again from its first byte. In a move, the source is read
+  once more and must still have that hash before it is deleted. Checksum turns
+  copying in several streams off. The extra reads and the flush cost time,
+  most of all on slow or cloud storage.
 
 **What the choice does not decide.** It never makes a first pass skip a file.
 A first pass does not compare the source with what is at the destination: an

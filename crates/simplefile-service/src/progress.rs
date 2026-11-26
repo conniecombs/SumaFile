@@ -909,6 +909,7 @@ impl TransferBatchError {
 
 #[cfg(test)]
 mod tests {
+    use super::execute::Partial;
     use super::{
         copy_file_attempt, copy_file_with_progress, prepare_transfer_inputs,
         transfer_with_progress_blocking, CopyContext, ProgressContext,
@@ -1848,7 +1849,7 @@ mod tests {
 
         for partial in [b"".as_slice(), b"abc".as_slice(), b"abcdef".as_slice()] {
             fs::write(&destination, partial).unwrap();
-            let copied = copy_file_attempt(&source, &destination, &ctx, 0, 2, 6)
+            let copied = copy_file_attempt(&source, &destination, Partial::Compare, &ctx, 0, 2, 6)
                 .expect("empty, partial and complete operation-owned files should resume");
             assert_eq!(copied, 6);
             assert_eq!(fs::read(&destination).unwrap(), b"abcdef");
@@ -1856,12 +1857,229 @@ mod tests {
         fs::write(&source, b"").unwrap();
         fs::write(&destination, b"").unwrap();
         assert_eq!(
-            copy_file_attempt(&source, &destination, &ctx, 0, 2, 0).unwrap(),
+            copy_file_attempt(&source, &destination, Partial::Compare, &ctx, 0, 2, 0).unwrap(),
             0
         );
 
         let _ = fs::remove_dir_all(&src_dir);
         let _ = fs::remove_dir_all(&dst_dir);
+    }
+
+    /// A partial file whose bytes are in doubt is emptied and written again.
+    /// Continued at its length, as a partial left by a failed read is, the
+    /// attempt would write nothing and keep the wrong bytes.
+    #[test]
+    fn copy_file_attempt_writes_a_distrusted_partial_again_from_the_first_byte() {
+        let src_dir = unique_temp_path("distrust_src");
+        let dst_dir = unique_temp_path("distrust_dst");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&dst_dir).unwrap();
+        let source = src_dir.join("data.bin");
+        let destination = dst_dir.join("data.bin.partial");
+        fs::write(&source, b"abcdef").unwrap();
+
+        let operation_id = "op_distrust_test";
+        let total_bytes = Arc::new(AtomicU64::new(6));
+        let total_files = Arc::new(AtomicU64::new(1));
+        let completed_files = Arc::new(AtomicU64::new(0));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let emit = |_| {};
+        let progress = ProgressContext {
+            emit: &emit,
+            operation_id,
+            operation_type: "copy",
+            cancel: &cancel,
+            total_bytes: &total_bytes,
+            total_files: &total_files,
+            completed_files: &completed_files,
+            last_running_emit: Mutex::new(Instant::now()),
+            retry_count: None,
+            rate_limit: None,
+            write_latency: None,
+        };
+        let ctx = CopyContext {
+            progress: &progress,
+            operation_id,
+            records: &crate::transfer_journal::FolderRecords::new(operation_id),
+            network: true,
+            policy: super::Policy {
+                check_mode: super::tuning::CheckMode::Checksum,
+                ..super::Policy::default()
+            },
+        };
+
+        // Full length, wrong bytes: what a failed checksum leaves behind.
+        fs::write(&destination, b"abcXYZ").unwrap();
+        let continued = copy_file_attempt(&source, &destination, Partial::Continue, &ctx, 0, 2, 6)
+            .expect_err("a partial continued at its full length keeps its wrong bytes");
+        assert!(
+            continued.restart,
+            "a checksum mismatch must ask for a new copy: {continued}"
+        );
+        assert!(continued.retryable(), "{continued}");
+
+        let copied = copy_file_attempt(&source, &destination, Partial::Discard, &ctx, 0, 2, 6)
+            .expect("a distrusted partial is written again");
+        assert_eq!(copied, 6);
+        assert_eq!(fs::read(&destination).unwrap(), b"abcdef");
+
+        // Longer than one buffer and shorter than the source.
+        fs::write(&destination, b"zz").unwrap();
+        copy_file_attempt(&source, &destination, Partial::Discard, &ctx, 0, 2, 6).unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), b"abcdef");
+
+        let _ = fs::remove_dir_all(&src_dir);
+        let _ = fs::remove_dir_all(&dst_dir);
+    }
+
+    /// A failed write leaves the destination's bytes in doubt; a failed read
+    /// of the source says nothing about them.
+    #[test]
+    fn a_failed_write_asks_for_a_new_copy_and_a_failed_read_does_not() {
+        use std::io::{self, Read, Write};
+
+        struct FailingWriter;
+        impl Write for FailingWriter {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(io::Error::from(io::ErrorKind::TimedOut))
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        struct FailingFlush(Vec<u8>);
+        impl Write for FailingFlush {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.0.extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Err(io::Error::from(io::ErrorKind::TimedOut))
+            }
+        }
+        struct FailingReader;
+        impl Read for FailingReader {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                Err(io::Error::from(io::ErrorKind::TimedOut))
+            }
+        }
+
+        let operation_id = "op_restart_mark_test";
+        let total_bytes = Arc::new(AtomicU64::new(6));
+        let total_files = Arc::new(AtomicU64::new(1));
+        let completed_files = Arc::new(AtomicU64::new(0));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let emit = |_| {};
+        let progress = ProgressContext {
+            emit: &emit,
+            operation_id,
+            operation_type: "copy",
+            cancel: &cancel,
+            total_bytes: &total_bytes,
+            total_files: &total_files,
+            completed_files: &completed_files,
+            last_running_emit: Mutex::new(Instant::now()),
+            retry_count: None,
+            rate_limit: None,
+            write_latency: None,
+        };
+        let ctx = CopyContext {
+            progress: &progress,
+            operation_id,
+            records: &crate::transfer_journal::FolderRecords::new(operation_id),
+            network: true,
+            policy: super::Policy::default(),
+        };
+        let src = std::path::Path::new("source.bin");
+        let dst = std::path::Path::new("destination.bin");
+        let copy = |reader: &mut dyn Read, writer: &mut dyn Write| {
+            super::execute::copy_file_stream(reader, writer, src, dst, &ctx, 0, 0, 6, 2)
+        };
+
+        let write = copy(&mut &b"abcdef"[..], &mut FailingWriter).unwrap_err();
+        assert!(write.restart, "{write}");
+        assert!(write.retryable(), "{write}");
+
+        let flush = copy(&mut &b"abcdef"[..], &mut FailingFlush(Vec::new())).unwrap_err();
+        assert!(flush.restart, "{flush}");
+
+        let read = copy(&mut FailingReader, &mut Vec::new()).unwrap_err();
+        assert!(!read.restart, "{read}");
+        assert!(read.retryable(), "{read}");
+    }
+
+    fn copy_with_one_corrupted_attempt(name: &str, read_only_source: bool) {
+        let src_dir = unique_temp_path(&format!("{name}_src"));
+        let dst_dir = unique_temp_path(&format!("{name}_dst"));
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&dst_dir).unwrap();
+        let source = src_dir.join("data.bin");
+        let content: Vec<u8> = (0..300_000u32).map(|n| (n % 251) as u8).collect();
+        fs::write(&source, &content).unwrap();
+        if read_only_source {
+            let mut permissions = fs::metadata(&source).unwrap().permissions();
+            permissions.set_readonly(true);
+            fs::set_permissions(&source, permissions).unwrap();
+        }
+        let destination = dst_dir.join("data.bin");
+        super::execute::test_faults::corrupt_once_under(&dst_dir);
+
+        let result = super::transfer_with_policy_blocking(
+            "copy",
+            super::Request::Selection {
+                sources: vec![source.to_string_lossy().to_string()],
+                conflict_action: "error".to_string(),
+            },
+            dst_dir.to_string_lossy().to_string(),
+            format!("op_{name}"),
+            Arc::new(AtomicBool::new(false)),
+            &|_| {},
+            &|_| {},
+            &|| super::tuning::Policy {
+                mode: super::tuning::Mode::Manual,
+                manual_concurrency: 1,
+                check_mode: super::tuning::CheckMode::Checksum,
+                retry_sleep_ms: 10,
+                ..super::tuning::Policy::default()
+            },
+        );
+
+        assert!(
+            !super::execute::test_faults::pending_under(&dst_dir),
+            "the first attempt's bytes were never changed, so the test proved nothing"
+        );
+        result.expect("the attempt after a checksum mismatch copies the file again");
+        assert_eq!(fs::read(&destination).unwrap(), content);
+        let leftovers: Vec<_> = fs::read_dir(&dst_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .filter(|name| name != "data.bin")
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+
+        for path in [&source, &destination] {
+            let mut permissions = fs::metadata(path).unwrap().permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            permissions.set_readonly(false);
+            let _ = fs::set_permissions(path, permissions);
+        }
+        let _ = fs::remove_dir_all(&src_dir);
+        let _ = fs::remove_dir_all(&dst_dir);
+    }
+
+    /// A retry after a checksum mismatch used to continue the partial file at
+    /// its full length. It wrote nothing, verified the same wrong bytes, and
+    /// failed again until the attempts ran out.
+    #[test]
+    fn a_checksum_mismatch_is_followed_by_a_complete_new_copy() {
+        copy_with_one_corrupted_attempt("checksum_retry", false);
+    }
+
+    /// The copy of a read-only file became read-only before it was verified,
+    /// so the attempt after a mismatch could not open it for writing.
+    #[test]
+    fn a_checksum_mismatch_on_a_read_only_file_is_followed_by_a_new_copy() {
+        copy_with_one_corrupted_attempt("checksum_retry_read_only", true);
     }
 
     #[cfg(windows)]

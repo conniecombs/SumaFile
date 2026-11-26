@@ -82,8 +82,6 @@ on-demand column values have shipped. What remains:
   removed by the clean-up that follows a failed file was not established.
   When the rename that gives a file its final name fails, the error of the
   clean-up that follows is discarded; report it.
-- A retry after a checksum mismatch continues the partial file at its current
-  length, so it verifies the same bytes again instead of copying them again.
 - A destination that refuses the attribute update keeps the Hidden attribute
   on a file that is published all the same.
 - A request the service refuses while planning, such as copying a folder into

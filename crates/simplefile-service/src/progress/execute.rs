@@ -73,10 +73,26 @@ fn create_new_staging_sequential(dst: &Path) -> std::io::Result<fs::File> {
         .open(dst)
 }
 
+/// What an attempt does with the bytes a partial file already holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Partial {
+    /// Of unknown origin: continued only after its bytes were compared with
+    /// the start of the source.
+    Compare,
+    /// Written by this operation's earlier attempt, which stopped for a
+    /// reason on the source's side: continued where it stopped, unread.
+    Continue,
+    /// A write or a flush failed, or the checksum did not match
+    /// ([`Failure::restart`]), so the bytes may be wrong: the file is emptied
+    /// and written again from its first byte.
+    Discard,
+}
+
 #[cfg(test)]
 pub(crate) fn copy_file_attempt(
     src: &Path,
     dst: &Path,
+    partial: Partial,
     ctx: &CopyContext,
     completed_bytes: u64,
     buffer_size: usize,
@@ -86,7 +102,7 @@ pub(crate) fn copy_file_attempt(
         src,
         dst,
         None,
-        false,
+        partial,
         ctx,
         completed_bytes,
         buffer_size,
@@ -96,17 +112,56 @@ pub(crate) fn copy_file_attempt(
     .map(|(copied, _)| copied)
 }
 
+/// Faults a test can plant in a copy attempt.
+#[cfg(test)]
+pub(crate) mod test_faults {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+
+    static CORRUPT_ONCE: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+    /// The next file written under `dir` gets its first byte changed after
+    /// it was written and before it is verified. Once.
+    pub(crate) fn corrupt_once_under(dir: &Path) {
+        CORRUPT_ONCE.lock().unwrap().push(dir.to_path_buf());
+    }
+
+    /// Whether the fault planted for `dir` is still waiting for a file.
+    pub(crate) fn pending_under(dir: &Path) -> bool {
+        CORRUPT_ONCE.lock().unwrap().iter().any(|d| d == dir)
+    }
+
+    pub(super) fn after_write(written: &Path) {
+        let planted = {
+            let mut dirs = CORRUPT_ONCE.lock().unwrap();
+            let found = dirs.iter().position(|dir| written.starts_with(dir));
+            found.map(|index| dirs.remove(index))
+        };
+        if planted.is_none() {
+            return;
+        }
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(written)
+            .unwrap();
+        let mut first = [0u8; 1];
+        file.read_exact(&mut first).unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        file.write_all(&[!first[0]]).unwrap();
+    }
+}
+
 /// `staged_file` is the destination handle the ownership lease created for this
-/// operation (first attempt). Retries pass `None` and resume the existing partial.
-/// `trusted_prefix` says the partial was written by this process's earlier
-/// attempt on the same lease, so its bytes are resumed without being re-read
-/// from the source; a partial of unknown origin is still compared byte for byte.
+/// operation (first attempt). Retries pass `None` and say with `partial` what
+/// to do with the bytes the earlier attempt left.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn copy_file_attempt_versioned(
     src: &Path,
     dst: &Path,
     staged_file: Option<fs::File>,
-    trusted_prefix: bool,
+    partial: Partial,
     ctx: &CopyContext,
     completed_bytes: u64,
     buffer_size: usize,
@@ -166,7 +221,13 @@ pub(crate) fn copy_file_attempt_versioned(
                 }
                 Err(error) => return Err(Failure::io("Inspect temporary destination", dst, error)),
             };
-            if existing > 0 && !trusted_prefix {
+            // Bytes in doubt are not continued: the file is emptied below.
+            let existing = if partial == Partial::Discard {
+                0
+            } else {
+                existing
+            };
+            if existing > 0 && partial == Partial::Compare {
                 // Resume only a verified prefix. A reused operation ID or a
                 // short write cannot silently splice stale bytes into a move.
                 let mut partial = fs::File::open(dst)
@@ -203,6 +264,13 @@ pub(crate) fn copy_file_attempt_versioned(
                 .write(true)
                 .open(dst)
                 .map_err(|e| Failure::io("Open temporary destination", dst, e))?;
+            if partial == Partial::Discard {
+                // Still in doubt when this fails, so the attempt after it
+                // empties the file too.
+                file.set_len(0).map_err(|e| {
+                    Failure::io("Empty temporary destination", dst, e).restart_file()
+                })?;
+            }
             file.seek(SeekFrom::Start(existing))
                 .map_err(|e| Failure::io("Seek temporary destination", dst, e))?;
             if existing == 0 && ctx.policy.preallocates(ctx.network, file_len) {
@@ -309,31 +377,20 @@ pub(crate) fn copy_file_attempt_versioned(
         };
     let version = capture_source_version_from_open_file(&src_file, &source_after, content_hash);
     ctx.progress.check_cancelled()?;
-    if must_sync {
+    // The checksum is of what the file holds once every write has reached
+    // the drive, so Checksum flushes whatever the flush setting says: a
+    // write the system reports as failed only later is caught here instead
+    // of after the file was verified from memory.
+    if must_sync || verify_checksum {
         dst_file
             .sync_all()
-            .map_err(|e| Failure::io("Finalize temporary destination", dst, e))?;
+            .map_err(|e| Failure::io("Finalize temporary destination", dst, e).restart_file())?;
     }
-    // Timestamps, the read-only bit and the staging hidden flag in one call on
-    // the handle we already hold, instead of reopening the file afterwards.
-    let is_staging = dst
-        .file_name()
-        .and_then(|n| n.to_str())
-        .is_some_and(|n| n.ends_with(".sumafile-partial"));
-    // Every byte is already written and verified below; a target that refuses
-    // timestamp or attribute updates (some SMB and FAT volumes) gets the same
-    // treatment as directories: keep the file, log the loss.
-    if let Err(error) = simplefile_core::file_ops::apply_basic_metadata_to_handle(
-        &dst_file,
-        &source_after,
-        is_staging,
-    ) {
-        log::warn!(
-            "Could not preserve file metadata for {}: {error}",
-            dst.display()
-        );
-    }
-    drop(dst_file);
+    #[cfg(test)]
+    test_faults::after_write(dst);
+    // Verified before the attributes are applied: a copy that is read-only
+    // by then could not be opened for writing by the attempt that follows a
+    // mismatch.
     if verify_checksum {
         let mut verify_dst = open_source_sequential(dst)
             .map_err(|e| Failure::io("Open destination for checksum", dst, e))?;
@@ -350,9 +407,30 @@ pub(crate) fn copy_file_attempt_versioned(
                     dst.display()
                 ),
                 true,
-            ));
+            )
+            .restart_file());
         }
     }
+    // Timestamps, the read-only bit and the staging hidden flag in one call on
+    // the handle we already hold, instead of reopening the file afterwards.
+    let is_staging = dst
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.ends_with(".sumafile-partial"));
+    // Every byte is written and verified by now; a target that refuses
+    // timestamp or attribute updates (some SMB and FAT volumes) gets the same
+    // treatment as directories: keep the file, log the loss.
+    if let Err(error) = simplefile_core::file_ops::apply_basic_metadata_to_handle(
+        &dst_file,
+        &source_after,
+        is_staging,
+    ) {
+        log::warn!(
+            "Could not preserve file metadata for {}: {error}",
+            dst.display()
+        );
+    }
+    drop(dst_file);
     ctx.progress.check_cancelled()?;
     Ok((copied, version))
 }
@@ -441,7 +519,9 @@ fn copy_file_overlapped_with_hash(
                     }
                     let write_started = ctx.progress.write_started(read);
                     if let Err(error) = dst_file.write_all(&buf[..read]) {
-                        write_result = Err(Failure::io("Write temporary destination", dst, error));
+                        write_result =
+                            Err(Failure::io("Write temporary destination", dst, error)
+                                .restart_file());
                         break;
                     }
                     ctx.progress.write_finished(write_started, read);
@@ -871,7 +951,7 @@ fn copy_file_stream_with_hash(
         let write_started = ctx.progress.write_started(read);
         writer
             .write_all(&buffer[..read])
-            .map_err(|e| Failure::io("Write temporary destination", dst, e))?;
+            .map_err(|e| Failure::io("Write temporary destination", dst, e).restart_file())?;
         ctx.progress.write_finished(write_started, read);
         copied += read as u64;
         if copied >= next_emit_at {
@@ -891,7 +971,7 @@ fn copy_file_stream_with_hash(
     ctx.progress.check_cancelled()?;
     writer
         .flush()
-        .map_err(|e| Failure::io("Flush temporary destination", dst, e))?;
+        .map_err(|e| Failure::io("Flush temporary destination", dst, e).restart_file())?;
     Ok(copied)
 }
 
@@ -1048,6 +1128,9 @@ pub(crate) fn copy_file_with_progress_versioned(
     });
     let must_sync = ctx.policy.flush_on_close || moving;
     let mut retry = Retry::from_policy(&ctx.policy);
+    // Set by a failure that leaves the partial file's bytes in doubt, and
+    // kept until an attempt has written the file again from its first byte.
+    let mut distrusted = false;
     let copy_result = loop {
         if ctx.progress.check_cancelled().is_err() {
             break Err(Failure::cancelled());
@@ -1063,13 +1146,21 @@ pub(crate) fn copy_file_with_progress_versioned(
         }
         let staged_file = lease.as_mut().and_then(|owner| owner.take_staged_file());
         // The lease created the staging file exclusively, so any bytes already
-        // in it came from this operation's previous attempt.
-        let trusted_prefix = retry.failures > 0;
+        // in it came from this operation's previous attempt. They are
+        // continued when that attempt stopped on the source's side, and
+        // written again when it stopped on the destination's.
+        let partial = if distrusted {
+            Partial::Discard
+        } else if retry.failures > 0 {
+            Partial::Continue
+        } else {
+            Partial::Compare
+        };
         match copy_file_attempt_versioned(
             src,
             &staged_path,
             staged_file,
-            trusted_prefix,
+            partial,
             ctx,
             *completed_bytes,
             ctx.buffer_size(),
@@ -1081,6 +1172,7 @@ pub(crate) fn copy_file_with_progress_versioned(
             Err(error) => {
                 let reason = error.to_string();
                 let transport_retry = error.kind == FailureKind::Retryable;
+                distrusted |= error.restart;
                 match retry.failed_with(error) {
                     Err(error) => break Err(error),
                     Ok(delay) => {
