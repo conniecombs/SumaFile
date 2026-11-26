@@ -232,7 +232,12 @@ reuses the answer for subsequent conflicts in the same transfer.
   parent can remain empty because that pass processes only the file.
 * A same-drive move with Replace renames the existing file to a
   `.sumafile-replace-backup` name, renames the source into place and deletes
-  the backup. It writes no ownership record.
+  the backup. Before the first rename it writes the destination's own
+  ownership record to disk, which costs one flush for each replaced file.
+  After a stop between the two renames, recovery puts the existing file back
+  under its name and the source stays where it was; after a stop one step
+  later, recovery deletes the backup. When the record cannot be written, for
+  example on a full drive, the file is replaced without one.
 * A move is not all-or-nothing. After a failure or a cancel, some files are at
   the destination only and the rest are at the source only.
 
@@ -295,7 +300,7 @@ Folders are created under their final names with or without this option.
 | --- | --- | --- |
 | `.<name>.<16 hex digits>.sumafile-partial` | A file being copied | From the start of the file's copy until it is renamed; deleted when the file fails or the task is cancelled |
 | `.sumafile-transfer.<16 hex digits>.<number>.sumafile-partial.state` | The ownership record of the files a pass copies into the folder | From the pass's first file in the folder until the pass is done with the folder |
-| `.<name>.<16 hex digits>.sumafile-partial.state` | The ownership record of one file: a link, a file written directly to the destination, or an FTP/SFTP download | While that file is written |
+| `.<name>.<16 hex digits>.sumafile-partial.state` | The ownership record of one file: a link, a file written directly to the destination, a file replaced by a same-drive move, or an FTP/SFTP download | While that file is written or replaced |
 | `.<name>.<process id>.<number>.sumafile-replace-backup` | The existing file, moved aside by Replace | Between the two renames of a Replace |
 
 All three names begin with a dot, so SumaFile lists them only when hidden
@@ -401,8 +406,8 @@ running or queued (FTP/SFTP downloads included):
   removing the leading dot and the
   `.<process id>.<number>.sumafile-replace-backup` ending. If the name is
   present, the backup is the old version and can be deleted once the new file
-  has been checked. A backup left by a same-drive move has no record, so
-  recovery never restores it; it has to be renamed back by hand.
+  has been checked. Run a transfer into the folder first: recovery restores
+  or deletes every backup that still has its record.
 
 The [changelog](CHANGELOG.md) entry for 1.1.4 describes copies that failed in
 earlier versions with "The parameter is incorrect" and left their partial

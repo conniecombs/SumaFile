@@ -679,6 +679,75 @@ enum Reclaim {
     Failed(String),
 }
 
+/// The record of a same-volume Replace done by two renames: the file at the
+/// destination is moved aside to a backup name, then the source is renamed
+/// into its place.
+///
+/// It is the destination's own record, on disk before the first rename. It
+/// says where the original goes and which file takes its place, so recovery
+/// reads it like the record of any other Replace: it puts the original back
+/// while the destination's name is free, and removes the backup once the
+/// destination is the file that was moved in. It names no partial file, so
+/// recovery removes neither the source nor the destination.
+pub struct SwapRecord {
+    path: PathBuf,
+    /// Held, and so locked, for as long as the swap runs.
+    _file: File,
+}
+
+impl SwapRecord {
+    /// Records the swap before anything is renamed. `source` and
+    /// `destination` are still where they were; nothing is at `backup`.
+    pub fn begin(source: &Path, destination: &Path, backup: &Path) -> Result<Self, String> {
+        let path = record_path(destination).ok_or_else(|| {
+            format!(
+                "Transfer destination has no file name: {}",
+                destination.display()
+            )
+        })?;
+        let record = Record {
+            version: OWN_RECORD,
+            source: source.to_string_lossy().into_owned(),
+            destination: destination.into(),
+            // The destination stands for its own partial file, complete from
+            // the start: with `committed`, recovery never removes it.
+            staged: destination.into(),
+            // What the destination is once the swap is done: the source,
+            // which keeps its identity under its new name.
+            staged_id: file_identity(source)?,
+            backup: Some((backup.into(), file_identity(destination)?)),
+            committed: true,
+            moved: None,
+        };
+        let mut file = match open_locked(&path, true) {
+            Ok(file) => file,
+            Err(error) if path_exists_no_follow(&path) => {
+                reclaim_abandoned(&path, destination, error)?
+            }
+            Err(error) => return Err(error),
+        };
+        if let Err(error) = persist_own(&mut file, &path, &record) {
+            drop(file);
+            let _ = fs::remove_file(&path);
+            return Err(error);
+        }
+        Ok(Self { path, _file: file })
+    }
+
+    /// The swap is over: both renames are done and the backup is gone, or
+    /// the destination is back under its name. A swap that ends any other
+    /// way drops its record without this, and recovery finishes it.
+    pub fn finish(self) {
+        if let Err(error) = fs::remove_file(&self.path) {
+            // Recovery removes it: the state it describes needs nothing done.
+            log::warn!(
+                "Remove transfer ownership record [{}]: {error}",
+                self.path.display()
+            );
+        }
+    }
+}
+
 fn persist_own(file: &mut File, path: &Path, record: &Record) -> Result<(), String> {
     // The line and its terminator go out in one write. Recovery ignores a
     // record without a complete line, so a stop between two writes would
@@ -1179,6 +1248,148 @@ mod tests {
             assert!(!record_path(&stage).unwrap().exists());
             fs::remove_dir_all(root).unwrap();
         }
+    }
+
+    /// A same-volume Replace by rename: the destination is moved aside, then
+    /// the source is renamed into its place. The fixture stops after `renames`
+    /// of the two, as a crash would, and returns (root, source, destination,
+    /// backup).
+    fn stopped_swap(renames: u32) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
+        let root = root();
+        let elsewhere = root.join("elsewhere");
+        let folder = root.join("folder");
+        fs::create_dir_all(&elsewhere).unwrap();
+        fs::create_dir_all(&folder).unwrap();
+        let source = elsewhere.join("file");
+        let destination = folder.join("file");
+        let backup = crate::staging::unique_backup_path(&destination).unwrap();
+        fs::write(&source, b"new").unwrap();
+        fs::write(&destination, b"old").unwrap();
+        let record = SwapRecord::begin(&source, &destination, &backup).unwrap();
+        if renames >= 1 {
+            fs::rename(&destination, &backup).unwrap();
+        }
+        if renames >= 2 {
+            fs::rename(&source, &destination).unwrap();
+        }
+        // The process stops here: the record is closed and stays on disk.
+        drop(record);
+        (root, source, destination, backup)
+    }
+
+    /// Between the two renames of a swap the destination's name is free and
+    /// its file lies under a hidden backup name. No record said so, and
+    /// recovery left the destination missing for good.
+    #[test]
+    fn recovery_puts_back_the_destination_of_a_swap_that_stopped_between_its_renames() {
+        let (root, source, destination, backup) = stopped_swap(1);
+        let folder = destination.parent().unwrap();
+        assert!(!destination.exists());
+
+        recover_directory(folder).unwrap();
+
+        assert_eq!(fs::read(&destination).unwrap(), b"old");
+        assert_eq!(
+            fs::read(&source).unwrap(),
+            b"new",
+            "the source is never touched"
+        );
+        assert!(!backup.exists());
+        assert_eq!(fs::read_dir(folder).unwrap().count(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recovery_removes_the_backup_of_a_swap_that_stopped_after_both_renames() {
+        let (root, source, destination, backup) = stopped_swap(2);
+        let folder = destination.parent().unwrap();
+
+        recover_directory(folder).unwrap();
+
+        assert_eq!(fs::read(&destination).unwrap(), b"new");
+        assert!(!source.exists());
+        assert!(!backup.exists());
+        assert_eq!(fs::read_dir(folder).unwrap().count(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recovery_changes_nothing_for_a_swap_that_stopped_before_its_first_rename() {
+        let (root, source, destination, _) = stopped_swap(0);
+        let folder = destination.parent().unwrap();
+
+        recover_directory(folder).unwrap();
+
+        assert_eq!(fs::read(&destination).unwrap(), b"old");
+        assert_eq!(fs::read(&source).unwrap(), b"new");
+        assert_eq!(fs::read_dir(folder).unwrap().count(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Something else took the destination's name while its file lay under
+    /// the backup name: neither is removed, and the record stays.
+    #[test]
+    fn recovery_keeps_the_backup_of_a_swap_whose_destination_is_now_another_file() {
+        let (root, source, destination, backup) = stopped_swap(1);
+        let folder = destination.parent().unwrap();
+        fs::write(&destination, b"somebody else's").unwrap();
+
+        recover_directory(folder).unwrap();
+
+        assert_eq!(fs::read(&destination).unwrap(), b"somebody else's");
+        assert_eq!(fs::read(&backup).unwrap(), b"old");
+        assert_eq!(fs::read(&source).unwrap(), b"new");
+        assert_eq!(fs::read_dir(folder).unwrap().count(), 3);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_finished_swap_leaves_no_record() {
+        let root = root();
+        let source = root.join("source");
+        let folder = root.join("folder");
+        fs::create_dir_all(&folder).unwrap();
+        let destination = folder.join("file");
+        let backup = crate::staging::unique_backup_path(&destination).unwrap();
+        fs::write(&source, b"new").unwrap();
+        fs::write(&destination, b"old").unwrap();
+
+        let record = SwapRecord::begin(&source, &destination, &backup).unwrap();
+        assert_eq!(fs::read_dir(&folder).unwrap().count(), 2);
+        record.finish();
+
+        assert_eq!(fs::read_dir(&folder).unwrap().count(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A swap in progress holds its record, so recovery by another transfer
+    /// into the folder does not act on a state that is still changing.
+    #[test]
+    fn recovery_leaves_a_swap_that_is_still_running() {
+        let root = root();
+        let source = root.join("source");
+        let folder = root.join("folder");
+        fs::create_dir_all(&folder).unwrap();
+        let destination = folder.join("file");
+        let backup = crate::staging::unique_backup_path(&destination).unwrap();
+        fs::write(&source, b"new").unwrap();
+        fs::write(&destination, b"old").unwrap();
+        let record = SwapRecord::begin(&source, &destination, &backup).unwrap();
+        fs::rename(&destination, &backup).unwrap();
+
+        recover_directory(&folder).unwrap();
+
+        assert!(
+            !destination.exists(),
+            "the running swap was interfered with"
+        );
+        assert_eq!(fs::read(&backup).unwrap(), b"old");
+        fs::rename(&source, &destination).unwrap();
+        fs::remove_file(&backup).unwrap();
+        record.finish();
+        assert_eq!(fs::read(&destination).unwrap(), b"new");
+        assert_eq!(fs::read_dir(&folder).unwrap().count(), 1);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -86,6 +86,14 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 - A retried item that cannot be started, such as one whose source is gone,
   fails by itself. It used to end the whole retry before anything was
   transferred, without saying which item it was.
+- A move within one drive that replaces a file records the replacement
+  before it starts. The existing file is renamed aside and the moved file
+  renamed into its place; when SumaFile stopped between the two, the
+  destination was missing and its file lay under a hidden
+  `.sumafile-replace-backup` name that nothing ever restored. The next
+  transfer into the folder now puts the file back, or deletes the backup when
+  the replacement had already happened. This costs one flush to disk for each
+  replaced file.
 - Checksum mode flushes each file to disk before it reads the file back, and
   verifies it before the file gets the source's read-only attribute. A
   read-only file whose checksum did not match could not be tried again.

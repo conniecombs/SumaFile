@@ -18,6 +18,18 @@ list is in the [changelog](CHANGELOG.md).
 - **Write directly to the destination.** The option no longer applies to a file
   that replaces an existing one. Such a file is copied under a temporary name
   first, so a failed or cancelled Replace leaves the existing file as it was.
+- **Interrupted moves.** A moved file whose final rename did not survive a
+  power loss lay under its `.sumafile-partial` name with its source already
+  deleted, and the next transfer into the folder deleted it. Such a file is
+  now kept, and gets its final name when it is complete. A file replaced by a
+  move within one drive is recorded first, so a stop between its two renames
+  is undone by the next transfer into the folder.
+- **Retries.** After a failed write, a failed flush or a checksum mismatch a
+  file is copied again from its first byte instead of being continued. A
+  retried move compares the two files in full before it deletes a source
+  whose copy it finds at the destination. A retried item that cannot be
+  started fails by itself, and two conflicts with the same destination can no
+  longer both be answered with Replace.
 - **Moves that leave files behind.** Deciding which source folders stay after a
   move with many skipped or failed files took time in proportion to folders
   times files. A tree of 8,000 folders with 80,000 skipped files took 43 seconds
@@ -52,6 +64,9 @@ list is in the [changelog](CHANGELOG.md).
 
 ## Other fixes
 
+- **Pack into folder** and **Unpack folder here** remove a folder only when
+  it is empty. Undoing a pack, or unpacking a folder with a file that could
+  not be moved out, deleted the folder with everything left in it.
 - **Open with** applies its blocked-program list to the program a shortcut
   points to, and no longer deletes a file opened from an archive under a
   program that handed it to a window already open.

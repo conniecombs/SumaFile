@@ -91,9 +91,6 @@ on-demand column values have shipped. What remains:
   record's 41. Whether a file with a name near the 255-character limit can be
   copied was not tested.
 - `operations.jsonl` is appended to and never trimmed.
-- The same-volume replace swap is two renames without an ownership record. A
-  crash between them leaves the destination missing and a replace backup that
-  recovery does not restore. Fixing it needs a change to the record format.
 - Whether two paths are on the same volume is decided from the first path
   component, which is wrong for mount points and substituted drives.
 - Learned transfer settings are not saved when any file in the task failed.

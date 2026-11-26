@@ -1442,17 +1442,47 @@ pub(crate) fn move_by_rename(
 
 /// Rename the existing destination aside, rename the source into place, then
 /// remove the backup. Any failure leaves the original destination in place.
+///
+/// Between the two renames the destination's name is free and its file lies
+/// under a hidden backup name. The swap is therefore recorded first, on disk,
+/// so that recovery puts the original back after a stop at that point, and
+/// removes the backup after a stop one step later. The record is removed when
+/// the swap is over, and left for recovery when it ends with a file still to
+/// put back or a backup still to remove.
 fn swap_source_into_place(source: &Path, dst: &Path) -> Result<(), Failure> {
+    use crate::transfer_journal::SwapRecord;
     use simplefile_core::path_conflict::rename_exclusive;
 
     let backup = crate::transfer_staging::unique_backup_path(dst).map_err(Failure::from)?;
-    rename_exclusive(dst, &backup)
-        .map_err(|error| Failure::io("Prepare destination replacement", dst, error))?;
+    // A record that cannot be written does not stop the swap: the renames
+    // need no free space, and a full drive is when they are wanted most.
+    let record = match SwapRecord::begin(source, dst, &backup) {
+        Ok(record) => Some(record),
+        Err(error) => {
+            log::warn!(
+                "Replacing [{}] without a recovery record: {error}",
+                dst.display()
+            );
+            None
+        }
+    };
+    let over = |record: Option<SwapRecord>| {
+        if let Some(record) = record {
+            record.finish();
+        }
+    };
+    if let Err(error) = rename_exclusive(dst, &backup) {
+        over(record);
+        return Err(Failure::io("Prepare destination replacement", dst, error));
+    }
     // The caller saw a file under this name a moment ago. A folder that has
     // taken it since is somebody's data: it goes back under its name and is
     // reported, never deleted as the backup of a replaced file.
     if is_real_directory(&backup) {
-        return Err(match rename_exclusive(&backup, dst) {
+        let restored = rename_exclusive(&backup, dst);
+        // The record is about a file. It can do nothing for a folder.
+        over(record);
+        return Err(match restored {
             Ok(()) => Failure::conflict(format!(
                 "destination exists with a different type: {}",
                 dst.display()
@@ -1465,13 +1495,16 @@ fn swap_source_into_place(source: &Path, dst: &Path) -> Result<(), Failure> {
         });
     }
     if let Err(error) = rename_exclusive(source, dst) {
-        let restore = rename_exclusive(&backup, dst);
-        return Err(match restore {
-            Ok(()) => Failure::io(
-                "Finalize destination (original destination was restored)",
-                dst,
-                error,
-            ),
+        return Err(match rename_exclusive(&backup, dst) {
+            Ok(()) => {
+                over(record);
+                Failure::io(
+                    "Finalize destination (original destination was restored)",
+                    dst,
+                    error,
+                )
+            }
+            // The record stays: recovery puts the original back.
             Err(restore) => Failure::from(format!(
                 "Finalize destination [{}]: {error}; original remains [{}], restore failed: {restore}",
                 dst.display(),
@@ -1480,12 +1513,17 @@ fn swap_source_into_place(source: &Path, dst: &Path) -> Result<(), Failure> {
         });
     }
     // Promotion already committed: never replay it just because backup cleanup failed.
-    crate::transfer_staging::remove_file_or_link(&backup, "destination backup").map_err(|error| {
-        Failure::from(format!(
+    match crate::transfer_staging::remove_file_or_link(&backup, "destination backup") {
+        Ok(()) => {
+            over(record);
+            Ok(())
+        }
+        // The record stays: recovery removes the backup.
+        Err(error) => Err(Failure::from(format!(
             "Transferred, but backup remains [{}]: {error}",
             backup.display()
-        ))
-    })
+        ))),
+    }
 }
 
 /// The file is at `dst` and its source name is gone: the move is complete.

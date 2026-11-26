@@ -2868,6 +2868,40 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// A move within one drive replaces a file by two renames, recorded so
+    /// that a stop between them can be recovered. A swap that ran to its end
+    /// leaves the file and nothing else: no backup and no record.
+    #[test]
+    fn a_replacing_move_within_one_drive_leaves_only_the_file() {
+        let root = unique_temp_path("swap_leaves_nothing");
+        let source = root.join("source");
+        let destination = root.join("destination");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(source.join("x.txt"), b"new").unwrap();
+        fs::write(destination.join("x.txt"), b"old").unwrap();
+
+        transfer_with_progress_blocking(
+            "move",
+            vec![source.join("x.txt").to_string_lossy().to_string()],
+            destination.to_string_lossy().to_string(),
+            "op_swap_leaves_nothing".to_string(),
+            "replace".to_string(),
+            Arc::new(AtomicBool::new(false)),
+            &|_| {},
+        )
+        .expect("the move replaces the file");
+
+        assert_eq!(fs::read(destination.join("x.txt")).unwrap(), b"new");
+        assert!(!source.join("x.txt").exists());
+        let names: Vec<_> = fs::read_dir(&destination)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("x.txt")]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     /// A failed folder is retried together with failed files: the folder is
     /// walked again and only what is missing at the destination is copied.
     #[test]
