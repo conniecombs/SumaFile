@@ -103,6 +103,12 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ### File lists
 
+- **Pack into folder** and **Unpack folder here** no longer delete a folder
+  that still holds something. Undoing a pack deleted the new folder for
+  good, with every file put into it since the pack. Unpacking deleted the
+  folder with any file that could not be moved out of it. The folder is now
+  removed only when it is empty, and stays with what it holds otherwise;
+  Redo then uses the folder that stayed.
 - Rubber-band selection works in the Details view. Press on the blank space
   below the rows and drag over the files to select; with Ctrl held, the
   files the rectangle touches are added to the selection or taken out of

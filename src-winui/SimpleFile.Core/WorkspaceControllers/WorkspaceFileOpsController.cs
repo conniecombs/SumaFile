@@ -188,6 +188,7 @@ internal sealed class WorkspaceFileOpsController
         cancellationToken.ThrowIfCancellationRequested();
 
         var currentFolder = created;
+        var folderRemoved = false;
         var currentSources = sources.ToArray();
         var currentMoved = moved.ToArray();
         workspace.Undo.Push(new UndoEntry
@@ -219,11 +220,17 @@ internal sealed class WorkspaceFileOpsController
                     }
                 }
 
-                await ops.DeleteAsync(currentFolder, ct).ConfigureAwait(false);
+                // The folder may hold items that were put into it after the pack: those stay, with the folder.
+                folderRemoved = await RemoveFolderIfEmptyAsync(workspace, ops, currentFolder, ct).ConfigureAwait(false);
             },
             Redo = async ct =>
             {
-                currentFolder = await ops.CreateFolderAsync(parentDir, folderName, ct).ConfigureAwait(false);
+                if (folderRemoved)
+                {
+                    currentFolder = await ops.CreateFolderAsync(parentDir, folderName, ct).ConfigureAwait(false);
+                    folderRemoved = false;
+                }
+
                 currentMoved = await ops.MoveAsync(currentSources, currentFolder, "keep-both", ct: ct).ConfigureAwait(false);
             },
         });
@@ -259,7 +266,9 @@ internal sealed class WorkspaceFileOpsController
             cancellationToken.ThrowIfCancellationRequested();
         }
 
-        await ops.DeleteAsync(folderPath, cancellationToken).ConfigureAwait(false);
+        // Only the listed items that moved are out of the folder. One that could not be moved, or that was put
+        // into the folder meanwhile, stays in it, and the folder stays with it.
+        var folderRemoved = await RemoveFolderIfEmptyAsync(workspace, ops, folderPath, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
 
         var currentFolder = folderPath;
@@ -269,7 +278,12 @@ internal sealed class WorkspaceFileOpsController
             Description = "Flatten folder",
             Undo = async ct =>
             {
-                currentFolder = await ops.CreateFolderAsync(parent, folderName, ct).ConfigureAwait(false);
+                if (folderRemoved)
+                {
+                    currentFolder = await ops.CreateFolderAsync(parent, folderName, ct).ConfigureAwait(false);
+                    folderRemoved = false;
+                }
+
                 for (var i = currentMoved.Length - 1; i >= 0; i--)
                 {
                     var item = currentMoved[i];
@@ -293,11 +307,38 @@ internal sealed class WorkspaceFileOpsController
                 currentMoved = nextChildren.Length > 0
                     ? await ops.MoveAsync(nextChildren, parent, "keep-both", ct: ct).ConfigureAwait(false)
                     : [];
-                await ops.DeleteAsync(currentFolder, ct).ConfigureAwait(false);
+                folderRemoved = await RemoveFolderIfEmptyAsync(workspace, ops, currentFolder, ct).ConfigureAwait(false);
             },
         });
 
         await workspace.RefreshAffectedPanesAsync([folderPath, parent, .. children], cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Removes <paramref name="folder"/> when nothing is in it, and says whether it is gone. Pack and Flatten
+    /// use this instead of a delete, which would take everything in the folder with it, for good.
+    /// </summary>
+    private static async Task<bool> RemoveFolderIfEmptyAsync(
+        ExplorerWorkspace workspace,
+        FileOperationService ops,
+        string folder,
+        CancellationToken cancellationToken)
+    {
+        if (!ArchivePaths.IsInsideArchivePath(folder))
+        {
+            return EmptyFolder.Remove(folder);
+        }
+
+        // A folder inside an archive is not on disk. Only this app changes the archive, so listing it first
+        // is enough.
+        var listing = await workspace.Backend.ListDirectoryAsync(folder, cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (listing.Entries.Count != 0)
+        {
+            return false;
+        }
+
+        await ops.DeleteAsync(folder, cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
 }

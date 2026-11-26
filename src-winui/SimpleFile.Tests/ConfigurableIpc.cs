@@ -25,6 +25,7 @@ internal sealed class ConfigurableIpc : NullIpc
     public Func<CancellationToken, Task>? EmptyRecycleBinHandler { get; set; }
     public Func<string, string, string, CancellationToken, Task<string>>? CopyEntryResolvedHandler { get; set; }
     public Func<string, string, string, CancellationToken, Task<string>>? MoveEntryResolvedHandler { get; set; }
+    public Func<string, CancellationToken, Task>? DeleteEntryHandler { get; set; }
     public Func<string[], string, string?, string, CancellationToken, Task<TransferResult[]>>? CopyWithProgressHandler { get; set; }
     public Func<string[], string, string?, string, CancellationToken, Task<TransferResult[]>>? MoveWithProgressHandler { get; set; }
     public Func<string[], CancellationToken, Task<Dictionary<string, string?>>>? GetDbSettingsHandler { get; set; }
@@ -189,6 +190,9 @@ internal sealed class ConfigurableIpc : NullIpc
         string conflictAction,
         CancellationToken ct = default)
         => MoveEntryResolvedHandler?.Invoke(source, destination, conflictAction, ct) ?? throw NotConfigured();
+
+    public override Task DeleteEntryAsync(string path, CancellationToken ct = default)
+        => DeleteEntryHandler?.Invoke(path, ct) ?? throw NotConfigured();
 
     public override Task<TransferResult[]> CopyWithProgressAsync(
         string[] sources,
