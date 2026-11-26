@@ -405,6 +405,20 @@ fn plan_item(
     // recognised file by file, so only the missing part is transferred.
     let is_dir = file_type.is_dir() && !file_type.is_symlink();
     let conflict = ConflictAction::parse(&item.action);
+    // Before any name in the folder is looked at: recovery removes what an
+    // interrupted transfer left there and puts back what it had moved aside,
+    // and both change which names are taken.
+    if let Some(parent) = final_dest.parent() {
+        if !scanned_dirs.contains(parent) {
+            if !parent.is_dir() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| format!("Failed to create {}: {error}", parent.display()))?;
+            }
+            crate::transfer_journal::recover_directory(parent)?;
+            // Only once it worked: the next item for this folder tries again.
+            scanned_dirs.insert(parent.to_path_buf());
+        }
+    }
     if conflict == ConflictAction::CreateOnly && path_exists_no_follow(&final_dest) {
         return Err(Failure::conflict(
             crate::transfer_staging::conflict_for_existing_destination(&final_dest),
@@ -448,17 +462,6 @@ fn plan_item(
     }
     if is_dir {
         plan::ensure_dir_not_inside_itself(&source_path, &final_dest)?;
-    }
-    if let Some(parent) = final_dest.parent() {
-        if !scanned_dirs.contains(parent) {
-            if !parent.is_dir() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|error| format!("Failed to create {}: {error}", parent.display()))?;
-            }
-            crate::transfer_journal::recover_directory(parent)?;
-            // Only once it worked: the next item for this folder tries again.
-            scanned_dirs.insert(parent.to_path_buf());
-        }
     }
     let is_symlink = file_type.is_symlink();
     Ok(ItemPlan::Transfer(TransferPlan {
@@ -1657,8 +1660,13 @@ mod tests {
 
         // Whether the cancel landed before the last byte or not, the name
         // never held anything but one complete file.
+        // The cancel can also land after the file has its name: the pass then
+        // ends as cancelled with the file among what it committed.
         match result {
             Ok(_) => assert_eq!(fs::metadata(&destination).unwrap().len(), 24 * 1024 * 1024),
+            Err(error) if !error.outcome.committed.is_empty() => {
+                assert_eq!(fs::metadata(&destination).unwrap().len(), 24 * 1024 * 1024)
+            }
             Err(_) => assert_eq!(fs::read(&destination).unwrap(), b"existing"),
         }
 
@@ -2002,7 +2010,7 @@ mod tests {
         assert_eq!(copied, 6);
         assert_eq!(fs::read(&destination).unwrap(), b"abcdef");
 
-        // Longer than one buffer and shorter than the source.
+        // Shorter than the source.
         fs::write(&destination, b"zz").unwrap();
         copy_file_attempt(&source, &destination, Partial::Discard, &ctx, 0, 2, 6).unwrap();
         assert_eq!(fs::read(&destination).unwrap(), b"abcdef");

@@ -277,6 +277,7 @@ impl Retry {
         };
         if !error.kind.is_retryable() || self.failures >= limit {
             let kind = error.kind;
+            let restart = error.restart;
             let message = if self.failures == 1
                 || matches!(kind, FailureKind::Conflict | FailureKind::Cancelled)
             {
@@ -287,7 +288,9 @@ impl Retry {
                     first, self.failures, error
                 )
             };
-            return Err(Failure::with_kind(message, kind));
+            let mut failure = Failure::with_kind(message, kind);
+            failure.restart = restart;
+            return Err(failure);
         }
         let shift = (self.failures - 1).min(4);
         let factor = 1u32 << shift;

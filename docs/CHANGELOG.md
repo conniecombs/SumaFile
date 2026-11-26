@@ -53,6 +53,13 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
   when it is complete and the name is free, and is kept otherwise. A move now
   also writes each file to disk before deleting its source, whatever "Flush
   to disk before finishing each file" says.
+- A file that a move wrote directly under its final name is covered by the
+  same rule as a moved partial file: with its source gone, recovery never
+  deletes it. And a different file that has taken the source's name since
+  does not make the moved file a leftover again.
+- A file written directly whose record can be neither removed nor marked
+  complete is removed at once and reported as failed. It used to stay until
+  some later transfer into the folder deleted it.
 - "Write directly to the destination" no longer applies to a file that
   replaces an existing one. Written directly, the existing file was emptied
   before the first byte was copied, so a failed or cancelled Replace left

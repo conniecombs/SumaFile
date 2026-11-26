@@ -142,6 +142,29 @@ impl StagingLease {
         staged: &Path,
         overwrite: bool,
     ) -> Result<Self, String> {
+        Self::begin_recorded(source, destination, staged, overwrite, None)
+    }
+
+    /// [`Self::begin`] for a file that is never written over, of a transfer
+    /// that may be a move. `moved` is the source's length when the source is
+    /// deleted once the file is complete; recovery then never deletes the
+    /// file while its source is gone.
+    pub fn begin_for_move(
+        source: &str,
+        destination: &Path,
+        staged: &Path,
+        moved: Option<u64>,
+    ) -> Result<Self, String> {
+        Self::begin_recorded(source, destination, staged, false, moved)
+    }
+
+    fn begin_recorded(
+        source: &str,
+        destination: &Path,
+        staged: &Path,
+        overwrite: bool,
+        moved: Option<u64>,
+    ) -> Result<Self, String> {
         let path = record_path(staged).ok_or_else(|| {
             format!(
                 "Transfer destination has no file name: {}",
@@ -169,7 +192,7 @@ impl StagingLease {
                 ));
             }
         };
-        Self::with_record(source, destination, staged, path, file, Some(stage))
+        Self::with_record(source, destination, staged, path, file, Some(stage), moved)
     }
 
     pub fn record_created(source: &str, destination: &Path, staged: &Path) -> Result<Self, String> {
@@ -180,7 +203,7 @@ impl StagingLease {
             )
         })?;
         let file = open_locked(&path, true)?;
-        Self::with_record(source, destination, staged, path, file, None)
+        Self::with_record(source, destination, staged, path, file, None, None)
     }
 
     fn with_record(
@@ -190,6 +213,7 @@ impl StagingLease {
         path: PathBuf,
         file: File,
         staged_file: Option<File>,
+        moved: Option<u64>,
     ) -> Result<Self, String> {
         let staged_id = match &staged_file {
             Some(handle) => identity_from_handle(handle, staged)?,
@@ -204,7 +228,7 @@ impl StagingLease {
                 staged_id,
                 backup: None,
                 committed: false,
-                moved: None,
+                moved,
             },
             staged_file,
             home: Home::Own { path, file },
@@ -304,7 +328,22 @@ impl StagingLease {
             // unsettled and the file must not be reported as copied, because
             // recovery will delete it. This is the one failure of `finish`.
             self.record.committed = true;
-            self.persist().map_err(|mark| format!("{error}; {mark}"))?;
+            if let Err(mark) = self.persist() {
+                // Left in place, the file would be deleted by recovery at
+                // some later transfer into the folder, perhaps after it had
+                // been opened or changed. It is removed now, while it is
+                // still nobody's but this transfer's.
+                self.record.committed = false;
+                let removed = if self.owns_staged() {
+                    cleanup_owned_file(&self.record.staged)
+                } else {
+                    Ok(())
+                };
+                return Err(match removed {
+                    Ok(()) => format!("{error}; {mark}"),
+                    Err(removed) => format!("{error}; {mark}; {removed}"),
+                });
+            }
         }
         // The file is complete and recovery will leave it alone: a record that
         // names a partial file that is gone, or one marked complete, is
@@ -818,10 +857,14 @@ fn matches(path: &Path, id: &FileIdentity) -> bool {
 /// its partial name while its source is gone: it is the only copy, and an
 /// "abandoned partial" only by its name.
 fn is_only_copy(record: &Record) -> bool {
-    record.moved.is_some()
-        && !record.committed
-        && path_exists_no_follow(&record.staged)
-        && !path_exists_no_follow(Path::new(&record.source))
+    let Some(length) = record.moved else {
+        return false;
+    };
+    // The source as the move knew it is a file of the recorded length.
+    // Anything else under its name by now (a new file, a folder) is not it.
+    let source_is_there = fs::symlink_metadata(Path::new(&record.source))
+        .is_ok_and(|meta| meta.is_file() && meta.len() == length);
+    !record.committed && path_exists_no_follow(&record.staged) && !source_is_there
 }
 
 /// Gives the only copy of a moved file its final name when it is complete and
@@ -839,6 +882,10 @@ fn keep_only_copy(record: &Record) -> Result<(), String> {
     let complete = fs::symlink_metadata(&record.staged)
         .is_ok_and(|meta| meta.is_file() && Some(meta.len()) == record.moved)
         && !crate::staging::is_hidden(&record.staged);
+    if complete && record.staged == record.destination {
+        // Written under its final name and complete: nothing is left to do.
+        return Ok(());
+    }
     if !complete || path_exists_no_follow(&record.destination) {
         return Err(format!(
             "The source of a moved file is gone; its copy is kept at {}",
@@ -1501,6 +1548,132 @@ mod tests {
         );
         recover_directory(&root).unwrap();
         assert_eq!(fs::read(&destination).unwrap(), b"downloaded");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A move with "write directly" on deletes its source once the file is
+    /// complete. The file's own record did not say it was a move, so when the
+    /// record's removal had not reached the disk, recovery took the complete
+    /// file, by then the only copy, for an abandoned one and deleted it.
+    #[test]
+    fn recovery_keeps_a_file_a_move_wrote_directly_when_its_source_is_gone() {
+        let root = root();
+        let destination = root.join("inplace");
+        let source = root.join("gone");
+        let lease = StagingLease::begin_for_move(
+            &source.to_string_lossy(),
+            &destination,
+            &destination,
+            Some(10),
+        )
+        .unwrap();
+        fs::write(&destination, b"downloaded").unwrap();
+        // The process stops: the record stays, without a completion mark.
+        drop(lease);
+
+        recover_directory(&root).unwrap();
+
+        assert_eq!(fs::read(&destination).unwrap(), b"downloaded");
+        assert!(!record_path(&destination).unwrap().exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recovery_keeps_an_unfinished_file_a_move_wrote_directly_when_its_source_is_gone() {
+        let root = root();
+        let destination = root.join("inplace");
+        let source = root.join("gone");
+        let lease = StagingLease::begin_for_move(
+            &source.to_string_lossy(),
+            &destination,
+            &destination,
+            Some(10),
+        )
+        .unwrap();
+        fs::write(&destination, b"down").unwrap();
+        drop(lease);
+
+        recover_directory(&root).unwrap();
+
+        assert_eq!(fs::read(&destination).unwrap(), b"down");
+        assert!(record_path(&destination).unwrap().exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recovery_removes_a_file_a_move_wrote_directly_when_its_source_is_still_there() {
+        let root = root();
+        let destination = root.join("inplace");
+        let source = root.join("source");
+        fs::write(&source, b"downloaded").unwrap();
+        let lease = StagingLease::begin_for_move(
+            &source.to_string_lossy(),
+            &destination,
+            &destination,
+            Some(10),
+        )
+        .unwrap();
+        fs::write(&destination, b"down").unwrap();
+        drop(lease);
+
+        recover_directory(&root).unwrap();
+
+        assert!(!destination.exists());
+        assert_eq!(fs::read(&source).unwrap(), b"downloaded");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The source of a move is gone and something else has its name by now:
+    /// a file of another length is not the source, and the partial file is
+    /// still the only copy.
+    #[test]
+    fn recovery_keeps_a_moved_file_when_another_file_has_taken_its_source_name() {
+        let root = root();
+        let source = root.join("elsewhere");
+        let folder = root.join("folder");
+        fs::create_dir(&folder).unwrap();
+        let records = FolderRecords::new("pass");
+        let (lease, stage, destination) = begin_moved(&records, &folder, &source, 5, b"whole");
+        drop(lease);
+        drop(records);
+        fs::write(&source, b"a different file").unwrap();
+
+        recover_directory(&folder).unwrap();
+
+        assert!(!stage.exists());
+        assert_eq!(fs::read(&destination).unwrap(), b"whole");
+        assert_eq!(fs::read(&source).unwrap(), b"a different file");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A file written under its final name whose record can be neither
+    /// removed nor marked complete is reported as failed. It used to stay,
+    /// for recovery to delete at some later transfer into the folder, by
+    /// which time it might have been opened or changed. It is removed at once.
+    #[test]
+    fn a_write_directly_file_whose_record_cannot_be_settled_is_removed_at_once() {
+        let root = root();
+        let destination = root.join("inplace");
+        let lease = StagingLease::begin("source", &destination, &destination, false).unwrap();
+        fs::write(&destination, b"downloaded").unwrap();
+        let record = record_path(&destination).unwrap();
+        // The record cannot be removed: a folder with something in it has
+        // its name. It cannot be marked either: it is full.
+        let moved_away = root.join("record-moved-away");
+        fs::rename(&record, &moved_away).unwrap();
+        fs::create_dir(&record).unwrap();
+        fs::write(record.join("occupant"), b"x").unwrap();
+        let padding = OpenOptions::new().append(true).open(&moved_away).unwrap();
+        padding.set_len(RECORD_LIMIT).unwrap();
+        drop(padding);
+
+        let error = lease.finish().unwrap_err();
+
+        assert!(error.contains("full"), "{error}");
+        assert!(
+            !destination.exists(),
+            "the file was left for recovery to delete later"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

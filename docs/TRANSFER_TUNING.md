@@ -368,12 +368,16 @@ When recovery finds such a file and the source no longer exists, it never
 deletes it. If the file has its full length and is no longer hidden (a partial
 file stays hidden until its last byte is written), and its final name is
 free, recovery gives it that name and removes the file a Replace had moved
-aside. Otherwise it keeps the file and the record.
+aside. Otherwise it keeps the file and the record. The same holds for a file
+that a move wrote directly under its final name: complete, it is left as it
+is. "The source no longer exists" means that no file of the recorded length
+has the source's name; another file that has taken the name since is not the
+source.
 
 When a recorded file has been replaced by a different file, recovery keeps
 that file and the record, deals with the other files the record names, and
 goes on to the next record; what it kept stays until someone removes it. The
-file service writes nothing to a log when this happens.
+file service writes a warning to `service.log` when this happens.
 
 A partial file that no record names is never deleted automatically: its name
 alone does not prove which transfer owns it. That includes a partial file left

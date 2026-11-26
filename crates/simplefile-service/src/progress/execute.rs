@@ -1112,11 +1112,11 @@ pub(crate) fn copy_file_with_progress_versioned(
     // record. One written straight to its final name keeps a record of its
     // own, which carries the mark that says the file was completed.
     let mut lease = Some(if use_inplace {
-        crate::transfer_journal::StagingLease::begin(
+        crate::transfer_journal::StagingLease::begin_for_move(
             &src.to_string_lossy(),
             dst,
             &staged_path,
-            false,
+            moving.then_some(file_len),
         )?
     } else {
         ctx.records.begin(
@@ -1129,7 +1129,10 @@ pub(crate) fn copy_file_with_progress_versioned(
     let must_sync = ctx.policy.flush_on_close || moving;
     let mut retry = Retry::from_policy(&ctx.policy);
     // Set by a failure that leaves the partial file's bytes in doubt, and
-    // kept until an attempt has written the file again from its first byte.
+    // kept for the rest of this file's attempts: each of them writes the
+    // file again from its first byte. An attempt can fail before it has
+    // emptied the partial file, so a later failure on the source's side
+    // does not make the bytes trusted again.
     let mut distrusted = false;
     let copy_result = loop {
         if ctx.progress.check_cancelled().is_err() {
