@@ -3,6 +3,7 @@
 mod binary;
 pub mod dispatch;
 pub mod listing_views;
+pub mod logging;
 pub mod plugin_archive;
 pub mod progress;
 mod scheduler;

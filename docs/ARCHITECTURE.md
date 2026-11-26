@@ -443,8 +443,9 @@ The same folder holds `window.json`: where the main window was when it was last 
 reads it before the window is shown, which is before the file service and its settings are
 there, and writes it when the window closes.
 
-All of the logs except `operations.jsonl` rotate to `<name>.1` at 1 MB. The service installs no
-backend for the `log` crate, so only `eprintln!` output reaches `service.log`.
+All of the logs rotate to `<name>.1`: `operations.jsonl` at 4 MiB, the others at 1 MB. The service
+sends the warnings and errors of the `log` crate to its error stream (`logging.rs`), so they reach
+`service.log` beside its `eprintln!` output.
 
 Environment overrides not named above: `SIMPLEFILE_SERVICE_PATH` (the service executable),
 `SIMPLEFILE_UPDATE_MANIFEST_JSON` and `SIMPLEFILE_UPDATE_MANIFEST_PATH` (the updater's manifest),

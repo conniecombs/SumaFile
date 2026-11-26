@@ -119,6 +119,24 @@ impl Failure {
         failure
     }
 
+    /// The failure to report once the clean-up that followed it has run.
+    ///
+    /// A clean-up that failed is part of the report: the partial file is
+    /// still there. A conflict or a cancellation keeps its message, which
+    /// the app reads; there the clean-up's failure is logged.
+    pub fn after_cleanup(self, cleanup: Result<(), String>) -> Self {
+        let Err(cleanup) = cleanup else {
+            return self;
+        };
+        if matches!(self.kind, FailureKind::Conflict | FailureKind::Cancelled) {
+            log::warn!("Clean-up after \"{}\" failed: {cleanup}", self.message);
+            return self;
+        }
+        let mut failure = Self::with_kind(format!("{}; {cleanup}", self.message), self.kind);
+        failure.restart = self.restart;
+        failure
+    }
+
     /// Kept for call sites that only distinguish "try again" from "give up".
     pub fn retryable(&self) -> bool {
         self.kind.is_retryable()
@@ -393,6 +411,42 @@ mod tests {
         assert!(marked.clone().context("Copy", "a.bin").restart);
         let wrapped = io::Error::other(marked);
         assert!(Failure::io("Write", "a.bin", wrapped).restart);
+    }
+
+    /// The clean-up after a failed final rename was discarded: the report
+    /// did not say that the partial file was still there.
+    #[test]
+    fn a_failed_clean_up_is_part_of_the_report() {
+        let failure = Failure::new("Finalize destination [a.bin]: access denied", false);
+        assert_eq!(
+            failure.clone().after_cleanup(Ok(())).message,
+            "Finalize destination [a.bin]: access denied"
+        );
+        let reported = failure.after_cleanup(Err("partial file is in use".into()));
+        assert_eq!(
+            reported.message,
+            "Finalize destination [a.bin]: access denied; partial file is in use"
+        );
+        assert_eq!(reported.kind, FailureKind::Permanent);
+
+        let marked = Failure::new("write failed", true)
+            .restart_file()
+            .after_cleanup(Err("left behind".into()));
+        assert!(marked.restart);
+        assert_eq!(marked.kind, FailureKind::Retryable);
+    }
+
+    /// The app reads the message of a conflict and of a cancellation, so
+    /// nothing is added to it.
+    #[test]
+    fn a_failed_clean_up_leaves_a_conflict_and_a_cancellation_as_they_are() {
+        let conflict = Failure::conflict("destination already exists: x")
+            .after_cleanup(Err("partial file is in use".into()));
+        assert_eq!(conflict.message, "CONFLICT: destination already exists: x");
+        assert!(conflict.is_conflict());
+        let cancelled = Failure::cancelled().after_cleanup(Err("partial file is in use".into()));
+        assert_eq!(cancelled.message, CANCELLED_MESSAGE);
+        assert!(cancelled.is_cancelled());
     }
 
     #[test]

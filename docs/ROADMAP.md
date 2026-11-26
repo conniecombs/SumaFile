@@ -80,8 +80,6 @@ on-demand column values have shipped. What remains:
   then. Keep them counted.
 - Why the partial files of the copies that failed before 1.1.4 were not
   removed by the clean-up that follows a failed file was not established.
-  When the rename that gives a file its final name fails, the error of the
-  clean-up that follows is discarded; report it.
 - A destination that refuses the attribute update keeps the Hidden attribute
   on a file that is published all the same.
 - A request the service refuses while planning, such as copying a folder into
@@ -90,13 +88,9 @@ on-demand column values have shipped. What remains:
 - A partial file's name is 35 characters longer than the file's own, and its
   record's 41. Whether a file with a name near the 255-character limit can be
   copied was not tested.
-- `operations.jsonl` is appended to and never trimmed.
 - Whether two paths are on the same volume is decided from the first path
   component, which is wrong for mount points and substituted drives.
 - Learned transfer settings are not saved when any file in the task failed.
-- The file service installs no logger, so warnings such as retried transfer
-  attempts and unrecoverable ownership records are never written to
-  `service.log`. Only text printed directly to the error stream reaches it.
 - A pass keeps one ownership record per destination folder, so a folder that
   receives a single file still costs a record of its own. One record per
   worker at the transfer's destination root would cost a fixed number per

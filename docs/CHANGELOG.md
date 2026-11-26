@@ -107,6 +107,17 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
   leaves part of a line; the lines before and after it are now acted on.
 - A record that names nothing is deleted once it is a day old. A transfer
   that stopped right after creating its record left an empty file for good.
+- The file service writes its warnings to `service.log`: each retried try
+  with its reason, a record that recovery kept, a file whose times could not
+  be set. They were produced and then dropped, because no logger was
+  installed.
+- `operations.jsonl` records, for the pass that ends, its duration, bytes
+  and files, and every item that failed with its reason (the first 200). It
+  used to carry the first failure's message only. The file is begun again at
+  4 MiB, with the full one kept as `operations.jsonl.1`; it used to grow
+  without limit.
+- When a file cannot be given its final name and its partial file cannot be
+  removed either, the failure says both. The clean-up's error was discarded.
 - Checksum mode flushes each file to disk before it reads the file back, and
   verifies it before the file gets the source's read-only attribute. A
   read-only file whose checksum did not match could not be tried again.

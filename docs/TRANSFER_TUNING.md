@@ -535,8 +535,22 @@ the two files must be identical, read in full, whatever the check mode is.
 ### Where failures are recorded
 
 `%LOCALAPPDATA%\SumaFile\operations.jsonl` gets one line when a pass starts
-and one when it completes, is cancelled or fails. The line of a failed pass
-carries the message of its first failure.
+and one when it completes, is cancelled or fails. The line that ends a pass
+has its duration (`duration_ms`), the bytes and files done and in all as the
+last progress report had them (`bytes`, `total_bytes`, `files`,
+`total_files`), and the number of selected items transferred and skipped
+(`items`, `skipped`). The line of a failed pass also has the message of the
+first failure (`error`), the number of items that failed (`failure_count`)
+and the first 200 of them with source, destination, kind and message
+(`failures`). When the file reaches 4 MiB it is renamed to
+`operations.jsonl.1`, replacing the one kept before, and a new one is begun.
+
+`%LOCALAPPDATA%\SumaFile\service.log` gets the warnings and errors of the
+file service, each with its time: every retried try with its reason, a
+record that recovery kept and why, a file whose times or attributes could
+not be set, and a clean-up that failed. It is kept to 1 MiB in the same way.
+When the rename that gives a file its final name fails and the partial file
+cannot be removed either, the file's failure says both.
 
 ## Check modes
 

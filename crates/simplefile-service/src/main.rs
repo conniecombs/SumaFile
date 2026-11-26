@@ -11,6 +11,7 @@ async fn main() {
 
 async fn run() -> Result<(), String> {
     let startup = Instant::now();
+    simplefile_service::logging::install();
     let args = Args::parse(std::env::args().skip(1))?;
     let pipe = pipe_path(&args.pipe_name);
     eprintln!(

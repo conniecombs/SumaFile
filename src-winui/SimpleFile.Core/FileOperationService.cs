@@ -244,6 +244,27 @@ public sealed class FileOperationService : ISettingsBackend
         var operationId = GenerateOperationId();
         _journal?.Started(operationType, operationId, sources, destination);
         operationStarted?.Invoke(operationId);
+        // For the journal line that ends the pass: how long it took and how far the readout got.
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        ProgressUpdate? lastProgress = null;
+        using var journalProgress = _journal is null ? null : ipc.On<ProgressUpdate>(Protocol.OperationProgressEvent, update =>
+        {
+            if (update.OperationId == operationId) lastProgress = update;
+        });
+        OperationSummary Summary(
+            IReadOnlyCollection<TransferResult>? committed,
+            IReadOnlyCollection<TransferResult>? skipped = null,
+            IReadOnlyList<TransferFailure>? failures = null) => new()
+        {
+            Duration = started.Elapsed,
+            Bytes = lastProgress?.Current,
+            TotalBytes = lastProgress?.Total,
+            Files = lastProgress?.CurrentFiles,
+            TotalFiles = lastProgress?.TotalFiles,
+            Items = committed?.Count,
+            Skipped = skipped is { Count: > 0 } ? skipped.Count : null,
+            Failures = failures,
+        };
         IDisposable? subscription = null;
         var changeChunks = new Dictionary<(int Index, string Field), List<string>>();
         using var changesSubscription = ipc.On<TransferChangeChunk>(Protocol.TransferChangesEvent, chunk =>
@@ -315,7 +336,7 @@ public sealed class FileOperationService : ISettingsBackend
                     ct);
             }
 
-            _journal?.Completed(operationType, operationId);
+            _journal?.Completed(operationType, operationId, Summary(results));
             return results;
         }
         catch (OperationCanceledException exception)
@@ -325,7 +346,7 @@ public sealed class FileOperationService : ISettingsBackend
                 await RequestBackendCancellationAsync().ConfigureAwait(false);
             }
 
-            _journal?.Cancelled(operationType, operationId);
+            _journal?.Cancelled(operationType, operationId, Summary(committed: null));
             if (exception is TransferCanceledException)
             {
                 throw;
@@ -338,15 +359,16 @@ public sealed class FileOperationService : ISettingsBackend
             CompleteReceipts(outcome.Committed);
             if (string.Equals(outcome.Status, "cancelled", StringComparison.Ordinal))
             {
-                _journal?.Cancelled(operationType, operationId);
+                _journal?.Cancelled(operationType, operationId, Summary(outcome.Committed, outcome.Skipped));
                 throw new TransferCanceledException(operationId, outcome.Committed, outcome.Pending, ct);
             }
-            _journal?.Failed(operationType, operationId, exception);
+            _journal?.Failed(operationType, operationId, exception,
+                Summary(outcome.Committed, outcome.Skipped, outcome.Failed));
             throw new TransferOperationException(exception.Message, outcome, exception);
         }
         catch (Exception exception)
         {
-            _journal?.Failed(operationType, operationId, exception);
+            _journal?.Failed(operationType, operationId, exception, Summary(committed: null));
             throw;
         }
         finally

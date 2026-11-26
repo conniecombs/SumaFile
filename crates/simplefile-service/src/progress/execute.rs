@@ -1202,10 +1202,8 @@ pub(crate) fn copy_file_with_progress_versioned(
                 dst.to_string_lossy().to_string(),
             );
             if ctx.progress.check_cancelled().is_err() {
-                if let Some(owner) = lease.take() {
-                    let _ = owner.abort();
-                }
-                return Err(Failure::cancelled());
+                let cleanup = lease.take().map_or(Ok(()), |owner| owner.abort());
+                return Err(Failure::cancelled().after_cleanup(cleanup));
             }
             if !use_inplace {
                 if let Err(error) = promote_leased_with_policy(
@@ -1221,9 +1219,9 @@ pub(crate) fn copy_file_with_progress_versioned(
                         }
                     },
                 ) {
-                    if let Some(owner) = lease.take() {
-                        let _ = owner.abort();
-                    }
+                    // The clean-up's own failure used to be dropped here, so
+                    // the report did not say a partial file was left behind.
+                    let cleanup = lease.take().map_or(Ok(()), |owner| owner.abort());
                     let failure = error;
                     return Err(if failure.is_conflict() || failure.is_cancelled() {
                         failure
@@ -1232,7 +1230,8 @@ pub(crate) fn copy_file_with_progress_versioned(
                             format!("Finalize destination [{}]: {}", dst.display(), failure),
                             failure.kind,
                         )
-                    });
+                    }
+                    .after_cleanup(cleanup));
                 }
             }
             if let Some(owner) = lease.take() {
