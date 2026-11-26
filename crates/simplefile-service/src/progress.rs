@@ -324,90 +324,153 @@ impl Request {
     }
 }
 
+/// What a targeted retry planned, and the items it could not plan.
+#[derive(Default)]
+struct ItemPlans {
+    plans: Vec<TransferPlan>,
+    /// Items that fail alone: `(source, destination, failure)`.
+    failed: Vec<(PathBuf, PathBuf, Failure)>,
+    skipped: Vec<plan::PlanSkip>,
+}
+
+/// One item of a targeted retry, planned.
+enum ItemPlan {
+    Transfer(TransferPlan),
+    Skip(plan::PlanSkip),
+}
+
 /// Plans for a targeted retry: each item is an exact source → destination pair.
+///
+/// An item that cannot be planned fails alone, with its source and its
+/// destination, and the others are transferred. Only a destination root that
+/// cannot be used fails the whole retry.
 fn plans_for_items(
     items: &[TransferItem],
     destination: &str,
     volumes: &mut VolumeKindCache,
-) -> Result<Vec<TransferPlan>, String> {
+) -> Result<ItemPlans, String> {
     let dest_root = simplefile_core::utils::validate_existing_path_no_resolve(destination)?;
     if !dest_root.is_dir() {
         return Err(format!("Destination is not a directory: {destination}"));
     }
     crate::transfer_journal::recover_directory(&dest_root)?;
     let dest_network = volumes.is_network(&dest_root);
-    let mut plans = Vec::with_capacity(items.len());
+    let mut planned = ItemPlans::default();
     let mut scanned_dirs = HashSet::new();
     let mut reserved = HashSet::new();
     for item in items {
-        let source_path = simplefile_core::utils::validate_path_no_follow(&item.source)?;
-        let mut final_dest = PathBuf::from(item.destination.trim());
-        if final_dest.file_name().is_none() || !final_dest.is_absolute() {
-            return Err(format!(
-                "Retry destination must be an absolute file path: {}",
-                item.destination
-            ));
-        }
-        let meta = std::fs::symlink_metadata(&source_path)
-            .map_err(|error| format!("Failed to stat {}: {error}", source_path.display()))?;
-        let file_type = meta.file_type();
-        // A failed folder is walked again; what it already copied is
-        // recognised file by file, so only the missing part is transferred.
-        let is_dir = file_type.is_dir() && !file_type.is_symlink();
-        let conflict = ConflictAction::parse(&item.action);
-        if conflict == ConflictAction::CreateOnly
-            && simplefile_core::path_conflict::path_exists_no_follow(&final_dest)
-        {
-            return Err(crate::transfer_staging::conflict_for_existing_destination(
-                &final_dest,
-            ));
-        }
-        if matches!(conflict, ConflictAction::Error | ConflictAction::Replace)
-            && simplefile_core::path_conflict::paths_refer_to_same_entry(&source_path, &final_dest)
-        {
-            return Err("Cannot copy or move an item onto itself".into());
-        }
-        if is_dir {
-            if conflict == ConflictAction::KeepBoth
-                && (simplefile_core::path_conflict::path_exists_no_follow(&final_dest)
-                    || reserved.contains(&simplefile_core::path_conflict::path_collision_key(
-                        &final_dest,
-                    )))
-            {
-                final_dest = unique_destination_path(
-                    final_dest.parent().unwrap(),
-                    final_dest.file_name().unwrap(),
-                    &reserved,
-                )?;
+        match plan_item(item, dest_network, volumes, &mut scanned_dirs, &reserved) {
+            Ok(ItemPlan::Transfer(plan)) => {
+                reserved.insert(simplefile_core::path_conflict::path_collision_key(
+                    &plan.final_dest,
+                ));
+                planned.plans.push(plan);
             }
-            plan::ensure_dir_not_inside_itself(&source_path, &final_dest)?;
+            Ok(ItemPlan::Skip(skip)) => planned.skipped.push(skip),
+            Err(failure) => planned.failed.push((
+                PathBuf::from(item.source.trim()),
+                PathBuf::from(item.destination.trim()),
+                failure,
+            )),
         }
-        if let Some(parent) = final_dest.parent() {
-            if scanned_dirs.insert(parent.to_path_buf()) {
-                if !parent.is_dir() {
-                    std::fs::create_dir_all(parent).map_err(|error| {
-                        format!("Failed to create {}: {error}", parent.display())
-                    })?;
-                }
-                crate::transfer_journal::recover_directory(parent)?;
-            }
-        }
-        reserved.insert(simplefile_core::path_conflict::path_collision_key(
-            &final_dest,
-        ));
-        let is_symlink = file_type.is_symlink();
-        plans.push(TransferPlan {
-            network: dest_network || volumes.is_network(&source_path),
-            source_path,
-            final_dest,
-            conflict,
-            file_count: u64::from(!is_dir),
-            is_dir,
-            is_symlink,
-            byte_size: if file_type.is_file() { meta.len() } else { 0 },
-        });
     }
-    Ok(plans)
+    Ok(planned)
+}
+
+/// Plans one item of a targeted retry. `reserved` holds the destinations of
+/// the items planned before it in the same retry.
+fn plan_item(
+    item: &TransferItem,
+    dest_network: bool,
+    volumes: &mut VolumeKindCache,
+    scanned_dirs: &mut HashSet<PathBuf>,
+    reserved: &HashSet<String>,
+) -> Result<ItemPlan, Failure> {
+    use simplefile_core::path_conflict::{
+        path_collision_key, path_exists_no_follow, paths_refer_to_same_entry,
+    };
+
+    let source_path = simplefile_core::utils::validate_path_no_follow(&item.source)?;
+    let mut final_dest = PathBuf::from(item.destination.trim());
+    if final_dest.file_name().is_none() || !final_dest.is_absolute() {
+        return Err(Failure::from(format!(
+            "Retry destination must be an absolute file path: {}",
+            item.destination
+        )));
+    }
+    let meta = std::fs::symlink_metadata(&source_path)
+        .map_err(|error| format!("Failed to stat {}: {error}", source_path.display()))?;
+    let file_type = meta.file_type();
+    // A failed folder is walked again; what it already copied is
+    // recognised file by file, so only the missing part is transferred.
+    let is_dir = file_type.is_dir() && !file_type.is_symlink();
+    let conflict = ConflictAction::parse(&item.action);
+    if conflict == ConflictAction::CreateOnly && path_exists_no_follow(&final_dest) {
+        return Err(Failure::conflict(
+            crate::transfer_staging::conflict_for_existing_destination(&final_dest),
+        ));
+    }
+    if matches!(conflict, ConflictAction::Error | ConflictAction::Replace)
+        && paths_refer_to_same_entry(&source_path, &final_dest)
+    {
+        return Err(Failure::from("Cannot copy or move an item onto itself"));
+    }
+    // Another item of this retry already has this destination. Transferred
+    // all the same, the later item would replace what the earlier one had
+    // just put there; in a move, that file would be gone from both places.
+    let taken = reserved.contains(&path_collision_key(&final_dest));
+    if taken {
+        match conflict {
+            ConflictAction::KeepBoth => {}
+            ConflictAction::Skip => {
+                return Ok(ItemPlan::Skip(plan::PlanSkip {
+                    source: source_path,
+                    destination: final_dest,
+                    byte_size: if file_type.is_file() { meta.len() } else { 0 },
+                    file_count: u64::from(!is_dir),
+                }));
+            }
+            _ => {
+                return Err(Failure::conflict(format!(
+                    "multiple sources would replace the same destination: {}",
+                    final_dest.display()
+                )));
+            }
+        }
+    }
+    // "Keep both" gets its name here, where the names the earlier items
+    // took are known. Left to the copy, two items could pick the same one.
+    if conflict == ConflictAction::KeepBoth && (taken || path_exists_no_follow(&final_dest)) {
+        let (Some(parent), Some(name)) = (final_dest.parent(), final_dest.file_name()) else {
+            return Err(Failure::from("Cannot get destination directory"));
+        };
+        final_dest = unique_destination_path(parent, name, reserved)?;
+    }
+    if is_dir {
+        plan::ensure_dir_not_inside_itself(&source_path, &final_dest)?;
+    }
+    if let Some(parent) = final_dest.parent() {
+        if !scanned_dirs.contains(parent) {
+            if !parent.is_dir() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| format!("Failed to create {}: {error}", parent.display()))?;
+            }
+            crate::transfer_journal::recover_directory(parent)?;
+            // Only once it worked: the next item for this folder tries again.
+            scanned_dirs.insert(parent.to_path_buf());
+        }
+    }
+    let is_symlink = file_type.is_symlink();
+    Ok(ItemPlan::Transfer(TransferPlan {
+        network: dest_network || volumes.is_network(&source_path),
+        source_path,
+        final_dest,
+        conflict,
+        file_count: u64::from(!is_dir),
+        is_dir,
+        is_symlink,
+        byte_size: if file_type.is_file() { meta.len() } else { 0 },
+    }))
 }
 
 enum RenameOutcome {
@@ -522,7 +585,23 @@ fn transfer_with_policy_blocking(
             }
             plans
         }),
-        Request::Items(items) => plans_for_items(items, &destination, &mut volumes),
+        Request::Items(items) => {
+            plans_for_items(items, &destination, &mut volumes).map(|planned| {
+                for (source, final_dest, failure) in &planned.failed {
+                    failed.push(TransferFailure::new(source, final_dest, failure));
+                }
+                for skip in planned.skipped {
+                    planned_skipped_bytes = planned_skipped_bytes.saturating_add(skip.byte_size);
+                    planned_skipped_files = planned_skipped_files.saturating_add(skip.file_count);
+                    skipped.push(TransferResult {
+                        source: skip.source.to_string_lossy().into(),
+                        destination: skip.destination.to_string_lossy().into(),
+                        changes: None,
+                    });
+                }
+                planned.plans
+            })
+        }
     };
     let mut plans = match planned {
         Ok(plans) => plans,
@@ -2612,6 +2691,181 @@ mod tests {
             destination: destination.to_string_lossy().into(),
             action: "error".into(),
         }
+    }
+
+    fn retry_item_with(
+        source: &std::path::Path,
+        destination: &std::path::Path,
+        action: &str,
+    ) -> super::TransferItem {
+        super::TransferItem {
+            action: action.into(),
+            ..retry_item(source, destination)
+        }
+    }
+
+    /// One retried item whose source is gone used to fail the whole retry
+    /// before anything was transferred, with no failure reported per item.
+    #[test]
+    fn retry_fails_an_item_whose_source_is_gone_and_transfers_the_others() {
+        let root = unique_temp_path("retry_vanished_source");
+        let source = root.join("source");
+        let destination = root.join("destination");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(source.join("present.txt"), b"present").unwrap();
+
+        let error = retry_items(
+            "copy",
+            vec![
+                retry_item(&source.join("gone.txt"), &destination.join("gone.txt")),
+                retry_item(
+                    &source.join("present.txt"),
+                    &destination.join("present.txt"),
+                ),
+            ],
+            &destination,
+        )
+        .expect_err("the item whose source is gone is a failure");
+
+        assert_eq!(
+            fs::read(destination.join("present.txt")).unwrap(),
+            b"present"
+        );
+        assert_eq!(error.outcome.committed.len(), 1, "{:?}", error.outcome);
+        assert_eq!(error.outcome.failed.len(), 1, "{:?}", error.outcome);
+        let failure = &error.outcome.failed[0];
+        assert!(failure.source.ends_with("gone.txt"), "{failure:?}");
+        assert!(failure.destination.ends_with("gone.txt"), "{failure:?}");
+        assert_eq!(failure.kind, "error", "{failure:?}");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Two items answered with Replace for one destination: the second
+    /// replaced what the first had just put there. In a move the first file
+    /// was then gone from both places.
+    #[test]
+    fn retry_refuses_a_second_item_for_a_destination_another_item_has() {
+        let root = unique_temp_path("retry_same_destination");
+        let destination = root.join("destination");
+        fs::create_dir_all(root.join("a")).unwrap();
+        fs::create_dir_all(root.join("b")).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(root.join("a").join("x.txt"), b"from a").unwrap();
+        fs::write(root.join("b").join("x.txt"), b"from b").unwrap();
+        fs::write(destination.join("x.txt"), b"old").unwrap();
+
+        let error = retry_items(
+            "move",
+            vec![
+                retry_item_with(
+                    &root.join("a").join("x.txt"),
+                    &destination.join("x.txt"),
+                    "replace",
+                ),
+                retry_item_with(
+                    &root.join("b").join("x.txt"),
+                    &destination.join("x.txt"),
+                    "replace",
+                ),
+            ],
+            &destination,
+        )
+        .expect_err("the second item for the same destination is refused");
+
+        assert_eq!(fs::read(destination.join("x.txt")).unwrap(), b"from a");
+        assert!(!root.join("a").join("x.txt").exists());
+        assert_eq!(
+            fs::read(root.join("b").join("x.txt")).unwrap(),
+            b"from b",
+            "the refused item's source must stay"
+        );
+        assert_eq!(error.outcome.failed.len(), 1, "{:?}", error.outcome);
+        let failure = &error.outcome.failed[0];
+        assert!(failure.is_conflict(), "{failure:?}");
+        assert!(
+            failure
+                .error
+                .contains("multiple sources would replace the same destination"),
+            "{failure:?}"
+        );
+        assert!(
+            failure.source.ends_with("x.txt") && failure.source.contains("b"),
+            "{failure:?}"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// "Keep both" for two items with one destination gives each its own name.
+    #[test]
+    fn retry_gives_a_second_keep_both_item_a_name_of_its_own() {
+        let root = unique_temp_path("retry_keep_both_twice");
+        let destination = root.join("destination");
+        fs::create_dir_all(root.join("a")).unwrap();
+        fs::create_dir_all(root.join("b")).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(root.join("a").join("x.txt"), b"from a").unwrap();
+        fs::write(root.join("b").join("x.txt"), b"from b").unwrap();
+
+        let results = retry_items(
+            "copy",
+            vec![
+                retry_item_with(
+                    &root.join("a").join("x.txt"),
+                    &destination.join("x.txt"),
+                    "keep-both",
+                ),
+                retry_item_with(
+                    &root.join("b").join("x.txt"),
+                    &destination.join("x.txt"),
+                    "keep-both",
+                ),
+            ],
+            &destination,
+        )
+        .expect("both items are copied");
+
+        assert_eq!(results.len(), 2, "{results:?}");
+        assert_ne!(results[0].destination, results[1].destination);
+        let mut contents: Vec<Vec<u8>> = results
+            .iter()
+            .map(|result| fs::read(&result.destination).unwrap())
+            .collect();
+        contents.sort();
+        assert_eq!(contents, vec![b"from a".to_vec(), b"from b".to_vec()]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A second item with Skip for a destination another item has is left
+    /// where it is and reported as skipped.
+    #[test]
+    fn retry_skips_a_second_skip_item_for_a_destination_another_item_has() {
+        let root = unique_temp_path("retry_skip_twice");
+        let destination = root.join("destination");
+        fs::create_dir_all(root.join("a")).unwrap();
+        fs::create_dir_all(root.join("b")).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(root.join("a").join("x.txt"), b"from a").unwrap();
+        fs::write(root.join("b").join("x.txt"), b"from b").unwrap();
+
+        let results = retry_items(
+            "move",
+            vec![
+                retry_item(&root.join("a").join("x.txt"), &destination.join("x.txt")),
+                retry_item_with(
+                    &root.join("b").join("x.txt"),
+                    &destination.join("x.txt"),
+                    "skip",
+                ),
+            ],
+            &destination,
+        )
+        .expect("a skipped item is not a failure");
+
+        assert_eq!(results.len(), 1, "{results:?}");
+        assert_eq!(fs::read(destination.join("x.txt")).unwrap(), b"from a");
+        assert_eq!(fs::read(root.join("b").join("x.txt")).unwrap(), b"from b");
+        fs::remove_dir_all(root).unwrap();
     }
 
     /// A failed folder is retried together with failed files: the folder is

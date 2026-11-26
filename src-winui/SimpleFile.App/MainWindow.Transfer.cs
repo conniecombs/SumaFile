@@ -827,6 +827,9 @@ public sealed partial class MainWindow
     {
         var items = new List<TransferItemRequest>();
         var errors = new List<TransferFailure>();
+        // Two conflicts can have one destination: two files of one name from different folders. Replace is
+        // offered for the first only, or the second would replace what the first had just put there.
+        var replaced = new TransferReplaceTargets();
         foreach (var failure in failures)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -842,7 +845,8 @@ public sealed partial class MainWindow
 
             var allowReplace = !failure.Error.Contains("different type", StringComparison.OrdinalIgnoreCase)
                 && !failure.Error.Contains("multiple sources would replace", StringComparison.OrdinalIgnoreCase)
-                && !PathRules.PathsEqual(failure.Source, failure.Destination);
+                && !PathRules.PathsEqual(failure.Source, failure.Destination)
+                && !replaced.Contains(failure.Destination);
             string? chosen;
             // A per-name answer given up front wins over a later "do this for all" choice.
             if (TryGetPreDecidedAction(preDecided, destination, failure, out var decided) && (allowReplace || decided != "replace"))
@@ -877,6 +881,10 @@ public sealed partial class MainWindow
             if (string.Equals(chosen, "skip", StringComparison.OrdinalIgnoreCase))
             {
                 continue;
+            }
+            if (string.Equals(chosen, "replace", StringComparison.OrdinalIgnoreCase))
+            {
+                replaced.Add(failure.Destination);
             }
             items.Add(new TransferItemRequest
             {

@@ -497,6 +497,18 @@ Conflicts are asked one file at a time, as described under
 [When the destination exists](#when-the-destination-exists), and the answered
 files go through the same new pass.
 
+Each item of the new pass stands alone. One that cannot be started, for
+example because its source is gone by now, fails by itself and the others are
+transferred.
+
+Two items of one pass can have the same destination: two files of one name
+taken from different folders. Only the first of them can be answered with
+Replace. A second Replace would replace what the first had just put there,
+and in a move that file would be gone from both places; the service refuses
+it as a conflict ("multiple sources would replace the same destination"),
+which can be answered with Keep both or Skip. Two such items answered with
+Keep both each get a name of their own.
+
 ### How a retried item recognizes what is already there
 
 A retried item is a file or a whole folder. A folder is walked again from its

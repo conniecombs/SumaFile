@@ -77,6 +77,15 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
   matched by the chosen check mode, and with "Size only" or "Size and
   modification time" a different file can match. A retried move now compares
   the two files in full before it deletes the source.
+- Two conflicts with one destination can no longer both be answered with
+  Replace. Two files of one name from different folders, both answered with
+  Replace, were transferred one over the other, and in a move the first was
+  then gone from both places. Replace is offered for the first only, and the
+  service refuses a second item for a destination another item of the same
+  pass already has.
+- A retried item that cannot be started, such as one whose source is gone,
+  fails by itself. It used to end the whole retry before anything was
+  transferred, without saying which item it was.
 - Checksum mode flushes each file to disk before it reads the file back, and
   verifies it before the file gets the source's read-only attribute. A
   read-only file whose checksum did not match could not be tried again.
