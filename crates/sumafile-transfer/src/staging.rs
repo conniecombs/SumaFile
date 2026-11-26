@@ -70,6 +70,43 @@ pub fn file_identity(path: &Path) -> Result<FileIdentity, String> {
     }
 }
 
+/// Whether the file at `path` is the one an ownership record names as
+/// `recorded`.
+///
+/// A record written by 1.1.5 or earlier holds the identity as it was read
+/// then: the 32-bit volume serial number and the 64-bit file index. The file
+/// is read that way as well, so that what an interrupted transfer of such a
+/// version left is still recognised after an upgrade.
+pub fn is_recorded_file(path: &Path, recorded: &FileIdentity) -> bool {
+    #[cfg(windows)]
+    {
+        let Ok(file) = open_for_identity(path) else {
+            return false;
+        };
+        file_id_from_handle(&file).is_some_and(|current| current == *recorded)
+            || legacy_file_id_from_handle(&file).is_some_and(|legacy| legacy == *recorded)
+    }
+    #[cfg(not(windows))]
+    {
+        file_identity(path).is_ok_and(|current| current == *recorded)
+    }
+}
+
+/// The identity of an open file as 1.1.5 and earlier recorded it.
+#[cfg(windows)]
+fn legacy_file_id_from_handle(file: &fs::File) -> Option<FileIdentity> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut info) };
+    let index = ((info.nFileIndexHigh as u64) << 32) | (info.nFileIndexLow as u64);
+    (ok != 0 && index != 0 && index != INVALID_LEGACY_FILE_ID_64)
+        .then(|| FileIdentity(u64::from(info.dwVolumeSerialNumber), u128::from(index)))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceVersion {
     pub is_symlink: bool,
@@ -1618,6 +1655,25 @@ mod tests {
             false
         )
         .unwrap());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_recorded_file_is_recognised_and_another_file_is_not() {
+        let root = unique_temp_dir("recorded_file");
+        let recorded = root.join("recorded");
+        let other = root.join("other");
+        fs::write(&recorded, b"x").unwrap();
+        fs::write(&other, b"x").unwrap();
+        let identity = super::file_identity(&recorded).unwrap();
+
+        assert!(super::is_recorded_file(&recorded, &identity));
+        assert!(!super::is_recorded_file(&other, &identity));
+        assert!(!super::is_recorded_file(&root.join("missing"), &identity));
+        // A rename keeps the identity: the file is still the recorded one.
+        let renamed = root.join("renamed");
+        fs::rename(&recorded, &renamed).unwrap();
+        assert!(super::is_recorded_file(&renamed, &identity));
         fs::remove_dir_all(root).unwrap();
     }
 

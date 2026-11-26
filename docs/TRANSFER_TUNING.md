@@ -331,16 +331,19 @@ only opened.
 Recovery reads every `.sumafile-partial.state` record in the folder. It acts
 only on the files a record names, and only when the file it finds is the very
 file that was recorded (same volume and file ID), so a different file under
-the same name is never touched. It never deletes or changes a source. A
+the same name is never touched. Records written by 1.1.5 and earlier are
+recognised as well. It never deletes or changes a source. A
 folder's record names a file on each line, and steps 2 and 3 are done for each
 of them; a file that has its final name by now needs nothing. For each record
 it does the following.
 
 1. It leaves the record and its files alone when the record is locked by a
-   running transfer, is larger than 4 MiB, has no complete line, cannot be
-   read, or names files outside this folder. A folder's record is also left
-   alone when any of its lines is not a line of such a record, or names
-   anything but a partial file.
+   running transfer, is larger than 4 MiB, cannot be read, or names files
+   outside this folder. A folder's record is also left alone when any of its
+   lines is a line of another kind of record, or names anything but a partial
+   file. A line that cannot be read at all, which a failed write leaves, is
+   skipped, and the other lines are acted on. A record without one complete
+   line names nothing; it is deleted once it is a day old.
 2. If the record names a backup and the backup is still the recorded file: it
    renames the backup back to the original name when that name is free, which
    restores the original; it deletes the backup when that name holds the

@@ -98,6 +98,15 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
   of the task carries on. It used to end the file's copy thread; the task
   then stopped with "Copy workers stopped unexpectedly", or never ended and
   could not be cancelled.
+- What an interrupted transfer of 1.1.5 or earlier left is cleaned up after
+  an upgrade. Those versions recorded a file's identity in a shorter form
+  that this version never matched, so their partial files stayed and an
+  interrupted Replace was not undone.
+- One line that cannot be read no longer keeps recovery away from every file
+  a folder's record names. A write that fails, on a full drive for example,
+  leaves part of a line; the lines before and after it are now acted on.
+- A record that names nothing is deleted once it is a day old. A transfer
+  that stopped right after creating its record left an empty file for good.
 - Checksum mode flushes each file to disk before it reads the file back, and
   verifies it before the file gets the source's read-only attribute. A
   read-only file whose checksum did not match could not be tried again.

@@ -16,8 +16,9 @@ use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime};
 
 const RECORD_LIMIT: u64 = 4 * 1024 * 1024;
 
@@ -553,6 +554,8 @@ struct FolderRecord {
     written: AtomicU64,
     /// Files recorded here whose clean-up is still owed.
     unsettled: AtomicUsize,
+    /// The last write failed and may have left a fragment of a line.
+    torn: AtomicBool,
 }
 
 impl FolderRecord {
@@ -576,6 +579,7 @@ impl FolderRecord {
                         file: Mutex::new(file),
                         written: AtomicU64::new(0),
                         unsettled: AtomicUsize::new(0),
+                        torn: AtomicBool::new(false),
                     }))
                 }
                 Err(_) if path_exists_no_follow(&path) => continue,
@@ -596,12 +600,19 @@ impl FolderRecord {
     /// Adds `record` as one line, in one write. `durable` writes it to disk
     /// before returning.
     fn append(&self, record: &Record, durable: bool) -> Result<(), String> {
-        let mut line = serde_json::to_vec(record).map_err(|e| e.to_string())?;
-        line.push(b'\n');
         let mut file = self
             .file
             .lock()
             .map_err(|_| "Transfer ownership record is unusable".to_string())?;
+        let mut line = Vec::new();
+        if self.torn.load(Ordering::Relaxed) {
+            // The write before this one failed and may have left part of a
+            // line. This line starts on one of its own; recovery skips the
+            // fragment and reads this one.
+            line.push(b'\n');
+        }
+        serde_json::to_writer(&mut line, record).map_err(|e| e.to_string())?;
+        line.push(b'\n');
         let written = self.written.load(Ordering::Relaxed);
         if written.saturating_add(line.len() as u64) > RECORD_LIMIT {
             return Err(
@@ -609,8 +620,14 @@ impl FolderRecord {
             );
         }
         // Nothing else writes to this file, so it is always at its end.
-        file.write_all(&line)
-            .map_err(|e| format!("Write transfer ownership [{}]: {e}", self.path.display()))?;
+        if let Err(error) = file.write_all(&line) {
+            self.torn.store(true, Ordering::Relaxed);
+            return Err(format!(
+                "Write transfer ownership [{}]: {error}",
+                self.path.display()
+            ));
+        }
+        self.torn.store(false, Ordering::Relaxed);
         self.written
             .store(written + line.len() as u64, Ordering::Relaxed);
         if durable {
@@ -753,9 +770,22 @@ fn persist_own(file: &mut File, path: &Path, record: &Record) -> Result<(), Stri
     // record without a complete line, so a stop between two writes would
     // leave a record, and the partial file it names, that nothing ever
     // cleans up. It is also one request fewer for every file copied.
-    let mut line = serde_json::to_vec(record).map_err(|e| e.to_string())?;
-    line.push(b'\n');
+    let mut line = Vec::new();
     let end = file.seek(SeekFrom::End(0)).map_err(|e| e.to_string())?;
+    if end > 0 {
+        // An earlier write that failed may have left part of a line. Glued
+        // to it, this line could not be read, and it is the record's state.
+        let mut last = [0u8; 1];
+        file.seek(SeekFrom::Start(end - 1))
+            .and_then(|_| file.read_exact(&mut last))
+            .map_err(|e| e.to_string())?;
+        if last[0] != b'\n' {
+            line.push(b'\n');
+        }
+        file.seek(SeekFrom::End(0)).map_err(|e| e.to_string())?;
+    }
+    serde_json::to_writer(&mut line, record).map_err(|e| e.to_string())?;
+    line.push(b'\n');
     if end.saturating_add(line.len() as u64) > RECORD_LIMIT {
         return Err("Transfer ownership record is full; artifacts retained for recovery".into());
     }
@@ -780,7 +810,7 @@ fn identity_from_handle(handle: &File, staged: &Path) -> Result<FileIdentity, St
 }
 
 fn matches(path: &Path, id: &FileIdentity) -> bool {
-    file_identity(path).is_ok_and(|actual| actual == *id)
+    crate::staging::is_recorded_file(path, id)
 }
 
 /// A move deletes its source once the file has its final name. If that rename
@@ -1007,29 +1037,40 @@ pub fn recover_directory(directory: &Path) -> Result<(), String> {
         // Append-only records preserve the last synced state if a subsequent
         // update is torn. Ignore an incomplete trailing line.
         let Some(end) = bytes.iter().rposition(|byte| *byte == b'\n') else {
+            // Not one complete line: the record names nothing. A pass that
+            // stopped right after creating its record leaves such a file.
+            // It is removed once it is old; a new one may belong to a pass
+            // that is creating it at this moment and has yet to lock it.
+            if names_nothing_for_long(&file) {
+                let _ = fs::remove_file(&path);
+            }
             continue;
         };
         let lines: Vec<&[u8]> = bytes[..end].split(|byte| *byte == b'\n').collect();
-        let Some(last) = lines
+        let last = lines
             .last()
-            .and_then(|line| serde_json::from_slice::<Record>(line).ok())
-        else {
-            continue;
-        };
-        let owned = match last.version {
+            .and_then(|line| serde_json::from_slice::<Record>(line).ok());
+        let owned = match last {
             // A file's own record: its last line is its state.
-            OWN_RECORD
-                if record_path(&last.staged).is_some_and(|own| same_path(&own, &path))
+            Some(last)
+                if last.version == OWN_RECORD
+                    && record_path(&last.staged).is_some_and(|own| same_path(&own, &path))
                     && within(&last, directory) =>
             {
                 vec![last]
             }
-            // A folder record: every line is a file.
-            FOLDER_RECORD => match folder_record_lines(&path, &lines, directory) {
+            // A folder record: every line is a file. When its last line
+            // cannot be read, the others still stand. A file's own record is
+            // its last line, so with that line unreadable nothing is known.
+            Some(Record {
+                version: FOLDER_RECORD,
+                ..
+            })
+            | None => match folder_record_lines(&path, &lines, directory) {
                 Some(records) => records,
                 None => continue,
             },
-            _ => continue,
+            Some(_) => continue,
         };
         // A record that cannot be recovered safely (its artifact changed
         // identity) is retained for inspection and logged. It must not fail
@@ -1054,6 +1095,19 @@ pub fn recover_directory(directory: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// A record without a complete line is removed when it is at least this old.
+const EMPTY_RECORD_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// Whether an open record that names nothing has done so for a long time.
+fn names_nothing_for_long(record: &File) -> bool {
+    record
+        .metadata()
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+        .is_some_and(|age| age >= EMPTY_RECORD_AGE)
+}
+
 /// Whether everything `record` names lies directly in `directory`, and its
 /// backup, if any, has a backup's name.
 fn within(record: &Record, directory: &Path) -> bool {
@@ -1069,9 +1123,12 @@ fn within(record: &Record, directory: &Path) -> bool {
 }
 
 /// The files a folder record names, each as its last line has it. `None` when
-/// the file is not a folder record of this folder: a wrong name, a line that
-/// is not a folder record's, or a line that names anything but a partial file
-/// in this folder.
+/// the file is not a folder record of this folder: a wrong name, no line that
+/// can be read, a line that is not a folder record's, or a line that names
+/// anything but a partial file in this folder.
+///
+/// A line that cannot be read at all is what a failed write leaves, and is
+/// skipped: it names nothing, and the lines around it are as true as before.
 fn folder_record_lines(path: &Path, lines: &[&[u8]], directory: &Path) -> Option<Vec<Record>> {
     let named = path.file_name().is_some_and(|name| {
         let name = name.to_string_lossy();
@@ -1082,8 +1139,12 @@ fn folder_record_lines(path: &Path, lines: &[&[u8]], directory: &Path) -> Option
     }
     let mut records = Vec::<Record>::new();
     let mut position = HashMap::<String, usize>::new();
+    let mut read = false;
     for line in lines {
-        let record = serde_json::from_slice::<Record>(line).ok()?;
+        let Ok(record) = serde_json::from_slice::<Record>(line) else {
+            continue;
+        };
+        read = true;
         let partial = record
             .staged
             .file_name()
@@ -1105,7 +1166,7 @@ fn folder_record_lines(path: &Path, lines: &[&[u8]], directory: &Path) -> Option
             }
         }
     }
-    Some(records)
+    read.then_some(records)
 }
 
 #[cfg(test)]
@@ -1940,6 +2001,133 @@ mod tests {
             assert!(kept.exists(), "staged path {staged:?}");
             fs::remove_dir_all(root).unwrap();
         }
+    }
+
+    /// A write that fails part-way leaves a fragment of a line. Every line
+    /// after it used to be glued to the fragment, and one line that could not
+    /// be read kept recovery away from every file the record names.
+    #[test]
+    fn recovery_acts_on_the_readable_lines_of_a_folder_record() {
+        for damage in [&b"{\"version\":2,\"sou\n"[..], &b"not a line at all\n"[..]] {
+            let root = root();
+            let records = FolderRecords::new("pass");
+            let (first, first_stage, _) = begin_in(&records, &root, "first", b"half");
+            // What a failed write leaves, between two good lines. It goes
+            // through the record's own handle, which writes where it stands.
+            let Home::Folder { record: home, .. } = &first.home else {
+                panic!("a line of the folder record");
+            };
+            home.file.lock().unwrap().write_all(damage).unwrap();
+            let (second, second_stage, _) = begin_in(&records, &root, "second", b"half");
+            let text = fs::read(record_files(&root).unwrap().remove(0)).unwrap();
+            assert_eq!(text.split(|byte| *byte == b'\n').count(), 4, "three lines");
+            drop(first);
+            drop(second);
+            drop(records);
+            assert_eq!(record_count(&root), 1);
+
+            recover_directory(&root).unwrap();
+
+            assert!(
+                !first_stage.exists(),
+                "the line before the damage was not read"
+            );
+            assert!(
+                !second_stage.exists(),
+                "the line after the damage was not read"
+            );
+            assert_eq!(record_count(&root), 0);
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    /// The same when the damaged line is the last one.
+    #[test]
+    fn recovery_acts_on_a_folder_record_whose_last_line_is_damaged() {
+        let root = root();
+        let records = FolderRecords::new("pass");
+        let (lease, stage, _) = begin_in(&records, &root, "file", b"half");
+        let record = record_files(&root).unwrap().remove(0);
+        drop(lease);
+        drop(records);
+        let mut file = OpenOptions::new().append(true).open(&record).unwrap();
+        file.write_all(b"{\"version\":2,\"sou\n").unwrap();
+        drop(file);
+
+        recover_directory(&root).unwrap();
+
+        assert!(!stage.exists());
+        assert_eq!(record_count(&root), 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// After a write that failed, the next line starts on a line of its own.
+    #[test]
+    fn a_line_written_after_a_failed_write_is_not_glued_to_the_fragment() {
+        let root = root();
+        let records = FolderRecords::new("pass");
+        let (first, _, _) = begin_in(&records, &root, "first", b"half");
+        let record = record_files(&root).unwrap().remove(0);
+        // A write that stopped part-way: a fragment with no line end.
+        let Home::Folder { record: home, .. } = &first.home else {
+            panic!("a line of the folder record");
+        };
+        home.file
+            .lock()
+            .unwrap()
+            .write_all(b"{\"version\":2,\"sou")
+            .unwrap();
+        home.torn.store(true, Ordering::Relaxed);
+
+        let (second, _, _) = begin_in(&records, &root, "second", b"half");
+
+        let text = fs::read_to_string(&record).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 3, "{text}");
+        assert!(serde_json::from_str::<Record>(lines[0]).is_ok());
+        assert!(serde_json::from_str::<Record>(lines[1]).is_err());
+        assert!(serde_json::from_str::<Record>(lines[2]).is_ok());
+        drop(first);
+        drop(second);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A pass that stopped right after creating its folder record left an
+    /// empty record that nothing ever removed.
+    #[test]
+    fn recovery_removes_an_old_record_that_names_nothing() {
+        let root = root();
+        let old = SystemTime::now() - Duration::from_secs(2 * 24 * 60 * 60);
+        let empty = root.join(".sumafile-transfer.0123456789abcdef.0.sumafile-partial.state");
+        let torn = root.join(".sumafile-transfer.0123456789abcdef.1.sumafile-partial.state");
+        let own = root.join(".file.0123456789abcdef.sumafile-partial.state");
+        fs::write(&empty, b"").unwrap();
+        fs::write(&torn, b"{\"version\":2,\"sou").unwrap();
+        fs::write(&own, b"").unwrap();
+        for path in [&empty, &torn, &own] {
+            let file = OpenOptions::new().write(true).open(path).unwrap();
+            file.set_times(fs::FileTimes::new().set_modified(old))
+                .unwrap();
+        }
+
+        recover_directory(&root).unwrap();
+
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A record that names nothing yet may be one a pass is creating at this
+    /// moment: only an old one is removed.
+    #[test]
+    fn recovery_keeps_a_new_record_that_names_nothing() {
+        let root = root();
+        let empty = root.join(".sumafile-transfer.0123456789abcdef.0.sumafile-partial.state");
+        fs::write(&empty, b"").unwrap();
+
+        recover_directory(&root).unwrap();
+
+        assert!(empty.exists());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
