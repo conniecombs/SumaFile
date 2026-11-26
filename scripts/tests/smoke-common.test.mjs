@@ -166,7 +166,11 @@ try {
 });
 
 // The release build makes the setup in the background while it makes the ZIP and the MSI.
-test('Start-BackgroundNative returns at once; Wait-BackgroundNative prints the output and reports a failure', { skip: !pwsh && 'PowerShell is not installed' }, () => {
+// The programs it starts here are cmd.exe commands, so this one needs Windows as well as PowerShell: the
+// repo checks run on Ubuntu, which has PowerShell and no cmd.exe.
+const backgroundNativeSkip = (!pwsh && 'PowerShell is not installed')
+  || (process.platform !== 'win32' && 'starts cmd.exe, which only Windows has');
+test('Start-BackgroundNative returns at once; Wait-BackgroundNative prints the output and reports a failure', { skip: backgroundNativeSkip }, () => {
   const result = run(String.raw`
 $cmd = Join-Path $env:SystemRoot 'System32\cmd.exe'
 $started = [System.Diagnostics.Stopwatch]::StartNew()
