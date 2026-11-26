@@ -502,9 +502,11 @@ files go through the same new pass.
 A retried item is a file or a whole folder. A folder is walked again from its
 top. When you choose **Retry** after an error, the engine first looks at the destination: when a file is
 already there and matches the source by the [check mode](#check-modes), it
-counts as copied and is not copied again (in a move, its source is then
-deleted). A missing file is copied. A file that is there but does not match is
-a conflict, and you are asked.
+counts as copied and is not copied again. A missing file is copied. A file
+that is there but does not match is a conflict, and you are asked.
+
+A retried move deletes the source of a file that counts as copied, so there
+the two files must be identical, read in full, whatever the check mode is.
 
 ### Where failures are recorded
 
@@ -528,8 +530,10 @@ carries the message of its first failure.
 * When you retry a failed item, a destination file that
   counts as already copied is left as it is and reported as done. With "Size
   only", a different file of the same size counts. "Always copy" does not
-  force a copy here; it compares content like Checksum. An explicit Replace or
-  Keep both choice always performs the requested action, even for two matching files.
+  force a copy here; it compares content like Checksum. A move compares
+  content in every mode, because it deletes the source afterwards. An explicit
+  Replace or Keep both choice always performs the requested action, even for
+  two matching files.
 * Checksum also verifies each copy. While a file is copied, a SHA-256 hash of
   the bytes read from the source is computed. After the last write the partial
   file is flushed to disk, whatever the flush setting says, then read back and

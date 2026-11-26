@@ -1117,6 +1117,28 @@ pub fn existing_file_matches_source_with_mode(
     }
 }
 
+/// Whether a file that is tried again was transferred by the pass that
+/// reported it as failed: its destination already holds the source, by
+/// `check_mode`.
+///
+/// When the source is deleted afterwards (`deletes_source`, a move), nothing
+/// but the same bytes counts, whatever the mode. Two different files of one
+/// size, or of one size and time, would otherwise cost the source of a file
+/// that was never copied.
+pub fn retried_file_already_transferred(
+    src: &Path,
+    dst: &Path,
+    check_mode: crate::policy::CheckMode,
+    deletes_source: bool,
+) -> Result<bool, String> {
+    let check_mode = if deletes_source {
+        crate::policy::CheckMode::Checksum
+    } else {
+        check_mode
+    };
+    existing_file_matches_source_with_mode(src, dst, check_mode)
+}
+
 fn files_have_same_contents(left: &Path, right: &Path) -> Result<bool, String> {
     let mut left =
         fs::File::open(left).map_err(|error| format!("Failed to open source file: {error}"))?;
@@ -1536,6 +1558,67 @@ mod tests {
         assert!(existing_file_matches_source(&source, &partial).unwrap());
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    /// A retried move deletes its source when the destination counts as
+    /// already transferred. By size, or by size and time, a different file
+    /// counted, and the source was deleted for a file that was never copied.
+    #[test]
+    fn a_retried_move_counts_a_file_as_transferred_only_when_the_bytes_match() {
+        use crate::policy::CheckMode;
+        let root = unique_temp_dir("retried_move_match");
+        let source = root.join("source.txt");
+        let different = root.join("different.txt");
+        let same = root.join("same.txt");
+        fs::write(&source, b"NEW").unwrap();
+        fs::write(&different, b"OLD").unwrap();
+        fs::write(&same, b"NEW").unwrap();
+        let stamp =
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        for path in [&source, &different, &same] {
+            let file = fs::OpenOptions::new().write(true).open(path).unwrap();
+            file.set_times(fs::FileTimes::new().set_modified(stamp))
+                .unwrap();
+        }
+
+        for mode in [
+            CheckMode::SizeOnly,
+            CheckMode::SizeAndModTime,
+            CheckMode::IgnoreTimes,
+            CheckMode::Checksum,
+        ] {
+            assert!(
+                !super::retried_file_already_transferred(&source, &different, mode, true).unwrap(),
+                "{mode:?}: a move must not take a different file for its copy"
+            );
+            assert!(
+                super::retried_file_already_transferred(&source, &same, mode, true).unwrap(),
+                "{mode:?}: the same bytes are the copy"
+            );
+        }
+        // A copy deletes nothing, so it keeps the chosen mode.
+        assert!(super::retried_file_already_transferred(
+            &source,
+            &different,
+            CheckMode::SizeOnly,
+            false
+        )
+        .unwrap());
+        assert!(super::retried_file_already_transferred(
+            &source,
+            &different,
+            CheckMode::SizeAndModTime,
+            false
+        )
+        .unwrap());
+        assert!(!super::retried_file_already_transferred(
+            &source,
+            &different,
+            CheckMode::Checksum,
+            false
+        )
+        .unwrap());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

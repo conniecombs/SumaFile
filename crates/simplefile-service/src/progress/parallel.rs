@@ -728,14 +728,16 @@ fn copy_task(
     // A retried file whose destination already holds the same content (by the
     // selected check mode) was transferred by the attempt that reported the
     // failure: it is done, apart from a move's source that is still to delete.
+    // Because of that delete, a move compares the bytes whatever the mode.
     let already_copied = task.retry
         && task.conflict == ConflictAction::Error
         && !task.symlink
         && path_exists_no_follow(&task.destination)
-        && crate::transfer_staging::existing_file_matches_source_with_mode(
+        && crate::transfer_staging::retried_file_already_transferred(
             &task.source,
             &task.destination,
             context.policy.check_mode,
+            task.delete_source,
         )
         .unwrap_or(false);
     if task.delete_source && !already_copied {
@@ -2646,6 +2648,81 @@ mod tests {
             assert!(result.failed.is_empty(), "{:?}", result.failed);
             assert_eq!(*dispatched_sizes.lock().unwrap(), expected_sizes);
         }
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A retried move that finds a file at its destination deletes the
+    /// source when that file counts as the copy. With "Size only", or with
+    /// size and time, a different file counted, and the move deleted the
+    /// source of a file it had never copied.
+    #[test]
+    fn a_retried_move_keeps_its_source_when_a_different_file_is_at_the_destination() {
+        let root = std::env::temp_dir().join(format!(
+            "sumafile_retried_move_{}",
+            crate::progress::generate_transfer_operation_id()
+        ));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("dst")).unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let total = Arc::new(AtomicU64::new(3));
+        let files = Arc::new(AtomicU64::new(1));
+        let completed = Arc::new(AtomicU64::new(0));
+        let progress = ProgressContext {
+            emit: &|_| {},
+            operation_id: "retried-move-test",
+            operation_type: "move",
+            cancel: &cancel,
+            total_bytes: &total,
+            total_files: &files,
+            completed_files: &completed,
+            last_running_emit: Mutex::new(Instant::now()),
+            retry_count: None,
+            rate_limit: None,
+            write_latency: None,
+        };
+        let ctx = CopyContext {
+            progress: &progress,
+            operation_id: "retried-move-test",
+            records: &crate::transfer_journal::FolderRecords::new("retried-move-test"),
+            network: false,
+            policy: Policy {
+                check_mode: CheckMode::SizeOnly,
+                ..Policy::default()
+            },
+        };
+        let task = |name: &str| FileTask {
+            source: root.join("src").join(name),
+            destination: root.join("dst").join(name),
+            size: 3,
+            network: false,
+            conflict: ConflictAction::Error,
+            symlink: false,
+            top_level: true,
+            merge_root: None,
+            delete_source: true,
+            retry: true,
+        };
+
+        // Same size, different bytes: not the copy.
+        let different = task("different.txt");
+        fs::write(&different.source, b"NEW").unwrap();
+        fs::write(&different.destination, b"OLD").unwrap();
+        let mut bytes = 0u64;
+        let error = copy_task(&different, &ctx, &mut bytes)
+            .expect_err("a different file at the destination is a conflict");
+        assert!(error.is_conflict(), "{error}");
+        assert_eq!(fs::read(&different.source).unwrap(), b"NEW");
+        assert_eq!(fs::read(&different.destination).unwrap(), b"OLD");
+
+        // The same bytes: the earlier pass copied it, and only the source is left to delete.
+        let same = task("same.txt");
+        fs::write(&same.source, b"NEW").unwrap();
+        fs::write(&same.destination, b"NEW").unwrap();
+        let outcome = copy_task(&same, &ctx, &mut bytes).expect("the copy is already there");
+        assert!(matches!(outcome, FileOutcome::Copied { reused: true, .. }));
+        assert!(!same.source.exists());
+        assert_eq!(fs::read(&same.destination).unwrap(), b"NEW");
 
         fs::remove_dir_all(&root).unwrap();
     }

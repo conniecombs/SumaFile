@@ -72,6 +72,11 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
   and verifying the same wrong bytes until the tries ran out; after a failed
   write it meant keeping bytes the drive may never have taken. A try that
   failed while reading the source still continues the partial file.
+- Retrying a failed move no longer deletes the source of a file that was
+  never copied. A file found at the destination counted as the copy when it
+  matched by the chosen check mode, and with "Size only" or "Size and
+  modification time" a different file can match. A retried move now compares
+  the two files in full before it deletes the source.
 - Checksum mode flushes each file to disk before it reads the file back, and
   verifies it before the file gets the source's read-only attribute. A
   read-only file whose checksum did not match could not be tried again.
