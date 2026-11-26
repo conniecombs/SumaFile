@@ -776,6 +776,20 @@ pub fn remove_path(path: &Path, label: &str) -> Result<(), String> {
     }
 }
 
+/// Whether `path` carries the Hidden attribute, which a partial file has
+/// until its last byte is written. Always false where there is none.
+#[cfg(windows)]
+pub fn is_hidden(path: &Path) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+    fs::symlink_metadata(path).is_ok_and(|meta| meta.file_attributes() & FILE_ATTRIBUTE_HIDDEN != 0)
+}
+
+#[cfg(not(windows))]
+pub fn is_hidden(_path: &Path) -> bool {
+    false
+}
+
 /// Whether `path` is a folder itself, not a link to one.
 pub fn is_real_directory(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir() && !meta.file_type().is_symlink())

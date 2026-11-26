@@ -63,7 +63,7 @@ Advanced. Defaults are the file service's.
 | Decide a file is already up to date by | Size and modification time | Size and modification time, Size only, Checksum, Always copy | See [Check modes](#check-modes). |
 | Write directly to the destination instead of a temporary file | Off | | See [Write directly to the destination](#write-directly-to-the-destination). |
 | Pre-allocate disk space | On | | Reserves a file's size at the destination before writing it. See [Pre-allocation](#pre-allocation). |
-| Flush to disk before finishing each file | On | | Asks Windows to write the file's data to the disk before the file gets its final name. |
+| Flush to disk before finishing each file | On | | Asks Windows to write the file's data to the disk before the file gets its final name. A move always does this, whatever the setting, because it deletes the source afterwards. |
 | Retry a failing file up to | 10 | 1–50 | Tries one file gets in one round, the first included. |
 | Retry rounds for the whole task | 3 | 1–20 | Rounds one failing file gets, the first included. The count is kept per file, not per task. |
 | Wait before retrying (seconds) | 1 | 0.01–60 | Wait after the first failed try. Later waits are longer; see [Failures and retries](#failures-and-retries). |
@@ -345,8 +345,20 @@ it does the following.
    other file, it keeps everything.
 3. It deletes the partial file when that is the recorded file. For a
    write-directly record this is the half-written file under its final name,
-   unless the record says the file was completed.
+   unless the record says the file was completed. A folder found under a
+   recorded name is never removed.
 4. It deletes the record, once every file it names has been dealt with.
+
+**The file of a move is treated differently.** A move deletes its source once
+the file has its final name. If the power fails, or the drive is pulled out,
+before that rename has reached the disk, the complete file is back under its
+partial name and its source is gone: it is the only copy. A move's line in the
+record therefore says that it is a move and how long the complete file is.
+When recovery finds such a file and the source no longer exists, it never
+deletes it. If the file has its full length and is no longer hidden (a partial
+file stays hidden until its last byte is written), and its final name is
+free, recovery gives it that name and removes the file a Replace had moved
+aside. Otherwise it keeps the file and the record.
 
 When a recorded file has been replaced by a different file, recovery keeps
 that file and the record, deals with the other files the record names, and
@@ -372,9 +384,14 @@ for the task to finish. What is still there afterwards was not claimed by
 recovery. Then, with hidden files shown and with no transfer into that folder
 running or queued (FTP/SFTP downloads included):
 
-* **`.sumafile-partial` files** are incomplete copies. Deleting one loses
-  nothing: a copy never changes its source, and a move deletes a source only
-  after the file has its final name.
+* **`.sumafile-partial` files.** One left by a copy is an incomplete copy,
+  and deleting it loses nothing, because a copy never changes its source. One
+  left by a **move** can be the only copy of the file: the source is deleted
+  as soon as the file has its final name, and a power loss or a drive pulled
+  out just after that can undo the rename. Before deleting a partial file,
+  check that its source still exists. If it does not, and the partial file
+  has the size you expect, rename it: remove the leading dot and the
+  `.<16 hex digits>.sumafile-partial` ending.
 * **`.sumafile-partial.state` records.** Delete a file's own record together
   with its partial file, and a folder's record (its name starts with
   `.sumafile-transfer.`) together with the partial files left in the folder.

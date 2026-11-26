@@ -1019,6 +1019,11 @@ pub(crate) fn copy_file_with_progress_versioned(
     } else {
         staging_path_for(dst, ctx.operation_id)?
     };
+    // A move deletes this file's source once the file has its final name. Its
+    // record line says so, with the length of the complete file, so recovery
+    // never deletes what may by then be the only copy; and its bytes are
+    // flushed before it gets that name, whatever the setting says.
+    let moving = ctx.progress.operation_type == "move";
     if use_inplace && exists {
         // Writing directly over an existing file empties it the moment the
         // lease is taken, and there is no backup. A source that cannot even
@@ -1038,10 +1043,14 @@ pub(crate) fn copy_file_with_progress_versioned(
             exists,
         )?
     } else {
-        ctx.records
-            .begin(&src.to_string_lossy(), dst, &staged_path)?
+        ctx.records.begin(
+            &src.to_string_lossy(),
+            dst,
+            &staged_path,
+            moving.then_some(file_len),
+        )?
     });
-    let must_sync = ctx.policy.flush_on_close;
+    let must_sync = ctx.policy.flush_on_close || moving;
     let mut retry = Retry::from_policy(&ctx.policy);
     let copy_result = loop {
         if ctx.progress.check_cancelled().is_err() {

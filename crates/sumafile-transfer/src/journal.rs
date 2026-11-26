@@ -36,6 +36,11 @@ struct Record {
     backup: Option<(PathBuf, FileIdentity)>,
     #[serde(default)]
     committed: bool,
+    /// Set for a file whose source is deleted once the file has its final
+    /// name (a move): the length of the complete file. When the source is
+    /// gone, what lies under the partial name is the only copy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    moved: Option<u64>,
 }
 
 pub struct StagingLease {
@@ -198,6 +203,7 @@ impl StagingLease {
                 staged_id,
                 backup: None,
                 committed: false,
+                moved: None,
             },
             staged_file,
             home: Home::Own { path, file },
@@ -390,11 +396,16 @@ impl FolderRecords {
     /// Creates the partial file `staged` for `destination` and records it in
     /// the record of its folder. A partial file already there is taken over
     /// only when an earlier try of this pass left it.
+    ///
+    /// `moved` is the source's length when the source is deleted once the
+    /// file has its final name; recovery then never deletes the file while
+    /// its source is gone.
     pub fn begin(
         &self,
         source: &str,
         destination: &Path,
         staged: &Path,
+        moved: Option<u64>,
     ) -> Result<StagingLease, String> {
         let directory = staged
             .parent()
@@ -444,6 +455,7 @@ impl FolderRecords {
                 staged_id,
                 backup: None,
                 committed: false,
+                moved,
             };
             let home = self.record_for(directory)?;
             home.append(&record, false)?;
@@ -680,7 +692,53 @@ fn matches(path: &Path, id: &FileIdentity) -> bool {
     file_identity(path).is_ok_and(|actual| actual == *id)
 }
 
+/// A move deletes its source once the file has its final name. If that rename
+/// did not survive (a power loss, a drive pulled out), the file is back under
+/// its partial name while its source is gone: it is the only copy, and an
+/// "abandoned partial" only by its name.
+fn is_only_copy(record: &Record) -> bool {
+    record.moved.is_some()
+        && !record.committed
+        && path_exists_no_follow(&record.staged)
+        && !path_exists_no_follow(Path::new(&record.source))
+}
+
+/// Gives the only copy of a moved file its final name when it is complete and
+/// the name is free; otherwise keeps it, with its record. Never deletes it.
+fn keep_only_copy(record: &Record) -> Result<(), String> {
+    if !matches(&record.staged, &record.staged_id) {
+        return Err(format!(
+            "Recovery staging identity changed; retained {}",
+            record.staged.display()
+        ));
+    }
+    // The partial file is hidden until its last byte is written and flushed,
+    // so a full length alone (a copy written in several streams reaches it
+    // early) is not taken for a complete file.
+    let complete = fs::symlink_metadata(&record.staged)
+        .is_ok_and(|meta| meta.is_file() && Some(meta.len()) == record.moved)
+        && !crate::staging::is_hidden(&record.staged);
+    if !complete || path_exists_no_follow(&record.destination) {
+        return Err(format!(
+            "The source of a moved file is gone; its copy is kept at {}",
+            record.staged.display()
+        ));
+    }
+    rename_exclusive(&record.staged, &record.destination)
+        .map_err(|e| format!("Finish interrupted move [{}]: {e}", record.staged.display()))?;
+    // The file a Replace had moved aside: the move is now finished.
+    if let Some((backup, id)) = &record.backup {
+        if matches(backup, id) {
+            cleanup_owned_file(backup)?;
+        }
+    }
+    Ok(())
+}
+
 fn recover(record: &Record) -> Result<(), String> {
+    if is_only_copy(record) {
+        return keep_only_copy(record);
+    }
     if let Some((backup, id)) = &record.backup {
         if matches(backup, id) {
             if !path_exists_no_follow(&record.destination) {
@@ -1191,11 +1249,146 @@ mod tests {
     ) -> (StagingLease, PathBuf, PathBuf) {
         let destination = directory.join(name);
         let stage = crate::staging::staging_path_for(&destination, "pass").unwrap();
-        let mut lease = records.begin("source", &destination, &stage).unwrap();
+        let mut lease = records.begin("source", &destination, &stage, None).unwrap();
         let mut partial = lease.take_staged_file().unwrap();
         partial.write_all(contents).unwrap();
         drop(partial);
         (lease, stage, destination)
+    }
+
+    /// Begins a file of a move in `directory`: `source` is deleted once the
+    /// file has its final name, and is `length` bytes long.
+    fn begin_moved(
+        records: &FolderRecords,
+        directory: &Path,
+        source: &Path,
+        length: u64,
+        contents: &[u8],
+    ) -> (StagingLease, PathBuf, PathBuf) {
+        let destination = directory.join("file");
+        let stage = crate::staging::staging_path_for(&destination, "pass").unwrap();
+        let mut lease = records
+            .begin(
+                &source.to_string_lossy(),
+                &destination,
+                &stage,
+                Some(length),
+            )
+            .unwrap();
+        let mut partial = lease.take_staged_file().unwrap();
+        partial.write_all(contents).unwrap();
+        drop(partial);
+        (lease, stage, destination)
+    }
+
+    /// A move deleted its source after giving the file its final name, and the
+    /// power failed before that rename reached the disk: the complete file is
+    /// back under its partial name and is the only copy. Recovery gives it
+    /// its name; it must never delete it.
+    #[test]
+    fn recovery_publishes_a_complete_moved_file_whose_source_is_gone() {
+        let root = root();
+        let records = FolderRecords::new("pass");
+        let (lease, stage, destination) =
+            begin_moved(&records, &root, &root.join("gone-source"), 5, b"moved");
+        drop(lease);
+        drop(records);
+
+        recover_directory(&root).unwrap();
+
+        assert_eq!(fs::read(&destination).unwrap(), b"moved");
+        assert!(!stage.exists());
+        assert_eq!(record_count(&root), 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The same, but the copy is shorter than its source was: it cannot be
+    /// given the final name, and it is still the only copy. It stays, with
+    /// its record.
+    #[test]
+    fn recovery_keeps_an_incomplete_moved_file_whose_source_is_gone() {
+        let root = root();
+        let records = FolderRecords::new("pass");
+        let (lease, stage, destination) =
+            begin_moved(&records, &root, &root.join("gone-source"), 50, b"half");
+        drop(lease);
+        drop(records);
+
+        recover_directory(&root).unwrap();
+
+        assert_eq!(fs::read(&stage).unwrap(), b"half");
+        assert!(!destination.exists());
+        assert_eq!(record_count(&root), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A move that stopped before it deleted its source lost nothing: the
+    /// partial file is removed like any other.
+    #[test]
+    fn recovery_removes_a_moved_partial_whose_source_is_still_there() {
+        let root = root();
+        let source = root.join("source-kept");
+        fs::write(&source, b"moved").unwrap();
+        let records = FolderRecords::new("pass");
+        let (lease, stage, destination) = begin_moved(&records, &root, &source, 5, b"moved");
+        drop(lease);
+        drop(records);
+
+        recover_directory(&root).unwrap();
+
+        assert!(!stage.exists());
+        assert!(!destination.exists());
+        assert_eq!(fs::read(&source).unwrap(), b"moved");
+        assert_eq!(record_count(&root), 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A move with Replace stopped between its two renames after the power
+    /// loss took the second one back: the old file is under its backup name,
+    /// the complete new one under its partial name, and the source is gone.
+    /// The user chose Replace and the new file is the only copy of what was
+    /// moved: it gets the name, and the old file goes.
+    #[test]
+    fn recovery_finishes_a_replacing_move_whose_source_is_gone() {
+        let root = root();
+        let records = FolderRecords::new("pass");
+        let destination = root.join("file");
+        fs::write(&destination, b"old").unwrap();
+        let (mut lease, stage, _) =
+            begin_moved(&records, &root, &root.join("gone-source"), 3, b"new");
+        let backup = root.join(".file.original.sumafile-replace-backup");
+        lease.backup_intent(&backup, &destination).unwrap();
+        fs::rename(&destination, &backup).unwrap();
+        drop(lease);
+        drop(records);
+
+        recover_directory(&root).unwrap();
+
+        assert_eq!(fs::read(&destination).unwrap(), b"new");
+        assert!(!backup.exists());
+        assert!(!stage.exists());
+        assert_eq!(record_count(&root), 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A complete moved file whose name is taken (the old file was never moved
+    /// aside) cannot be published and must not be deleted.
+    #[test]
+    fn recovery_keeps_a_complete_moved_file_when_its_name_is_taken() {
+        let root = root();
+        let records = FolderRecords::new("pass");
+        let destination = root.join("file");
+        fs::write(&destination, b"old").unwrap();
+        let (lease, stage, _) = begin_moved(&records, &root, &root.join("gone-source"), 3, b"new");
+        drop(lease);
+        drop(records);
+
+        recover_directory(&root).unwrap();
+
+        assert_eq!(fs::read(&destination).unwrap(), b"old");
+        assert_eq!(fs::read(&stage).unwrap(), b"new");
+        assert_eq!(record_count(&root), 1);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1361,7 +1554,7 @@ mod tests {
         drop(abandoned);
         assert_eq!(fs::read(&stage).unwrap(), b"half");
 
-        let mut retried = records.begin("source", &destination, &stage).unwrap();
+        let mut retried = records.begin("source", &destination, &stage, None).unwrap();
         assert_eq!(fs::metadata(&stage).unwrap().len(), 0);
         assert!(retried.owns_staged());
         drop(retried.take_staged_file());
@@ -1386,7 +1579,7 @@ mod tests {
         assert_eq!(fs::read(&stage).unwrap(), b"half");
 
         let later = FolderRecords::new("pass");
-        let mut retried = later.begin("source", &destination, &stage).unwrap();
+        let mut retried = later.begin("source", &destination, &stage, None).unwrap();
         assert_eq!(fs::metadata(&stage).unwrap().len(), 0);
         drop(retried.take_staged_file());
         fs::rename(&stage, &destination).unwrap();
@@ -1405,7 +1598,7 @@ mod tests {
         fs::write(&stage, b"someone else's").unwrap();
 
         let error = records
-            .begin("source", &destination, &stage)
+            .begin("source", &destination, &stage, None)
             .err()
             .expect("an unrecorded partial is not this pass's");
 
@@ -1443,6 +1636,7 @@ mod tests {
             staged_id: file_identity(&folder).unwrap(),
             backup: None,
             committed: false,
+            moved: None,
         };
         let mut name = crate::staging::staging_path_for(&folder, "ownership")
             .unwrap()
@@ -1472,6 +1666,7 @@ mod tests {
                 staged_id: file_identity(&kept).unwrap(),
                 backup: None,
                 committed: false,
+                moved: None,
             };
             plant_record(
                 &root.join(".x.0000000000000000.sumafile-partial.state"),

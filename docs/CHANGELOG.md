@@ -44,6 +44,21 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ### Transfers
 
+- A moved file can no longer be deleted as a leftover. A move deletes its
+  source once the file has its final name; when the power failed or the drive
+  was pulled out before that rename had reached the disk, the complete file
+  was back under its `.sumafile-partial` name, and the next transfer into
+  the folder deleted it, the only copy. The record of a move now says so. A
+  partial file whose source is gone is never deleted: it gets its final name
+  when it is complete and the name is free, and is kept otherwise. A move now
+  also writes each file to disk before deleting its source, whatever "Flush
+  to disk before finishing each file" says.
+- Replace no longer removes a folder. A folder that took the destination's
+  name while the file was being copied used to be moved aside and deleted
+  with everything in it; it is now reported as a conflict.
+- Cleaning up after an interrupted transfer never removes a folder that a
+  record names, and a damaged record no longer stops the transfer that finds
+  it.
 - Before copying into an existing folder, SumaFile looks for records of an
   interrupted transfer there. On Windows it now asks for those records by
   name instead of listing the folder, which on a network share was the full
