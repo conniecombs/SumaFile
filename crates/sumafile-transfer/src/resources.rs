@@ -207,12 +207,55 @@ impl Drop for Permit {
 /// mixed files then leaves its large files standing until every small one is
 /// done. With turns but whole requests, the small files would wait out each
 /// large buffer instead.
+///
+/// A limit in a [`RateGroup`] also takes its turns in the group's line.
 pub struct RateLimit {
     mib: AtomicU64,
+    pacer: Pacer,
+    group: Option<Arc<RateGroup>>,
+    retry_status: Mutex<Option<(Instant, String)>>,
+}
+
+/// Limits that share one budget: the tasks running at once that have a
+/// limit use at most the highest of their limits together, and each also
+/// stays within its own. A task without a limit is not held back. Two tasks
+/// limited to 10 MiB/s use 10 MiB/s together, not 20.
+pub struct RateGroup {
+    members: Mutex<Vec<std::sync::Weak<RateLimit>>>,
+    pacer: Pacer,
+}
+
+impl RateGroup {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            members: Mutex::new(Vec::new()),
+            pacer: Pacer::new(),
+        })
+    }
+
+    /// The group of every task this process runs.
+    pub fn process() -> &'static Arc<RateGroup> {
+        static PROCESS: std::sync::OnceLock<Arc<RateGroup>> = std::sync::OnceLock::new();
+        PROCESS.get_or_init(RateGroup::new)
+    }
+
+    /// The highest limit of the members that are alive; 0 when none has one.
+    fn bytes_per_second(&self) -> f64 {
+        let mut members = self.members.lock().unwrap_or_else(|e| e.into_inner());
+        members.retain(|member| member.strong_count() > 0);
+        members
+            .iter()
+            .filter_map(std::sync::Weak::upgrade)
+            .map(|member| member.bytes_per_second())
+            .fold(0.0, f64::max)
+    }
+}
+
+/// A line of requests for byte credit at a rate.
+struct Pacer {
     bucket: Mutex<Bucket>,
     /// Signalled when the request at the head of the line leaves it.
     turn: Condvar,
-    retry_status: Mutex<Option<(Instant, String)>>,
 }
 
 struct Bucket {
@@ -232,10 +275,9 @@ const RATE_TURNS_PER_SECOND: f64 = 16.0;
 /// still hands over the line at most sixteen times a second.
 const RATE_MIN_TURN: usize = 64 * 1024;
 
-impl RateLimit {
-    pub fn new(mib: usize) -> Self {
+impl Pacer {
+    fn new() -> Self {
         Self {
-            mib: AtomicU64::new(mib as u64),
             bucket: Mutex::new(Bucket {
                 refilled: Instant::now(),
                 credit: 0.0,
@@ -243,49 +285,36 @@ impl RateLimit {
                 line: VecDeque::new(),
             }),
             turn: Condvar::new(),
-            retry_status: Mutex::new(None),
         }
     }
 
-    fn bytes_per_second(&self) -> f64 {
-        self.mib.load(Ordering::Relaxed).min(1_048_576) as f64 * 1048576.0
+    /// Drops the credit kept, as for a new rate.
+    fn reset(&self) {
+        let mut bucket = self.bucket.lock().unwrap_or_else(|e| e.into_inner());
+        bucket.refilled = Instant::now();
+        bucket.credit = 0.0;
+        drop(bucket);
+        self.wake();
     }
 
-    pub fn update(&self, mib: usize) {
-        if self.mib.swap(mib as u64, Ordering::Relaxed) != mib as u64 {
-            // Do not retain credit from a different user limit.
-            let mut bucket = self.bucket.lock().unwrap_or_else(|e| e.into_inner());
-            bucket.refilled = Instant::now();
-            bucket.credit = 0.0;
-            drop(bucket);
-            // Whoever waits should see the new limit now, above all its removal.
-            self.turn.notify_all();
-        }
+    /// Whoever waits looks at the rate again now, above all at its removal.
+    fn wake(&self) {
+        self.turn.notify_all();
     }
 
-    pub fn wait(&self, bytes: usize, cancel: &AtomicBool) -> Result<(), String> {
-        let mut left = bytes;
-        loop {
-            if cancel.load(Ordering::Relaxed) {
-                return Err("Operation cancelled".into());
-            }
-            let rate = self.bytes_per_second();
-            if rate == 0.0 {
-                return Ok(());
-            }
-            if left == 0 {
-                return Ok(());
-            }
-            // The share is re-read each turn: the limit can change while waiting.
-            let share = ((rate / RATE_TURNS_PER_SECOND) as usize).max(RATE_MIN_TURN);
-            let turn = left.min(share);
-            self.wait_turn(turn, cancel)?;
-            left -= turn;
-        }
+    fn refund(&self, bytes: usize) {
+        self.bucket.lock().unwrap_or_else(|e| e.into_inner()).credit += bytes as f64;
     }
 
-    /// Wait at the back of the line for `bytes` of credit.
-    fn wait_turn(&self, bytes: usize, cancel: &AtomicBool) -> Result<(), String> {
+    /// Wait at the back of the line for `bytes` of credit at the rate `rate`
+    /// gives, read again each time the request looks; a rate of 0 ends the
+    /// wait.
+    fn wait_turn(
+        &self,
+        bytes: usize,
+        rate: &dyn Fn() -> f64,
+        cancel: &AtomicBool,
+    ) -> Result<(), String> {
         let wanted = bytes as f64;
         let mut bucket = self.bucket.lock().unwrap_or_else(|e| e.into_inner());
         let ticket = bucket.next_ticket;
@@ -295,7 +324,7 @@ impl RateLimit {
             if cancel.load(Ordering::Relaxed) {
                 break Err("Operation cancelled".to_string());
             }
-            let rate = self.bytes_per_second();
+            let rate = rate();
             if rate == 0.0 {
                 break Ok(());
             }
@@ -320,8 +349,83 @@ impl RateLimit {
         };
         bucket.line.retain(|waiting| *waiting != ticket);
         drop(bucket);
-        self.turn.notify_all();
+        self.wake();
         outcome
+    }
+}
+
+impl RateLimit {
+    /// A limit of its own, shared with no other.
+    pub fn new(mib: usize) -> Self {
+        Self {
+            mib: AtomicU64::new(mib as u64),
+            pacer: Pacer::new(),
+            group: None,
+            retry_status: Mutex::new(None),
+        }
+    }
+
+    /// A limit that also shares `group`'s budget with the group's other
+    /// limits, for as long as it lives.
+    pub fn in_group(mib: usize, group: &Arc<RateGroup>) -> Arc<Self> {
+        let limit = Arc::new(Self {
+            group: Some(group.clone()),
+            ..Self::new(mib)
+        });
+        group
+            .members
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(Arc::downgrade(&limit));
+        group.pacer.wake();
+        limit
+    }
+
+    fn bytes_per_second(&self) -> f64 {
+        self.mib.load(Ordering::Relaxed).min(1_048_576) as f64 * 1048576.0
+    }
+
+    pub fn update(&self, mib: usize) {
+        if self.mib.swap(mib as u64, Ordering::Relaxed) != mib as u64 {
+            // Do not retain credit from a different user limit.
+            self.pacer.reset();
+            if let Some(group) = &self.group {
+                group.pacer.wake();
+            }
+        }
+    }
+
+    pub fn wait(&self, bytes: usize, cancel: &AtomicBool) -> Result<(), String> {
+        let mut left = bytes;
+        let own = || self.bytes_per_second();
+        loop {
+            if cancel.load(Ordering::Relaxed) {
+                return Err("Operation cancelled".into());
+            }
+            let rate = own();
+            if rate == 0.0 {
+                return Ok(());
+            }
+            if left == 0 {
+                return Ok(());
+            }
+            // The share is re-read each turn: the limit can change while waiting.
+            let share = ((rate / RATE_TURNS_PER_SECOND) as usize).max(RATE_MIN_TURN);
+            let turn = left.min(share);
+            self.pacer.wait_turn(turn, &own, cancel)?;
+            if let Some(group) = &self.group {
+                // Removing this task's limit releases it from the group too.
+                let shared = || {
+                    if own() == 0.0 {
+                        0.0
+                    } else {
+                        group.bytes_per_second()
+                    }
+                };
+                group.pacer.wait_turn(turn, &shared, cancel)?;
+            }
+            left -= turn;
+        }
     }
 
     /// Display-only. The failing file owns its cancellable retry wait. Healthy
@@ -348,7 +452,10 @@ impl RateLimit {
 
     pub fn refund(&self, bytes: usize) {
         if bytes > 0 && self.mib.load(Ordering::Relaxed) > 0 {
-            self.bucket.lock().unwrap_or_else(|e| e.into_inner()).credit += bytes as f64;
+            self.pacer.refund(bytes);
+            if let Some(group) = &self.group {
+                group.pacer.refund(bytes);
+            }
         }
     }
 }
@@ -499,6 +606,84 @@ mod tests {
             "{} bytes in {elapsed:.2}s exceeds the limit",
             large + small
         );
+    }
+
+    /// Each task had a limiter of its own, so two tasks with a limit of
+    /// 2 MiB/s moved 4 MiB/s together.
+    #[test]
+    fn two_tasks_with_a_limit_share_it() {
+        let group = RateGroup::new();
+        let first = RateLimit::in_group(2, &group);
+        let second = RateLimit::in_group(2, &group);
+        let cancel = AtomicBool::new(false);
+        let started = Instant::now();
+        std::thread::scope(|scope| {
+            for limit in [&first, &second] {
+                let cancel = &cancel;
+                scope.spawn(move || limit.wait(2 * 1024 * 1024, cancel).unwrap());
+            }
+        });
+        // 4 MiB at 2 MiB/s together; apart, each would take one second.
+        let elapsed = started.elapsed();
+        assert!(elapsed >= Duration::from_millis(1600), "{elapsed:?}");
+        assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
+    }
+
+    #[test]
+    fn a_task_without_a_limit_is_not_held_back_by_one_with_a_limit() {
+        let group = RateGroup::new();
+        let limited = RateLimit::in_group(1, &group);
+        let unlimited = RateLimit::in_group(0, &group);
+        let stop = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            let busy = scope.spawn(|| limited.wait(64 * 1024 * 1024, &stop));
+            std::thread::sleep(Duration::from_millis(50));
+            let started = Instant::now();
+            unlimited
+                .wait(64 * 1024 * 1024, &AtomicBool::new(false))
+                .unwrap();
+            assert!(started.elapsed() < Duration::from_millis(100));
+            stop.store(true, Ordering::Relaxed);
+            assert!(busy.join().unwrap().is_err());
+        });
+    }
+
+    #[test]
+    fn a_task_in_a_group_keeps_its_own_lower_limit() {
+        let group = RateGroup::new();
+        let slow = RateLimit::in_group(1, &group);
+        let _fast = RateLimit::in_group(16, &group);
+        let started = Instant::now();
+        slow.wait(1024 * 1024, &AtomicBool::new(false)).unwrap();
+        assert!(started.elapsed() >= Duration::from_millis(800));
+    }
+
+    #[test]
+    fn a_task_waiting_in_the_group_is_released_when_its_limit_is_removed() {
+        let group = RateGroup::new();
+        let first = RateLimit::in_group(1, &group);
+        let second = RateLimit::in_group(1, &group);
+        let stop = AtomicBool::new(false);
+        let started = Instant::now();
+        std::thread::scope(|scope| {
+            let other = scope.spawn(|| second.wait(64 * 1024 * 1024, &stop));
+            let waiter = scope.spawn(|| first.wait(64 * 1024 * 1024, &AtomicBool::new(false)));
+            std::thread::sleep(Duration::from_millis(100));
+            first.update(0);
+            waiter.join().unwrap().unwrap();
+            assert!(started.elapsed() < Duration::from_secs(3));
+            stop.store(true, Ordering::Relaxed);
+            let _ = other.join().unwrap();
+        });
+    }
+
+    #[test]
+    fn a_finished_task_no_longer_counts_in_its_group() {
+        let group = RateGroup::new();
+        let finished = RateLimit::in_group(64, &group);
+        let _running = RateLimit::in_group(1, &group);
+        drop(finished);
+        assert_eq!(group.bytes_per_second(), 1048576.0);
     }
 
     #[test]

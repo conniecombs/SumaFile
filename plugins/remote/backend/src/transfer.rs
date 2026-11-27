@@ -134,7 +134,7 @@ struct Progress<'a> {
     current: String,
     last: Instant,
     policy: Policy,
-    limiter: RateLimit,
+    limiter: std::sync::Arc<RateLimit>,
     policy_checked: Instant,
     read_policy: &'a dyn Fn() -> Policy,
     file_start: u64,
@@ -1298,7 +1298,11 @@ pub fn transfer_entries(
         files: 0,
         current: "Preparing transfer".into(),
         last: Instant::now(),
-        limiter: RateLimit::new(policy.bandwidth_mib),
+        // Transfers running at once share the plugin's limit.
+        limiter: RateLimit::in_group(
+            policy.bandwidth_mib,
+            sumafile_transfer::resources::RateGroup::process(),
+        ),
         policy,
         policy_checked: Instant::now(),
         read_policy,

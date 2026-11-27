@@ -1,5 +1,5 @@
 use super::parallel::{ActiveFile, TuningUpdate};
-use super::resources::{MemoryBudget, RateLimit};
+use super::resources::{MemoryBudget, RateGroup, RateLimit};
 use super::tuning::{self, Policy};
 use std::path::Path;
 use std::sync::Arc;
@@ -75,7 +75,8 @@ impl<'a> Session<'a> {
         let now = Instant::now();
         Self {
             memory: MemoryBudget::new(initial.memory_bytes()),
-            limiter: Arc::new(RateLimit::new(initial.bandwidth_mib)),
+            // Every task's limit shares one budget with the others running.
+            limiter: RateLimit::in_group(initial.bandwidth_mib, RateGroup::process()),
             lanes: Lanes::new(initial, 4 << 20, now),
             latency: [
                 Arc::new(LatencyHistogram::default()),
