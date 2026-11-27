@@ -22,6 +22,10 @@ internal sealed class ConfigurableIpc : NullIpc
     public Func<string, string, CancellationToken, Task>? SetDbSettingHandler { get; set; }
     public Func<string[], CancellationToken, Task<string[]>>? MoveToTrashHandler { get; set; }
     public Func<string[], CancellationToken, Task<string[]>>? RestoreRecycleBinHandler { get; set; }
+    /// <summary>Without it, <c>move_to_trash_each</c> sends each path alone to <see cref="MoveToTrashHandler"/>.</summary>
+    public Func<string[], CancellationToken, Task<PathOutcome[]>>? MoveToTrashEachHandler { get; set; }
+    /// <summary>Without it, <c>restore_recycle_bin_each</c> sends each item alone to <see cref="RestoreRecycleBinHandler"/>.</summary>
+    public Func<string[], CancellationToken, Task<PathOutcome[]>>? RestoreRecycleBinEachHandler { get; set; }
     public Func<CancellationToken, Task>? EmptyRecycleBinHandler { get; set; }
     public Func<string, string, string, CancellationToken, Task<string>>? CopyEntryResolvedHandler { get; set; }
     public Func<string, string, string, CancellationToken, Task<string>>? MoveEntryResolvedHandler { get; set; }
@@ -167,6 +171,37 @@ internal sealed class ConfigurableIpc : NullIpc
 
     public override Task<string[]> RestoreRecycleBinAsync(string[] paths, CancellationToken ct = default)
         => RestoreRecycleBinHandler?.Invoke(paths, ct) ?? throw NotConfigured();
+
+    public override Task<PathOutcome[]> MoveToTrashEachAsync(string[] paths, CancellationToken ct = default)
+        => MoveToTrashEachHandler?.Invoke(paths, ct)
+            ?? (MoveToTrashHandler is { } trash ? EachAlone(paths, trash, ct) : throw NotConfigured());
+
+    public override Task<PathOutcome[]> RestoreRecycleBinEachAsync(string[] paths, CancellationToken ct = default)
+        => RestoreRecycleBinEachHandler?.Invoke(paths, ct)
+            ?? (RestoreRecycleBinHandler is { } restore ? EachAlone(paths, restore, ct) : throw NotConfigured());
+
+    /// <summary>A call that goes on past a failed path, made of one call per path.</summary>
+    private static async Task<PathOutcome[]> EachAlone(
+        string[] paths,
+        Func<string[], CancellationToken, Task<string[]>> handler,
+        CancellationToken ct)
+    {
+        var outcomes = new List<PathOutcome>();
+        foreach (var path in paths)
+        {
+            try
+            {
+                var results = await handler([path], ct).ConfigureAwait(false);
+                outcomes.Add(new PathOutcome { Path = path, Result = results.FirstOrDefault() });
+            }
+            catch (IpcException exception)
+            {
+                outcomes.Add(new PathOutcome { Path = path, Error = exception.Message });
+            }
+        }
+
+        return [.. outcomes];
+    }
 
     public override Task EmptyRecycleBinAsync(CancellationToken ct = default)
         => EmptyRecycleBinHandler?.Invoke(ct) ?? throw NotConfigured();

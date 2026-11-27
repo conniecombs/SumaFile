@@ -644,7 +644,7 @@ pub(crate) fn copy_selection(
     // "Finishing" covers the folders' times too: they are set after the
     // last file, and on a share that takes a while.
     ctx.progress.finalizing(
-        *completed_bytes,
+        completed_bytes.saturating_add(copy_res.failed_bytes),
         roots
             .first()
             .map(|root| root.destination.to_string_lossy().to_string())
@@ -770,8 +770,7 @@ fn copy_task(
         {
             let outcome = renamed?;
             if let FileOutcome::Copied { .. } = &outcome {
-                // Renamed in place: no byte was transferred.
-                context.progress.not_transferred(task.size);
+                // Renamed in place: done, and no byte was transferred.
                 *copied = copied.saturating_add(task.size);
                 context
                     .progress
@@ -782,7 +781,6 @@ fn copy_task(
     }
     let outcome = if already_copied {
         let version = crate::transfer_staging::capture_source_version_for_path(&task.source)?;
-        context.progress.not_transferred(task.size);
         *copied = copied.saturating_add(task.size);
         context
             .progress
@@ -1090,6 +1088,13 @@ fn copy_files_streaming_with_sink(
         // The file named in a running update when no file is in flight.
         let mut last_item = String::new();
         let mut last_display = Instant::now();
+        // The task's last file is in its last steps, and nothing else is to
+        // start: updates say "finalizing" until another file starts.
+        let mut finishing = false;
+        // Since when no file has been in flight, in the middle of the pass,
+        // and whether Details was emptied for it.
+        let mut idle_since: Option<Instant> = None;
+        let mut details_emptied = false;
         let mut last_retries = [(0u64, 0u64); 2];
         if let Some(&first_idx) = ready.iter().filter_map(VecDeque::front).min() {
             if let Some(first) = tasks.get(&first_idx) {
@@ -1112,7 +1117,7 @@ fn copy_files_streaming_with_sink(
         let latency = [session.latency(0), session.latency(1)];
         let mut workers = Vec::new();
         // The task's count of bytes not transferred, shared with every file.
-        let untransferred = ctx.untransferred;
+        let transferred = ctx.transferred;
         let spawn_worker = || {
             let work_rx = &work_rx;
             let tx = event_tx.clone();
@@ -1178,7 +1183,7 @@ fn copy_files_streaming_with_sink(
                             // A custom limit is never tuned, so nothing is timed.
                             write_latency: (policy.mode != super::tuning::Mode::Manual)
                                 .then_some(&*latency[lane]),
-                            untransferred,
+                            transferred,
                         };
                         let context = CopyContext {
                             progress: &progress,
@@ -1232,7 +1237,9 @@ fn copy_files_streaming_with_sink(
                                 tasks: &mut BTreeMap<usize, FileTask>,
                                 lane_done: &mut [u64; 2],
                                 lane_files: &mut [u64; 2],
-                                carried: &mut BTreeMap<usize, u64>| {
+                                carried: &mut BTreeMap<usize, u64>,
+                                finishing: &mut bool,
+                                last_item: &mut String| {
             match message {
                 Message::ScanAvailable => {}
                 Message::Progress(index, update) => {
@@ -1246,6 +1253,7 @@ fn copy_files_streaming_with_sink(
                         && active.len() == 1
                         && producer_done
                         && ready_empty
+                        && deferred_retries.is_empty()
                     {
                         let current = offset
                             .saturating_add(result.bytes)
@@ -1253,7 +1261,10 @@ fn copy_files_streaming_with_sink(
                             .saturating_add(result.failed_bytes)
                             .saturating_add(carried.values().sum::<u64>())
                             .saturating_add(active.values().map(|f| f.current).sum::<u64>());
+                        last_item.clone_from(&update.current_item);
                         ctx.finalizing(current, update.current_item);
+                        // Until another file starts, the task is finishing.
+                        *finishing = true;
                     }
                 }
                 Message::Finished(index, bytes, status) => {
@@ -1261,6 +1272,12 @@ fn copy_files_streaming_with_sink(
                     let lane = finished
                         .as_ref()
                         .map(|file| lane_index(two_lanes, file.total));
+                    // The row names the file just done, also one skipped,
+                    // renamed or found already copied, which report nothing
+                    // before they finish.
+                    if let Some(file) = &finished {
+                        last_item.clone_from(&file.path);
+                    }
                     let written = finished.map(|file| file.current).unwrap_or(0);
                     match status {
                         Ok(FileOutcome::Copied {
@@ -1270,7 +1287,11 @@ fn copy_files_streaming_with_sink(
                         }) => {
                             result.bytes = result.bytes.saturating_add(bytes);
                             if let Some(lane) = lane {
-                                lane_done[lane] = lane_done[lane].saturating_add(bytes);
+                                // The scheduler measures what was written: a
+                                // file renamed or found already copied
+                                // reports no bytes before it is done.
+                                lane_done[lane] =
+                                    lane_done[lane].saturating_add(written.min(bytes));
                                 lane_files[lane] += 1;
                             }
                             let Some(task) = tasks.remove(&index) else {
@@ -1303,7 +1324,6 @@ fn copy_files_streaming_with_sink(
                         }
                         Ok(FileOutcome::Skipped) => {
                             if let Some(task) = tasks.remove(&index) {
-                                ctx.not_transferred(task.size);
                                 result.skipped_bytes =
                                     result.skipped_bytes.saturating_add(task.size);
                                 result.skipped.push((index, task));
@@ -1324,6 +1344,7 @@ fn copy_files_streaming_with_sink(
                             {
                                 carried.insert(index, written);
                                 deferred_retries.push_back((index, error));
+                                *finishing = false;
                             } else if let Some(task) = tasks.remove(&index) {
                                 file_hl_attempts.remove(&index);
                                 result.failed_bytes = result.failed_bytes.saturating_add(written);
@@ -1394,6 +1415,7 @@ fn copy_files_streaming_with_sink(
                     let lane = lane_index(two_lanes, tasks[&retry_index].size);
                     enqueue_ready(&mut ready[lane], &tasks, order_by, retry_index);
                 }
+                finishing = false;
             }
             open_lanes(
                 session,
@@ -1422,6 +1444,8 @@ fn copy_files_streaming_with_sink(
                 };
                 lane_active[lane] += 1;
                 let task = tasks[&next_idx].clone();
+                finishing = false;
+                last_item = task.source.to_string_lossy().into();
                 active.insert(
                     next_idx,
                     ActiveFile {
@@ -1502,6 +1526,8 @@ fn copy_files_streaming_with_sink(
                         &mut lane_done,
                         &mut lane_files,
                         &mut carried,
+                        &mut finishing,
+                        &mut last_item,
                     );
                     while let Ok(msg) = event_rx.try_recv() {
                         handle_event(
@@ -1516,6 +1542,8 @@ fn copy_files_streaming_with_sink(
                             &mut lane_done,
                             &mut lane_files,
                             &mut carried,
+                            &mut finishing,
+                            &mut last_item,
                         );
                     }
                 }
@@ -1570,17 +1598,56 @@ fn copy_files_streaming_with_sink(
                 // With one file at a time nothing is in flight between two
                 // files; the update names the file just done instead of none,
                 // which the Transfers window showed as "Preparing transfer".
-                ctx.emit(current, last_item.clone(), "running", None);
+                // While the last file finishes, the update says so: a
+                // "running" one sent after it took "Finishing" off the row.
+                if finishing {
+                    ctx.finalizing(current, last_item.clone());
+                } else {
+                    ctx.emit(current, last_item.clone(), "running", None);
+                }
                 // Not forced. With one file at a time nothing is in flight
                 // between any two files, and a forced update for each of
                 // them sent the Transfers window one event per copied file.
-                // Nor sent with no file: an empty list took every row out of
-                // Details between two files. The update after the loop shows
-                // the final state.
+                // Nor sent with no file at once: an empty list took every row
+                // out of Details between two files. Once no file has been in
+                // flight for a while (a slow scan), the list is emptied, so
+                // that Details does not keep files that are done.
                 if !active.is_empty() {
+                    idle_since = None;
+                    details_emptied = false;
                     session.display(active.values().cloned().collect(), false);
+                } else if !details_emptied
+                    && idle_since.get_or_insert_with(Instant::now).elapsed()
+                        >= Duration::from_millis(500)
+                {
+                    session.display(Vec::new(), false);
+                    details_emptied = true;
                 }
                 last_display = Instant::now();
+            }
+        }
+        // A scan that failed, or workers that stopped, end the pass. The files
+        // already found and not yet copied, or set aside for a later round,
+        // fail with that error: they were neither copied nor reported, so
+        // Retry did not offer them.
+        if let Some(error) = result.scan_error.clone() {
+            if ctx.check_cancelled().is_ok() {
+                let mut left: Vec<usize> =
+                    ready.iter_mut().flat_map(|lane| lane.drain(..)).collect();
+                left.extend(deferred_retries.drain(..).map(|(index, _)| index));
+                left.sort_unstable();
+                for index in left {
+                    if let Some(task) = tasks.remove(&index) {
+                        result.failed.push((
+                            index,
+                            TaskFailure {
+                                source: task.source,
+                                destination: task.destination,
+                                failure: Failure::new(error.clone(), true),
+                            },
+                        ));
+                    }
+                }
             }
         }
         drop(scan_rx);
@@ -1753,7 +1820,7 @@ mod tests {
                 retry_count: None,
                 rate_limit: None,
                 write_latency: None,
-                untransferred: None,
+                transferred: None,
             };
             let mut session = Session::new(
                 "lazy-workers-test",
@@ -1850,7 +1917,7 @@ mod tests {
             retry_count: None,
             rate_limit: None,
             write_latency: None,
-            untransferred: None,
+            transferred: None,
         };
         let mut session = Session::new(
             "finalizing-report-test",
@@ -1941,7 +2008,7 @@ mod tests {
             retry_count: None,
             rate_limit: None,
             write_latency: None,
-            untransferred: None,
+            transferred: None,
         };
         let mut session = Session::new(
             "bounded-policy-test",
@@ -2053,7 +2120,7 @@ mod tests {
             retry_count: None,
             rate_limit: None,
             write_latency: None,
-            untransferred: None,
+            transferred: None,
         };
         let policy = || Policy {
             mode: Mode::Manual,
@@ -2143,7 +2210,7 @@ mod tests {
             retry_count: None,
             rate_limit: None,
             write_latency: None,
-            untransferred: None,
+            transferred: None,
         };
         let snapshots = Mutex::new(Vec::new());
         let emit = |update| snapshots.lock().unwrap().push(update);
@@ -2261,7 +2328,7 @@ mod tests {
                 retry_count: None,
                 rate_limit: None,
                 write_latency: None,
-                untransferred: None,
+                transferred: None,
             };
             let snapshots = Mutex::new(Vec::new());
             let emit = |update| snapshots.lock().unwrap().push(update);
@@ -2396,7 +2463,7 @@ mod tests {
             retry_count: None,
             rate_limit: None,
             write_latency: None,
-            untransferred: None,
+            transferred: None,
         };
         let policy = || Policy {
             mode: Mode::Manual,
@@ -2500,7 +2567,7 @@ mod tests {
             retry_count: None,
             rate_limit: None,
             write_latency: None,
-            untransferred: None,
+            transferred: None,
         };
         let active_policy = Policy {
             mode: Mode::Automatic,
@@ -2606,7 +2673,7 @@ mod tests {
             retry_count: None,
             rate_limit: None,
             write_latency: None,
-            untransferred: None,
+            transferred: None,
         };
         let policy = || Policy::default();
         let mut session = Session::new(
@@ -2723,7 +2790,7 @@ mod tests {
                 retry_count: None,
                 rate_limit: None,
                 write_latency: None,
-                untransferred: None,
+                transferred: None,
             };
             let policy = || Policy {
                 mode: Mode::Manual,
@@ -2803,7 +2870,7 @@ mod tests {
             retry_count: None,
             rate_limit: None,
             write_latency: None,
-            untransferred: None,
+            transferred: None,
         };
         let policy = || Policy {
             mode: Mode::Manual,
@@ -2876,7 +2943,7 @@ mod tests {
             retry_count: None,
             rate_limit: None,
             write_latency: None,
-            untransferred: None,
+            transferred: None,
         };
         let ctx = CopyContext {
             progress: &progress,
@@ -2961,7 +3028,7 @@ mod tests {
             retry_count: None,
             rate_limit: None,
             write_latency: None,
-            untransferred: None,
+            transferred: None,
         };
         let ctx = CopyContext {
             progress: &progress,
@@ -3092,7 +3159,7 @@ mod tests {
             retry_count: None,
             rate_limit: None,
             write_latency: None,
-            untransferred: None,
+            transferred: None,
         };
         let policy = || Policy {
             mode: Mode::Manual,

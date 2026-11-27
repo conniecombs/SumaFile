@@ -111,6 +111,36 @@ fn move_to_trash_empty_selection_returns_tracked_paths_array() {
 }
 
 #[test]
+fn trash_and_restore_each_answer_one_outcome_per_path() {
+    let mut state = SessionState {
+        handshake_done: true,
+        ..SessionState::default()
+    };
+    for (id, method) in [(31, "move_to_trash_each"), (32, "restore_recycle_bin_each")] {
+        let empty = reply(dispatch(
+            &mut state,
+            &request(method, id, json!({ "paths": [] })),
+        ));
+        assert_eq!(empty.result.unwrap(), json!([]), "{method}");
+
+        let missing = std::env::temp_dir()
+            .join(format!("sumafile-each-missing-{}-{id}", std::process::id()))
+            .to_string_lossy()
+            .to_string();
+        let response = reply(dispatch(
+            &mut state,
+            &request(method, id, json!({ "paths": [missing.clone()] })),
+        ));
+        // The call itself succeeds; the path that could not be done says why.
+        let outcomes = response.result.unwrap();
+        assert_eq!(outcomes.as_array().map(Vec::len), Some(1), "{method}");
+        assert_eq!(outcomes[0]["path"], json!(missing), "{method}");
+        assert_eq!(outcomes[0]["result"], Value::Null, "{method}");
+        assert!(outcomes[0]["error"].is_string(), "{method}");
+    }
+}
+
+#[test]
 fn handshake_requires_configured_token() {
     let mut state = SessionState::default();
     let handshake = dispatch(

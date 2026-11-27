@@ -1,0 +1,16 @@
+{
+  "jsonrpc": "2.0",
+  "id": 31,
+  "result": [
+    {
+      "path": "C:\\Users\\Public\\Photos\\a.jpg",
+      "result": "C:\\$Recycle.Bin\\S-1-5-21-1\\$RABC123.jpg",
+      "error": null
+    },
+    {
+      "path": "C:\\Users\\Public\\Photos\\b.jpg",
+      "result": null,
+      "error": "C:\\Users\\Public\\Photos\\b.jpg: The process cannot access the file because it is being used by another process. (os error 32)"
+    }
+  ]
+}

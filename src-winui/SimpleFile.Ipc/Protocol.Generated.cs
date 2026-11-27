@@ -7,7 +7,7 @@ namespace SimpleFile.Ipc;
 
 public static partial class Protocol
 {
-    public const int DomainMethodCount = 82;
+    public const int DomainMethodCount = 84;
     public const byte BinaryListDirectoryChunk = 1;
     public const byte BinaryListDirectoryResult = 2;
     public const byte BinarySearchResultsBatch = 3;
@@ -39,6 +39,8 @@ public static partial class Protocol
     public const string DeleteEntryMethod = "delete_entry";
     public const string MoveToTrashMethod = "move_to_trash";
     public const string RestoreRecycleBinMethod = "restore_recycle_bin";
+    public const string MoveToTrashEachMethod = "move_to_trash_each";
+    public const string RestoreRecycleBinEachMethod = "restore_recycle_bin_each";
     public const string EmptyRecycleBinMethod = "empty_recycle_bin";
     public const string RenameEntryMethod = "rename_entry";
     public const string BatchRenameMethod = "batch_rename";
@@ -135,6 +137,8 @@ public static partial class Protocol
         "delete_entry",
         "move_to_trash",
         "restore_recycle_bin",
+        "move_to_trash_each",
+        "restore_recycle_bin_each",
         "empty_recycle_bin",
         "rename_entry",
         "batch_rename",

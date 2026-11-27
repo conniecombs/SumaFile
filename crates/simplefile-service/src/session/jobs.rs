@@ -115,7 +115,7 @@ pub(super) fn spawn_archive_operation(
             current_item,
             status: status.to_string(),
             error,
-            untransferred: 0,
+            transferred: 0,
         };
         events
             .emit_progress_async(&update("running", 0, 0, item.clone(), None))
@@ -138,7 +138,7 @@ pub(super) fn spawn_archive_operation(
                 current_item: progress.current_item.unwrap_or_else(|| item.clone()),
                 status: "running".to_string(),
                 error: None,
-                untransferred: 0,
+                transferred: 0,
             }
         };
         let task_operation_id = operation_id.clone();
@@ -1142,7 +1142,7 @@ pub(super) fn spawn_duplicate_check(
                 current_item: queued_directory,
                 status: "queued".to_string(),
                 error: None,
-                untransferred: 0,
+                transferred: 0,
             })
             .await;
         let start = std::time::Instant::now();
@@ -1161,7 +1161,7 @@ pub(super) fn spawn_duplicate_check(
                         current_item: item.to_string(),
                         status: "running".to_string(),
                         error: None,
-                        untransferred: 0,
+                        transferred: 0,
                     });
                 };
                 scan_duplicate_check(
@@ -1222,7 +1222,7 @@ pub(super) fn spawn_disk_cleanup(
                 current_item: queued_directory,
                 status: "queued".to_string(),
                 error: None,
-                untransferred: 0,
+                transferred: 0,
             })
             .await;
         let scheduler_for_task = scheduler.clone();
@@ -1240,7 +1240,7 @@ pub(super) fn spawn_disk_cleanup(
                         current_item: item.to_string(),
                         status: "running".to_string(),
                         error: None,
-                        untransferred: 0,
+                        transferred: 0,
                     });
                 };
                 scan_disk_cleanup(&directory, size_threshold, &cancel_for_task, emit)

@@ -1,7 +1,7 @@
 //! Copy and move execution with progress callbacks.
 
 use super::parallel::ConflictAction;
-use super::reporting::{CopyContext, PROGRESS_BYTE_STEP};
+use super::reporting::{CopyContext, PROGRESS_BYTE_STEP, PROGRESS_TIME_STEP};
 use super::resources::PooledBuffer;
 use super::tuning::CheckMode;
 use crate::transfer_reliability::{Failure, FailureKind, Retry};
@@ -18,7 +18,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use sumafile_transfer::ops::{record as count, Op};
 
 const OVERLAPPED_RING_SLOTS: usize = 3;
@@ -597,6 +597,7 @@ fn copy_file_overlapped_with_hash(
     let cancel = ctx.progress.cancel;
     let mut copied = resume_from;
     let mut next_emit_at = ((resume_from / PROGRESS_BYTE_STEP) + 1) * PROGRESS_BYTE_STEP;
+    let mut emitted_at = Instant::now();
     let mut write_result: Result<(), Failure> = Ok(());
 
     std::thread::scope(|scope| {
@@ -664,7 +665,7 @@ fn copy_file_overlapped_with_hash(
                     ctx.progress.write_finished(write_started, read);
                     let _ = free_tx.send(buf);
                     copied = copied.saturating_add(read as u64);
-                    if copied >= next_emit_at {
+                    if copied >= next_emit_at || emitted_at.elapsed() >= PROGRESS_TIME_STEP {
                         ctx.progress.emit(
                             completed_bytes + copied,
                             src.to_string_lossy().into(),
@@ -672,6 +673,7 @@ fn copy_file_overlapped_with_hash(
                             None,
                         );
                         next_emit_at = copied.saturating_add(PROGRESS_BYTE_STEP);
+                        emitted_at = Instant::now();
                     }
                 }
                 Ok(Err(read_failure)) => {
@@ -742,6 +744,7 @@ pub(crate) fn copy_file_multistream(
     let cancel = ctx.progress.cancel;
     let rate_limit = ctx.progress.rate_limit;
     let write_latency = ctx.progress.write_latency;
+    let transferred = ctx.progress.transferred;
 
     let chunk_align = (buffer_size as u64).max(64 * 1024);
     let raw_stripe = file_len.div_ceil(stream_count as u64);
@@ -871,6 +874,9 @@ pub(crate) fn copy_file_multistream(
                     offset += read_total as u64;
                     stripe_copied += read_total as u64;
                     copied_ref.fetch_add(read_total as u64, Ordering::Relaxed);
+                    if let Some(transferred) = transferred {
+                        transferred.fetch_add(read_total as u64, Ordering::Relaxed);
+                    }
                 }
                 let _ = tx.send(Ok(stripe_copied));
             });
@@ -880,6 +886,7 @@ pub(crate) fn copy_file_multistream(
         let mut finished = 0usize;
         let mut first_err: Option<Failure> = None;
         let mut next_emit_at = PROGRESS_BYTE_STEP;
+        let mut emitted_at = Instant::now();
         while finished < stream_count {
             if let Err(err) = ctx.progress.check_cancelled() {
                 stripe_cancel.store(true, Ordering::Relaxed);
@@ -900,7 +907,9 @@ pub(crate) fn copy_file_multistream(
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
             }
             let current_copied = copied_atomic.load(Ordering::Relaxed);
-            if current_copied >= next_emit_at && first_err.is_none() {
+            if (current_copied >= next_emit_at || emitted_at.elapsed() >= PROGRESS_TIME_STEP)
+                && first_err.is_none()
+            {
                 ctx.progress.emit(
                     completed_bytes.saturating_add(current_copied),
                     src.to_string_lossy().into(),
@@ -908,6 +917,7 @@ pub(crate) fn copy_file_multistream(
                     None,
                 );
                 next_emit_at = current_copied.saturating_add(PROGRESS_BYTE_STEP);
+                emitted_at = Instant::now();
             }
         }
         if let Some(err) = first_err {
@@ -1069,6 +1079,7 @@ fn copy_file_stream_with_hash(
     };
     let mut copied = resume_from;
     let mut next_emit_at = ((resume_from / PROGRESS_BYTE_STEP) + 1) * PROGRESS_BYTE_STEP;
+    let mut emitted_at = Instant::now();
     while copied < file_len {
         ctx.progress.check_cancelled()?;
         let requested = buffer_size.min((file_len - copied) as usize);
@@ -1098,7 +1109,7 @@ fn copy_file_stream_with_hash(
             .map_err(|e| Failure::io("Write temporary destination", dst, e).restart_file())?;
         ctx.progress.write_finished(write_started, read);
         copied += read as u64;
-        if copied >= next_emit_at {
+        if copied >= next_emit_at || emitted_at.elapsed() >= PROGRESS_TIME_STEP {
             ctx.progress.emit(
                 completed_bytes + copied,
                 src.to_string_lossy().into(),
@@ -1106,6 +1117,7 @@ fn copy_file_stream_with_hash(
                 None,
             );
             next_emit_at = copied.saturating_add(PROGRESS_BYTE_STEP);
+            emitted_at = Instant::now();
         }
     }
     ctx.progress.finalizing(
@@ -1416,7 +1428,7 @@ pub(crate) fn copy_file_with_progress_versioned(
                     ctx.progress.cancel,
                     &ctx.policy,
                     lease.as_mut().expect("staged copy has an ownership lease"),
-                    written_file.as_ref(),
+                    written_file.take(),
                     |delay, reason| {
                         if let Some(limiter) = ctx.progress.rate_limit {
                             limiter.retrying(delay, reason);

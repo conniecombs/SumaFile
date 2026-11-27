@@ -369,6 +369,7 @@ public class NamedPipeJsonClientTests
                 TotalFiles = 2,
                 CurrentItem = @"C:\a.txt",
                 Status = "running",
+                Transferred = 3,
             }));
         await server.SendResultAsync(request.Id, new HealthResult { Ok = true, ProtocolVersion = 1 });
         await invoke;
@@ -378,6 +379,7 @@ public class NamedPipeJsonClientTests
         Assert.Single(progress);
         Assert.Equal("op_1", progress[0].OperationId);
         Assert.Equal(8ul, progress[0].Total);
+        Assert.Equal(3ul, progress[0].Transferred);
     }
 
     [Fact]

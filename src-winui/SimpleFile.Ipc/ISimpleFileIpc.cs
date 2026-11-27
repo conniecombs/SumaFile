@@ -77,6 +77,10 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task DeleteEntryAsync(string path, CancellationToken ct = default);
     Task<string[]> MoveToTrashAsync(string[] paths, CancellationToken ct = default);
     Task<string[]> RestoreRecycleBinAsync(string[] paths, CancellationToken ct = default);
+    /// <summary>Trashes each path, going on past one that fails; one outcome per path, in order.</summary>
+    Task<PathOutcome[]> MoveToTrashEachAsync(string[] paths, CancellationToken ct = default);
+    /// <summary>Restores each Recycle Bin item, going on past one that fails; one outcome per item, in order.</summary>
+    Task<PathOutcome[]> RestoreRecycleBinEachAsync(string[] paths, CancellationToken ct = default);
     Task EmptyRecycleBinAsync(CancellationToken ct = default);
     Task<string> RenameEntryAsync(string path, string newName, CancellationToken ct = default);
     Task<string[]> BatchRenameAsync(RenameRequest[] entries, CancellationToken ct = default);

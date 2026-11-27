@@ -147,11 +147,12 @@ pub struct ProgressUpdate {
     pub current_item: String,
     pub status: String, // "running", "finalizing", "completed", "error", "cancelled"
     pub error: Option<String>,
-    /// Bytes of `current` that were not transferred: files skipped, found
-    /// already at the destination, or moved by renaming them. They count
-    /// toward the percentage, not toward the speed.
+    /// Bytes written to destinations in this pass so far, a count that only
+    /// grows: a file copied again is counted again. The speed is measured on
+    /// it. Files skipped, found already at the destination or moved by
+    /// renaming them count toward `current`, not toward it.
     #[serde(default)]
-    pub untransferred: u64,
+    pub transferred: u64,
 }
 
 /// File system change event
@@ -388,6 +389,36 @@ pub struct ThumbnailResult {
     pub path: String,
     pub data: Option<Vec<u8>>,
     pub error: Option<String>,
+}
+
+/// What a call that works through several paths did with one of them. Such a call goes on past a
+/// path it cannot handle and answers one outcome for each path, in the order it was given.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PathOutcome {
+    pub path: String,
+    /// What the path became: the Recycle Bin item it went to, or where an item was restored.
+    /// `None` when that is not known, even though the path was done.
+    pub result: Option<String>,
+    /// Why the path was not done; `None` when it was.
+    pub error: Option<String>,
+}
+
+impl PathOutcome {
+    pub fn done(path: &str, result: Option<String>) -> Self {
+        Self {
+            path: path.to_string(),
+            result,
+            error: None,
+        }
+    }
+
+    pub fn failed(path: &str, error: String) -> Self {
+        Self {
+            path: path.to_string(),
+            result: None,
+            error: Some(error),
+        }
+    }
 }
 
 // ============================================================================

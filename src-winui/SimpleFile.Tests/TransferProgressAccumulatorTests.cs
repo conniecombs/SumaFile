@@ -6,6 +6,36 @@ namespace SimpleFile.Tests;
 
 public class TransferProgressAccumulatorTests
 {
+    /// <summary>
+    /// The bytes written, which the speed is measured on, were left out of the update the accumulator builds once it
+    /// carries an earlier pass, so in every pass after Retry a skipped or already-copied file counted as speed. They
+    /// are carried over like the bytes done, so that they keep growing from one pass to the next.
+    /// </summary>
+    [Fact]
+    public void Apply_CarriesTheBytesWrittenIntoTheNextPass()
+    {
+        var accumulator = new TransferProgressAccumulator();
+        accumulator.BeginPass("pass-1");
+        accumulator.Apply(Update("pass-1", current: 30, total: 100, written: 30));
+        accumulator.CompletePass([], _ => (0, 0));
+        accumulator.BeginPass("pass-2");
+
+        var retried = accumulator.Apply(Update("pass-2", current: 50, total: 70, written: 10));
+
+        Assert.Equal(80UL, retried.Current);
+        Assert.Equal(40UL, retried.Transferred);
+    }
+
+    private static ProgressUpdate Update(string operationId, ulong current, ulong total, ulong written) => new()
+    {
+        OperationId = operationId,
+        OperationType = "copy",
+        Current = current,
+        Total = total,
+        Transferred = written,
+        Status = "running",
+    };
+
     [Fact]
     public void SeedPreDecidedConflicts_IncludesSkippedFilesInCompletedAndTotalProgress()
     {

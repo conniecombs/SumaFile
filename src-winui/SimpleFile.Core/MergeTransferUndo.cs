@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using SimpleFile.Ipc;
 
 namespace SimpleFile.Core;
@@ -5,10 +6,13 @@ namespace SimpleFile.Core;
 /// <summary>
 /// Replays only changes made by this transfer, including its exact conflict retries.
 ///
-/// The files are undone and redone in batches, a few calls to the service instead of one per file, and each
-/// file's state is read from the disk afterwards: a file that is no longer at the place the step would take
-/// it from counts as done. So a step that failed part-way goes on with what is left when it is run again,
-/// and a file the user has dealt with since does not block the rest.
+/// The files are undone and redone in batches, a few calls to the service instead of one per file. A file
+/// counts as done when the service says it did it. When the service could not say (the call failed as a
+/// whole), the disk is asked, and only an answer that rules out a file the user put there counts. Before a
+/// call, a file counts as already undone only when the disk says it is missing from where the transfer put it,
+/// not when the check fails; and Redo leaves out, and says so, a file that is missing from where it would take
+/// it from. So a step that failed part-way goes on with what is left when it is run again, and a file the user
+/// has dealt with since does not block the rest.
 /// </summary>
 internal static class MergeTransferUndo
 {
@@ -29,7 +33,14 @@ internal static class MergeTransferUndo
         public bool Undone { get; set; }
     }
 
-    internal static UndoEntry? Create(IReadOnlyList<TransferResult> results, FileOperationService ops, bool move)
+    private sealed record Context(FileOperationService Ops, bool Move, Func<string, PathExistence> Existence)
+    {
+        public bool Missing(string path) => Existence(path) == PathExistence.Missing;
+        public bool Exists(string path) => Existence(path) == PathExistence.Exists;
+    }
+
+    internal static UndoEntry? Create(
+        IReadOnlyList<TransferResult> results, FileOperationService ops, bool move, Func<string, PathExistence> existence)
     {
         var directories = new List<Step>();
         var files = new List<FileItem>();
@@ -53,10 +64,12 @@ internal static class MergeTransferUndo
         }
 
         if (directories.Count + files.Count + removed.Count == 0) return null;
+        var context = new Context(ops, move, existence);
         // Each list advances only after a successful operation, so a retry resumes at the failed step.
         var directoriesDone = directories.Count;
         var removedDone = removed.Count;
-        return new UndoEntry
+        UndoEntry? entry = null;
+        entry = new UndoEntry
         {
             Description = $"{(move ? "Move" : "Copy")} {results.Count} {(results.Count == 1 ? "item" : "items")}",
             Undo = async ct =>
@@ -69,7 +82,7 @@ internal static class MergeTransferUndo
                     removedDone--;
                 }
 
-                await UndoFilesAsync(files, ops, move, ct).ConfigureAwait(false);
+                await UndoFilesAsync(files, context, ct).ConfigureAwait(false);
                 while (directoriesDone > 0)
                 {
                     ct.ThrowIfCancellationRequested();
@@ -86,20 +99,27 @@ internal static class MergeTransferUndo
                     directoriesDone++;
                 }
 
-                await RedoFilesAsync(files, ops, move, ct).ConfigureAwait(false);
+                var leftOut = await RedoFilesAsync(files, context, ct).ConfigureAwait(false);
                 while (removedDone < removed.Count)
                 {
                     ct.ThrowIfCancellationRequested();
                     await removed[removedDone].Redo(ct).ConfigureAwait(false);
                     removedDone++;
                 }
+
+                entry!.Notice = leftOut == 0
+                    ? null
+                    : leftOut == 1
+                        ? "1 file was left out: it is no longer where Redo would take it from."
+                        : $"{leftOut} files were left out: they are no longer where Redo would take them from.";
             },
         };
+        return entry;
     }
 
-    private static async Task UndoFilesAsync(
-        List<FileItem> files, FileOperationService ops, bool move, CancellationToken ct)
+    private static async Task UndoFilesAsync(List<FileItem> files, Context context, CancellationToken ct)
     {
+        var shortfall = new Shortfall(context.Move ? "moved back" : "removed");
         var batch = new List<FileItem>();
         for (var index = files.Count - 1; index >= 0; index--)
         {
@@ -107,9 +127,10 @@ internal static class MergeTransferUndo
             var file = files[index];
             if (file.Undone) continue;
             CheckParents(file.DestinationRoot, file.Destination);
-            if (!NativePath.ExistsNoFollow(file.Destination))
+            if (context.Missing(file.Destination))
             {
-                // Not where the transfer put it: already undone, or dealt with by the user since.
+                // Not where the transfer put it: already undone, or dealt with by the user since. A file whose
+                // check failed (a long path, a share that is offline) may still be there, so it is sent.
                 file.Undone = true;
                 file.RecyclePath = null;
                 continue;
@@ -117,61 +138,79 @@ internal static class MergeTransferUndo
 
             if (file.DestinationRoot is not null && NativePath.IsDirectoryNoFollow(file.Destination))
                 throw new IOException($"A folder now occupies the copied file's path: {file.Destination}");
-            if (move) CheckParents(file.SourceRoot, file.Source);
-            batch.Add(file);
-            if (batch.Count == BatchSize || (move && batch.Count > 0 && !SameRoot(batch[0], file)))
+            if (context.Move) CheckParents(file.SourceRoot, file.Source);
+            // A call holds the files of one transferred item, whose folder it is given: checked before the file
+            // is added, so the first file of the next item does not go out with the previous item's files.
+            if (batch.Count == BatchSize || (context.Move && batch.Count > 0 && !SameRoot(batch[0], file)))
             {
-                await UndoBatchAsync(batch, ops, move, ct).ConfigureAwait(false);
+                await UndoBatchAsync(batch, context, shortfall, ct).ConfigureAwait(false);
                 batch.Clear();
             }
+
+            batch.Add(file);
         }
 
-        if (batch.Count > 0) await UndoBatchAsync(batch, ops, move, ct).ConfigureAwait(false);
+        if (batch.Count > 0) await UndoBatchAsync(batch, context, shortfall, ct).ConfigureAwait(false);
+        shortfall.ThrowIfAny();
     }
 
     private static async Task UndoBatchAsync(
-        List<FileItem> batch, FileOperationService ops, bool move, CancellationToken ct)
+        List<FileItem> batch, Context context, Shortfall shortfall, CancellationToken ct)
     {
-        try
+        if (context.Move)
         {
-            if (move)
+            var items = batch
+                .Select(file => new TransferItemRequest
+                {
+                    Source = file.Destination, Destination = file.Source, Action = "create-only",
+                })
+                .ToArray();
+            var folder = PassFolder(batch[0].SourceRoot, batch[0].Source);
+            var report = await TransferReport.RunAsync(
+                () => context.Ops.MoveItemsAsync(items, folder, ct: ct)).ConfigureAwait(false);
+            foreach (var file in batch)
             {
-                var items = batch
-                    .Select(file => new TransferItemRequest
-                    {
-                        Source = file.Destination, Destination = file.Source, Action = "create-only",
-                    })
-                    .ToArray();
-                await ops.MoveItemsAsync(items, PassFolder(batch[0].SourceRoot, batch[0].Source), ct: ct)
-                    .ConfigureAwait(false);
+                // Moved back by the call; or, when it could not say, gone from the destination and at its source.
+                file.Undone = report.Done(file.Destination)
+                    ?? (context.Missing(file.Destination) && context.Exists(file.Source));
+                if (!file.Undone) shortfall.Add(report.Reason(file.Destination));
+            }
+
+            report.ThrowIfCancelled();
+            return;
+        }
+
+        var paths = batch.Select(file => file.Destination).ToArray();
+        var outcomes = await OutcomeReport.RunAsync(() => context.Ops.TrashEachAsync(paths, ct), paths)
+            .ConfigureAwait(false);
+        for (var index = 0; index < batch.Count; index++)
+        {
+            var file = batch[index];
+            if (outcomes[index] is { Done: true } outcome)
+            {
+                // Its Recycle Bin item, so Redo brings this copy back; without one, Redo copies the file again.
+                file.Undone = true;
+                file.RecyclePath = outcome.Result;
+            }
+            else if (context.Missing(file.Destination))
+            {
+                // Gone all the same, though not to a Recycle Bin item the step knows.
+                file.Undone = true;
+                file.RecyclePath = null;
             }
             else
             {
-                var recycled = await ops.TrashAsync(batch.Select(file => file.Destination).ToArray(), ct)
-                    .ConfigureAwait(false);
-                // One Recycle Bin path for each file, in order; otherwise Redo copies the file again.
-                for (var index = 0; index < batch.Count; index++)
-                    batch[index].RecyclePath = recycled.Length == batch.Count ? recycled[index] : null;
-            }
-        }
-        finally
-        {
-            // Also after a failure: the service goes on past a file it cannot handle, so some are done.
-            foreach (var file in batch)
-            {
-                file.Undone = !NativePath.ExistsNoFollow(file.Destination);
-                if (!file.Undone) file.RecyclePath = null;
+                shortfall.Add(outcomes.Reason(index));
             }
         }
 
-        var left = batch.Count(file => !file.Undone);
-        if (left > 0)
-            throw new IOException($"{left} of {batch.Count} files could not be {(move ? "moved back" : "removed")}.");
+        outcomes.ThrowIfCancelled();
     }
 
-    private static async Task RedoFilesAsync(
-        List<FileItem> files, FileOperationService ops, bool move, CancellationToken ct)
+    /// <summary>Returns how many files were left out because they are missing from where Redo would take them.</summary>
+    private static async Task<int> RedoFilesAsync(List<FileItem> files, Context context, CancellationToken ct)
     {
+        var shortfall = new Shortfall(context.Move ? "moved again" : "copied again");
         var restore = new List<FileItem>();
         var transfer = new List<FileItem>();
         foreach (var file in files)
@@ -179,58 +218,106 @@ internal static class MergeTransferUndo
             ct.ThrowIfCancellationRequested();
             if (!file.Undone) continue;
             CheckParents(file.DestinationRoot, file.Destination);
-            if (file.RecyclePath is not null)
+            if (file.RecyclePath is null)
             {
-                if (NativePath.ExistsNoFollow(file.Destination))
-                    throw new IOException($"The destination already exists: {file.Destination}");
+                transfer.Add(file);
+            }
+            else if (context.Exists(file.Destination))
+            {
+                // Something has the copy's name since: restored, the copy would go beside it under another name.
+                shortfall.Add($"The destination already exists: {file.Destination}");
+            }
+            else
+            {
                 restore.Add(file);
-                if (restore.Count == BatchSize)
-                {
-                    await RestoreBatchAsync(restore, ops, ct).ConfigureAwait(false);
-                    restore.Clear();
-                }
-
-                continue;
             }
-
-            CheckParents(file.SourceRoot, file.Source);
-            if (!NativePath.ExistsNoFollow(file.Source) && NativePath.ExistsNoFollow(file.Destination))
-            {
-                // Already where the transfer put it.
-                file.Undone = false;
-                continue;
-            }
-
-            if (transfer.Count == BatchSize || (transfer.Count > 0 && !SameRoot(transfer[0], file)))
-            {
-                await TransferBatchAsync(transfer, ops, move, ct).ConfigureAwait(false);
-                transfer.Clear();
-            }
-
-            transfer.Add(file);
         }
 
-        if (restore.Count > 0) await RestoreBatchAsync(restore, ops, ct).ConfigureAwait(false);
-        if (transfer.Count > 0) await TransferBatchAsync(transfer, ops, move, ct).ConfigureAwait(false);
+        foreach (var batch in restore.Chunk(BatchSize))
+            await RestoreBatchAsync(batch, context, shortfall, transfer, ct).ConfigureAwait(false);
+
+        var leftOut = 0;
+        var pass = new List<FileItem>();
+        foreach (var file in transfer)
+        {
+            ct.ThrowIfCancellationRequested();
+            CheckParents(file.SourceRoot, file.Source);
+            if (context.Missing(file.Source))
+            {
+                // No longer where Redo would take it from: it stays undone, and the step says so.
+                leftOut++;
+                continue;
+            }
+
+            if (pass.Count == BatchSize || (pass.Count > 0 && !SameRoot(pass[0], file)))
+            {
+                await TransferBatchAsync(pass, context, shortfall, ct).ConfigureAwait(false);
+                pass.Clear();
+            }
+
+            pass.Add(file);
+        }
+
+        if (pass.Count > 0) await TransferBatchAsync(pass, context, shortfall, ct).ConfigureAwait(false);
+        shortfall.ThrowIfAny();
+        return leftOut;
     }
 
-    private static async Task RestoreBatchAsync(List<FileItem> batch, FileOperationService ops, CancellationToken ct)
+    /// <summary>
+    /// Restores the copies of <paramref name="batch"/>. A copy whose Recycle Bin item is gone (the Recycle Bin was
+    /// emptied) goes to <paramref name="transfer"/>, to be copied again from its source.
+    /// </summary>
+    private static async Task RestoreBatchAsync(
+        FileItem[] batch, Context context, Shortfall shortfall, List<FileItem> transfer, CancellationToken ct)
     {
-        var restored = await ops.RestoreRecycleBinAsync(batch.Select(file => file.RecyclePath!).ToArray(), ct)
+        var items = batch.Select(file => file.RecyclePath!).ToArray();
+        var outcomes = await OutcomeReport.RunAsync(() => context.Ops.RestoreRecycleBinEachAsync(items, ct), items)
             .ConfigureAwait(false);
-        if (restored.Length != batch.Count)
-            throw new IOException($"{batch.Count - restored.Length} of {batch.Count} files could not be restored.");
-        for (var index = 0; index < batch.Count; index++)
+        for (var index = 0; index < batch.Length; index++)
         {
-            batch[index].Destination = restored[index];
-            batch[index].RecyclePath = null;
-            batch[index].Undone = false;
+            var file = batch[index];
+            if (outcomes[index] is { Done: true } outcome)
+            {
+                if (!string.IsNullOrEmpty(outcome.Result)) file.Destination = outcome.Result;
+                Restored(file);
+                continue;
+            }
+
+            // The service failed, or could not say. The destination was free before the call, so a copy back at
+            // its place with its Recycle Bin item gone was restored by it.
+            if (context.Missing(file.RecyclePath!))
+            {
+                if (context.Exists(file.Destination))
+                {
+                    Restored(file);
+                    continue;
+                }
+
+                if (context.Missing(file.Destination))
+                {
+                    file.RecyclePath = null;
+                    transfer.Add(file);
+                    continue;
+                }
+            }
+
+            shortfall.Add(outcomes.Reason(index));
+        }
+
+        outcomes.ThrowIfCancelled();
+
+        static void Restored(FileItem file)
+        {
+            file.RecyclePath = null;
+            file.Undone = false;
         }
     }
 
     private static async Task TransferBatchAsync(
-        List<FileItem> batch, FileOperationService ops, bool move, CancellationToken ct)
+        List<FileItem> batch, Context context, Shortfall shortfall, CancellationToken ct)
     {
+        // A destination taken before the call is not the call's work: create-only refuses it.
+        var freeBefore = batch.Select(file => context.Missing(file.Destination)).ToArray();
         var items = batch
             .Select(file => new TransferItemRequest
             {
@@ -238,19 +325,143 @@ internal static class MergeTransferUndo
             })
             .ToArray();
         var folder = PassFolder(batch[0].DestinationRoot, batch[0].Destination);
-        try
+        var report = await TransferReport.RunAsync(() => context.Move
+                ? context.Ops.MoveItemsAsync(items, folder, ct: ct)
+                : context.Ops.CopyItemsAsync(items, folder, ct: ct))
+            .ConfigureAwait(false);
+        for (var index = 0; index < batch.Count; index++)
         {
-            if (move) await ops.MoveItemsAsync(items, folder, ct: ct).ConfigureAwait(false);
-            else await ops.CopyItemsAsync(items, folder, ct: ct).ConfigureAwait(false);
-        }
-        finally
-        {
-            foreach (var file in batch) file.Undone = !NativePath.ExistsNoFollow(file.Destination);
+            var file = batch[index];
+            // Done when the service says it committed the file. A conflict with a file the user put there is not.
+            var done = report.Done(file.Source)
+                ?? (freeBefore[index] && context.Exists(file.Destination)
+                    && (!context.Move || context.Missing(file.Source)));
+            file.Undone = !done;
+            if (!done) shortfall.Add(report.Reason(file.Source));
         }
 
-        var left = batch.Count(file => file.Undone);
-        if (left > 0)
-            throw new IOException($"{left} of {batch.Count} files could not be {(move ? "moved" : "copied")} again.");
+        report.ThrowIfCancelled();
+    }
+
+    /// <summary>What a pass over the files could not do, for the message of the step when it fails.</summary>
+    private sealed class Shortfall(string verb)
+    {
+        private string? _reason;
+
+        public int Count { get; private set; }
+
+        public void Add(string? reason)
+        {
+            Count++;
+            _reason ??= reason;
+        }
+
+        public void ThrowIfAny()
+        {
+            if (Count == 0) return;
+            var files = Count == 1 ? "1 file" : $"{Count} files";
+            throw new IOException(string.IsNullOrWhiteSpace(_reason)
+                ? $"{files} could not be {verb}."
+                : $"{files} could not be {verb}. {_reason}");
+        }
+    }
+
+    /// <summary>What one copy or move call of the service said about each file it was given, by source path.</summary>
+    private sealed class TransferReport
+    {
+        private readonly HashSet<string> _committed = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, string> _failed = new(StringComparer.Ordinal);
+        private Exception? _error;
+
+        public static async Task<TransferReport> RunAsync(Func<Task<TransferResult[]>> call)
+        {
+            var report = new TransferReport();
+            try
+            {
+                report.Commit(await call().ConfigureAwait(false));
+            }
+            catch (TransferOperationException exception)
+            {
+                report.Commit(exception.Outcome.Committed);
+                foreach (var failure in exception.Outcome.Failed)
+                    report._failed.TryAdd(PathRules.NormalizeComparablePath(failure.Source), failure.Error);
+                report._error = exception;
+            }
+            catch (TransferCanceledException exception)
+            {
+                report.Commit(exception.Committed);
+                report._error = exception;
+            }
+            catch (Exception exception)
+            {
+                // Nothing said about any file: the disk is asked instead.
+                report._error = exception;
+            }
+
+            return report;
+        }
+
+        /// <summary>True when the call says it committed the file, false when it says it did not, null when it said nothing.</summary>
+        public bool? Done(string source)
+        {
+            var key = PathRules.NormalizeComparablePath(source);
+            return _committed.Contains(key) ? true : _failed.ContainsKey(key) ? false : null;
+        }
+
+        public string? Reason(string source) =>
+            _failed.TryGetValue(PathRules.NormalizeComparablePath(source), out var error) ? error : _error?.Message;
+
+        /// <summary>A cancelled call cancels the step, once what it did is recorded.</summary>
+        public void ThrowIfCancelled()
+        {
+            if (_error is OperationCanceledException) ExceptionDispatchInfo.Throw(_error);
+        }
+
+        private void Commit(IEnumerable<TransferResult> results)
+        {
+            foreach (var result in results) _committed.Add(PathRules.NormalizeComparablePath(result.Source));
+        }
+    }
+
+    /// <summary>What a call that answers one <see cref="PathOutcome"/> per path said about each path.</summary>
+    private sealed class OutcomeReport
+    {
+        private readonly string[] _paths;
+        private PathOutcome[]? _outcomes;
+        private Exception? _error;
+
+        private OutcomeReport(string[] paths) => _paths = paths;
+
+        public static async Task<OutcomeReport> RunAsync(Func<Task<PathOutcome[]>> call, string[] paths)
+        {
+            var report = new OutcomeReport(paths);
+            try
+            {
+                report._outcomes = await call().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                // Nothing said about any path: the disk is asked instead.
+                report._error = exception;
+            }
+
+            return report;
+        }
+
+        /// <summary>The outcome of the path at <paramref name="index"/>; null when the call did not answer for it.</summary>
+        public PathOutcome? this[int index] =>
+            _outcomes is { } outcomes && outcomes.Length == _paths.Length
+                && PathRules.PathsEqual(outcomes[index].Path, _paths[index])
+                ? outcomes[index]
+                : null;
+
+        public string? Reason(int index) => this[index]?.Error ?? _error?.Message;
+
+        /// <summary>A cancelled call cancels the step, once what it did is recorded.</summary>
+        public void ThrowIfCancelled()
+        {
+            if (_error is OperationCanceledException) ExceptionDispatchInfo.Throw(_error);
+        }
     }
 
     /// <summary>The files of one call belong to one transferred item, whose folder the call is given.</summary>

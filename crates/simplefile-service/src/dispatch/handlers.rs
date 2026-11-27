@@ -242,6 +242,33 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
             }
             Err(r) => Dispatch::Reply(r),
         },
+        METHOD_MOVE_TO_TRASH_EACH => match parse_params::<PathsParams>(request) {
+            Ok(p) => {
+                let cache = state.cache.clone();
+                reply_blocking(request, BlockingLane::General, move || {
+                    let outcomes = simplefile_core::file_ops::move_to_trash_each(&p.paths);
+                    cache.invalidate_paths(&p.paths);
+                    Ok::<_, String>(outcomes)
+                })
+            }
+            Err(r) => Dispatch::Reply(r),
+        },
+        METHOD_RESTORE_RECYCLE_BIN_EACH => match parse_params::<PathsParams>(request) {
+            Ok(p) => {
+                let cache = state.cache.clone();
+                reply_blocking(request, BlockingLane::General, move || {
+                    let outcomes = simplefile_core::recycle_bin::restore_recycle_bin_each(&p.paths);
+                    cache.invalidate_paths(&p.paths);
+                    cache.invalidate_paths(
+                        outcomes
+                            .iter()
+                            .filter_map(|outcome| outcome.result.as_deref()),
+                    );
+                    Ok::<_, String>(outcomes)
+                })
+            }
+            Err(r) => Dispatch::Reply(r),
+        },
         METHOD_EMPTY_RECYCLE_BIN => reply_blocking(request, BlockingLane::General, || {
             simplefile_core::recycle_bin::empty_recycle_bin().map(|()| Value::Null)
         }),

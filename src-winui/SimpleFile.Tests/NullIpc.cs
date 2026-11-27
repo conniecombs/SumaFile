@@ -79,6 +79,10 @@ internal abstract class NullIpc : ISimpleFileIpc
 
     public virtual Task<string[]> RestoreRecycleBinAsync(string[] paths, CancellationToken ct = default) => throw NotConfigured();
 
+    public virtual Task<PathOutcome[]> MoveToTrashEachAsync(string[] paths, CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task<PathOutcome[]> RestoreRecycleBinEachAsync(string[] paths, CancellationToken ct = default) => throw NotConfigured();
+
     public virtual Task EmptyRecycleBinAsync(CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task<string> RenameEntryAsync(string path, string newName, CancellationToken ct = default) => throw NotConfigured();

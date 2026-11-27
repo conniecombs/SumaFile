@@ -213,6 +213,10 @@ pub struct RateLimit {
     mib: AtomicU64,
     pacer: Pacer,
     group: Option<Arc<RateGroup>>,
+    /// Held by the one thread of this task that waits in the group's line:
+    /// the line has one place per task, not one per copy thread, so a task
+    /// copying with many threads gets no more turns than one copying with one.
+    group_place: Mutex<()>,
     retry_status: Mutex<Option<(Instant, String)>>,
 }
 
@@ -361,6 +365,7 @@ impl RateLimit {
             mib: AtomicU64::new(mib as u64),
             pacer: Pacer::new(),
             group: None,
+            group_place: Mutex::new(()),
             retry_status: Mutex::new(None),
         }
     }
@@ -372,11 +377,12 @@ impl RateLimit {
             group: Some(group.clone()),
             ..Self::new(mib)
         });
-        group
-            .members
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(Arc::downgrade(&limit));
+        let mut members = group.members.lock().unwrap_or_else(|e| e.into_inner());
+        // Finished tasks go here too: their entries were dropped only while
+        // a task with a limit waited, which without a limit never happens.
+        members.retain(|member| member.strong_count() > 0);
+        members.push(Arc::downgrade(&limit));
+        drop(members);
         group.pacer.wake();
         limit
     }
@@ -422,6 +428,7 @@ impl RateLimit {
                         group.bytes_per_second()
                     }
                 };
+                let _place = self.group_place.lock().unwrap_or_else(|e| e.into_inner());
                 group.pacer.wait_turn(turn, &shared, cancel)?;
             }
             left -= turn;
@@ -658,8 +665,11 @@ mod tests {
         assert!(started.elapsed() >= Duration::from_millis(800));
     }
 
+    /// A task whose limit is removed while it waits in the group's line is
+    /// released within a turn. (Leaving the line at once, without finishing
+    /// its turn, saves at most that turn: the line has one place per task.)
     #[test]
-    fn a_task_waiting_in_the_group_is_released_when_its_limit_is_removed() {
+    fn a_task_waiting_in_the_group_is_released_within_a_turn_when_its_limit_is_removed() {
         let group = RateGroup::new();
         let first = RateLimit::in_group(1, &group);
         let second = RateLimit::in_group(1, &group);
@@ -675,6 +685,51 @@ mod tests {
             stop.store(true, Ordering::Relaxed);
             let _ = other.join().unwrap();
         });
+    }
+
+    /// Each copy thread took a place of its own in the group's line, so a task
+    /// copying with four threads got four turns for each turn of a task
+    /// copying with one: about 8 and 2 of a shared 10 MiB/s.
+    #[test]
+    fn tasks_share_a_group_by_task_not_by_thread() {
+        let group = RateGroup::new();
+        let many = RateLimit::in_group(4, &group);
+        let one = RateLimit::in_group(4, &group);
+        let stop = AtomicBool::new(false);
+        let granted = [AtomicU64::new(0), AtomicU64::new(0)];
+        std::thread::scope(|scope| {
+            for (index, limit, threads) in [(0, &many, 4), (1, &one, 1)] {
+                for _ in 0..threads {
+                    let (stop, granted) = (&stop, &granted);
+                    scope.spawn(move || {
+                        while limit.wait(128 * 1024, stop).is_ok() {
+                            granted[index].fetch_add(128 * 1024, Ordering::Relaxed);
+                        }
+                    });
+                }
+            }
+            std::thread::sleep(Duration::from_millis(2500));
+            stop.store(true, Ordering::Relaxed);
+        });
+        let [many, one] = granted.map(|bytes| bytes.load(Ordering::Relaxed) as f64);
+        let share = one / (many + one);
+        assert!(
+            share > 0.35,
+            "the task with one thread got {:.0}%",
+            share * 100.0
+        );
+    }
+
+    /// The group dropped a finished task's entry only while a task with a
+    /// limit waited in it, which with no limit set never happened.
+    #[test]
+    fn a_group_forgets_finished_tasks_without_a_limit() {
+        let group = RateGroup::new();
+        for _ in 0..100 {
+            drop(RateLimit::in_group(0, &group));
+        }
+        let _running = RateLimit::in_group(0, &group);
+        assert!(group.members.lock().unwrap().len() <= 1);
     }
 
     #[test]

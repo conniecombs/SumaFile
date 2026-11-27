@@ -1,6 +1,6 @@
 {
   "protocolVersion": 1,
-  "domainMethodCount": 82,
+  "domainMethodCount": 84,
   "methods": {
     "ipc.handshake": {
       "kind": "handshake",
@@ -95,6 +95,16 @@
     "delete_entry": { "params": { "path": "string" }, "result": "null" },
     "move_to_trash": { "params": { "paths": "string[]" }, "result": "string[]" },
     "restore_recycle_bin": { "params": { "paths": "string[]" }, "result": "string[]" },
+    "move_to_trash_each": {
+      "params": { "paths": "string[]" },
+      "result": "PathOutcome[]",
+      "notes": "move_to_trash that goes on past a path it cannot move and answers one PathOutcome per path, in order; result is the Recycle Bin item when it is found. The call fails only when its params are invalid."
+    },
+    "restore_recycle_bin_each": {
+      "params": { "paths": "string[]" },
+      "result": "PathOutcome[]",
+      "notes": "restore_recycle_bin that goes on past an item it cannot restore and answers one PathOutcome per item, in order; result is the path the item was restored to. The call fails only when its params are invalid."
+    },
     "empty_recycle_bin": { "params": null, "result": "null" },
     "rename_entry": { "params": { "path": "string", "newName": "string" }, "result": "string" },
     "batch_rename": { "params": { "entries": "RenameRequest[]" }, "result": "string[]" },

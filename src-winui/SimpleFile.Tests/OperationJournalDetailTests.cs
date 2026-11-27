@@ -149,4 +149,34 @@ public sealed class OperationJournalDetailTests : IDisposable
         // The newest line is always in the journal itself.
         Assert.Equal("op-99", journal.ReadEntries()[^1].OperationId);
     }
+
+    /// <summary>
+    /// B7: when the full journal cannot be set aside (the kept file is read-only or locked, or another instance
+    /// holds the journal), the line is added to it all the same, and the failure is logged once. Every line was
+    /// dropped from then on.
+    /// </summary>
+    [Fact]
+    public void ALineIsWrittenAllTheSameWhenTheJournalCannotStartAgain()
+    {
+        var logged = new List<string>();
+        var journal = new OperationJournal(_path, maxBytes: 2_000, logged.Add);
+        // A folder holds the name the earlier lines are kept under, so they cannot be moved there.
+        Directory.CreateDirectory(_path + ".1");
+        try
+        {
+            for (var index = 0; index < 50; index++)
+            {
+                journal.Started("copy", $"op-{index}", [@"C:\a-reasonably-long-source-path\file.bin"], @"C:\dest");
+            }
+
+            var entries = journal.ReadEntries();
+            Assert.Equal(50, entries.Count);
+            Assert.Equal("op-49", entries[^1].OperationId);
+            Assert.Single(logged);
+        }
+        finally
+        {
+            Directory.Delete(_path + ".1", recursive: true);
+        }
+    }
 }

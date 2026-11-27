@@ -124,6 +124,21 @@ public sealed class FileOperationService : ISettingsBackend
         return _ipc.RestoreRecycleBinAsync(paths, ct);
     }
 
+    /// <summary>
+    /// Moves each path to the Recycle Bin, going on past one that fails, and answers one outcome for each
+    /// path in order: what was done is known even when another path failed.
+    /// </summary>
+    public Task<PathOutcome[]> TrashEachAsync(string[] paths, CancellationToken ct = default)
+    {
+        return _ipc.MoveToTrashEachAsync(paths, ct);
+    }
+
+    /// <summary>Restores each Recycle Bin item, going on past one that fails; one outcome for each item, in order.</summary>
+    public Task<PathOutcome[]> RestoreRecycleBinEachAsync(string[] paths, CancellationToken ct = default)
+    {
+        return _ipc.RestoreRecycleBinEachAsync(paths, ct);
+    }
+
     public Task EmptyRecycleBinAsync(CancellationToken ct = default)
     {
         return _ipc.EmptyRecycleBinAsync(ct);

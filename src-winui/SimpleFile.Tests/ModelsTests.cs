@@ -8,6 +8,25 @@ namespace SimpleFile.Tests;
 public class ModelsTests
 {
     [Fact]
+    public void PathOutcome_DeserializesTheGoldenOfMoveToTrashEach()
+    {
+        var golden = File.ReadAllText(Path.Combine(
+            UiAuditSprint3Tests.FindRepoRoot(), "..", "ipc", "schema", "v1", "goldens", "move_to_trash_each.result.json"));
+        using var document = JsonDocument.Parse(golden);
+
+        var outcomes = document.RootElement.GetProperty("result").Deserialize<PathOutcome[]>(IpcJson.Options);
+
+        Assert.NotNull(outcomes);
+        Assert.Equal(2, outcomes.Length);
+        Assert.True(outcomes[0].Done);
+        Assert.Equal(@"C:\Users\Public\Photos\a.jpg", outcomes[0].Path);
+        Assert.Equal(@"C:\$Recycle.Bin\S-1-5-21-1\$RABC123.jpg", outcomes[0].Result);
+        Assert.False(outcomes[1].Done);
+        Assert.Null(outcomes[1].Result);
+        Assert.StartsWith(@"C:\Users\Public\Photos\b.jpg: ", outcomes[1].Error);
+    }
+
+    [Fact]
     public void FileEntry_DeserializesSnakeCaseGolden()
     {
         const string json = """

@@ -733,13 +733,26 @@ impl FolderRecord {
         self.written
             .store(written + line.len() as u64, Ordering::Relaxed);
         // The other files of the folder add their lines while this one waits
-        // for the disk; the flush writes theirs too, which does no harm.
+        // for the disk; the flush writes theirs too, which does no harm. It
+        // goes through a handle of its own: Windows carries out the requests
+        // on one handle opened without overlapped I/O one after another, so a
+        // flush on the record's handle held up the other files' writes on it.
         drop(writing);
         if durable {
             #[cfg(test)]
             pause::at(pause::Point::Flush, &self.path);
-            crate::ops::record(crate::ops::Op::Flush, &self.path);
-            self.file.sync_all().map_err(|e| {
+            crate::ops::record(crate::ops::Op::Open, &self.path);
+            let flushed = match OpenOptions::new().write(true).open(&self.path) {
+                Ok(own) => {
+                    crate::ops::record(crate::ops::Op::Flush, &self.path);
+                    own.sync_all()
+                }
+                Err(_) => {
+                    crate::ops::record(crate::ops::Op::Flush, &self.path);
+                    self.file.sync_all()
+                }
+            };
+            flushed.map_err(|e| {
                 format!("Persist transfer ownership [{}]: {e}", self.path.display())
             })?;
         }
@@ -1763,6 +1776,34 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// A file's own record gets a line each time the lease changes it (a
+    /// backup recorded, a completion marked). Each line ends with its own
+    /// newline: recovery reads the last complete line, and a line written
+    /// straight after another without one read as no line at all.
+    #[test]
+    fn an_own_record_written_twice_holds_two_complete_lines() {
+        let root = root();
+        let destination = root.join("direct.bin");
+        let mut lease = StagingLease::begin("source", &destination, &destination, false).unwrap();
+        let existing = root.join("aside");
+        fs::write(&existing, b"aside").unwrap();
+        lease.backup_intent(&existing, &existing).unwrap();
+        let path = record_path(&destination).unwrap();
+        let bytes = fs::read(&path).unwrap();
+
+        assert!(bytes.ends_with(b"\n"));
+        let lines: Vec<&[u8]> = bytes
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .collect();
+        assert_eq!(lines.len(), 2, "{}", String::from_utf8_lossy(&bytes));
+        for line in lines {
+            serde_json::from_slice::<Record>(line).expect("each line is a whole record");
+        }
+        drop(lease);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     /// Version 1.1.5 named the record of a file written directly under its
     /// final name with another hash: the record was found, then passed over
     /// because its name was not the one this version gives it, and the
@@ -2263,7 +2304,7 @@ mod tests {
             lease: &mut StagingLease,
             stage: &Path,
             destination: &Path,
-            handle: Option<&File>,
+            handle: Option<File>,
         ) -> Result<(), crate::reliability::Failure> {
             crate::staging::promote_leased_with_policy(
                 stage,
@@ -2283,11 +2324,27 @@ mod tests {
         let mut lease = records.begin("source", &destination, &stage, None).unwrap();
         let mut written = lease.take_staged_file().unwrap();
         written.write_all(b"first").unwrap();
-        promote(&mut lease, &stage, &destination, Some(&written)).unwrap();
-        drop(written);
+        let counter = crate::ops::Counter::under(&root);
+        promote(&mut lease, &stage, &destination, Some(written)).unwrap();
+        let counts = counter.counts();
+        drop(counter);
         lease.finish().unwrap();
         assert_eq!(fs::read(&destination).unwrap(), b"first");
         assert!(!stage.exists());
+        // Through the handle: one rename and nothing looked up by path. A
+        // rename through the handle that always failed would rename by path
+        // and pass the checks above all the same.
+        if cfg!(windows) {
+            assert_eq!(
+                (
+                    counts.get(crate::ops::Op::Rename),
+                    counts.get(crate::ops::Op::Stat)
+                ),
+                (1, 0),
+                "{}",
+                counts.describe()
+            );
+        }
 
         // Through a handle opened without delete access, as a later attempt
         // opens the partial file: by path.
@@ -2297,8 +2354,7 @@ mod tests {
         drop(lease.take_staged_file());
         let mut reopened = OpenOptions::new().write(true).open(&stage).unwrap();
         reopened.write_all(b"second").unwrap();
-        promote(&mut lease, &stage, &destination, Some(&reopened)).unwrap();
-        drop(reopened);
+        promote(&mut lease, &stage, &destination, Some(reopened)).unwrap();
         lease.finish().unwrap();
         assert_eq!(fs::read(&destination).unwrap(), b"second");
         assert!(!stage.exists());
@@ -2310,8 +2366,7 @@ mod tests {
         let mut lease = records.begin("source", &destination, &stage, None).unwrap();
         let mut written = lease.take_staged_file().unwrap();
         written.write_all(b"new").unwrap();
-        let error = promote(&mut lease, &stage, &destination, Some(&written)).unwrap_err();
-        drop(written);
+        let error = promote(&mut lease, &stage, &destination, Some(written)).unwrap_err();
         assert!(error.is_conflict(), "{error}");
         assert_eq!(fs::read(&destination).unwrap(), b"someone else's");
         assert_eq!(fs::read(&stage).unwrap(), b"new");

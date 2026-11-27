@@ -8,6 +8,8 @@ mod execute;
 mod fidelity;
 mod parallel;
 mod plan;
+#[cfg(test)]
+mod readout;
 mod registry;
 mod reporting;
 mod tuning;
@@ -546,7 +548,7 @@ fn transfer_with_policy_blocking(
     let total_bytes = Arc::new(AtomicU64::new(0));
     let total_files = Arc::new(AtomicU64::new(0));
     let completed_files = Arc::new(AtomicU64::new(0));
-    let untransferred = AtomicU64::new(0);
+    let transferred = AtomicU64::new(0);
     let progress = ProgressContext {
         emit,
         operation_id: &operation_id,
@@ -559,7 +561,7 @@ fn transfer_with_policy_blocking(
         retry_count: None,
         rate_limit: None,
         write_latency: None,
-        untransferred: Some(&untransferred),
+        transferred: Some(&transferred),
     };
     // The first event precedes every volume probe and destination scan.
     progress.emit_now(0, 0, "Preparing transfer...".to_string(), "running", None);
@@ -674,7 +676,6 @@ fn transfer_with_policy_blocking(
     total_files.store(initial_total_files, Ordering::Relaxed);
     completed_files.store(planned_skipped_files, Ordering::Relaxed);
     // Skipped while planning: done, and never transferred.
-    untransferred.store(planned_skipped_bytes, Ordering::Relaxed);
     progress.emit_with_total(
         planned_skipped_bytes,
         initial_total_bytes,
@@ -1888,7 +1889,7 @@ mod tests {
             retry_count: None,
             rate_limit: None,
             write_latency: None,
-            untransferred: None,
+            transferred: None,
         };
         let ctx = CopyContext {
             progress: &progress,
@@ -1943,7 +1944,7 @@ mod tests {
             retry_count: None,
             rate_limit: None,
             write_latency: None,
-            untransferred: None,
+            transferred: None,
         };
         let ctx = CopyContext {
             progress: &progress,
@@ -2002,7 +2003,7 @@ mod tests {
             retry_count: None,
             rate_limit: None,
             write_latency: None,
-            untransferred: None,
+            transferred: None,
         };
         let ctx = CopyContext {
             progress: &progress,
@@ -2089,7 +2090,7 @@ mod tests {
             retry_count: None,
             rate_limit: None,
             write_latency: None,
-            untransferred: None,
+            transferred: None,
         };
         let ctx = CopyContext {
             progress: &progress,
@@ -3148,7 +3149,7 @@ mod tests {
             retry_count: None,
             rate_limit: None,
             write_latency: None,
-            untransferred: None,
+            transferred: None,
         };
 
         progress.emit_with_total(1, 100, "first".to_string(), "running", None);

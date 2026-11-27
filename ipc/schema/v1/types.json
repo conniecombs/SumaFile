@@ -63,8 +63,8 @@
     },
     "ProgressUpdate": {
       "source": "crates/simplefile-core/src/models.rs",
-      "fields": ["operation_id", "operation_type", "current", "total", "current_files", "total_files", "current_item", "status", "error", "untransferred"],
-      "notes": "untransferred: the bytes of current that were not transferred (files skipped, found already at the destination, or moved by renaming them); they count toward the percentage, not toward the speed."
+      "fields": ["operation_id", "operation_type", "current", "total", "current_files", "total_files", "current_item", "status", "error", "transferred"],
+      "notes": "transferred: bytes written to destinations in this pass so far, a count that only grows (a file copied again is counted again); the speed is measured on it. Files skipped, found already at the destination or moved by renaming them count toward current, not toward it."
     },
     "FileChangeEvent": {
       "source": "crates/simplefile-core/src/models.rs",
@@ -184,6 +184,11 @@
     "RenameRequest": {
       "source": "crates/simplefile-core/src/file_ops.rs",
       "fields": ["path", "new_name"]
+    },
+    "PathOutcome": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["path", "result", "error"],
+      "notes": "One path of move_to_trash_each or restore_recycle_bin_each. error is null when the path was done; result is what the path became (its Recycle Bin item, or where it was restored), null when that is not known."
     },
     "TransferResult": {
       "source": "crates/simplefile-service/src/progress.rs",

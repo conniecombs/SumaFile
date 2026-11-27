@@ -7,6 +7,12 @@ public sealed class UndoEntry
     public required string Description { get; init; }
     public required Func<CancellationToken, Task> Undo { get; init; }
     public required Func<CancellationToken, Task> Redo { get; init; }
+
+    /// <summary>
+    /// What the last run of <see cref="Undo"/> or <see cref="Redo"/> left out, in a sentence for the status line;
+    /// null when it did everything.
+    /// </summary>
+    public string? Notice { get; set; }
 }
 
 /// <summary>
@@ -19,12 +25,23 @@ public sealed class UndoStack
 
     private static string Items(int count) => count == 1 ? "1 item" : $"{count} items";
 
+    /// <summary>How Undo and Redo check whether a path is there; tests give their own.</summary>
+    internal Func<string, PathExistence> Existence { get; init; } = NativePath.Existence;
+
+    /// <summary>
+    /// Whether the file system says nothing is at <paramref name="path"/>. A check that fails (access denied, a
+    /// share that is offline) is not "missing": the item may still be there.
+    /// </summary>
+    private bool Missing(string path) => Existence(path) == PathExistence.Missing;
+
     public bool CanUndo => _undo.Count > 0;
     public bool CanRedo => _redo.Count > 0;
     /// <summary>The entry Undo would run next.</summary>
     public UndoEntry? NextUndo => _undo.Count > 0 ? _undo.Peek() : null;
     public string? NextUndoDescription => _undo.Count > 0 ? _undo.Peek().Description : null;
     public string? NextRedoDescription => _redo.Count > 0 ? _redo.Peek().Description : null;
+    /// <summary>What the last Undo or Redo that succeeded left out (<see cref="UndoEntry.Notice"/>); null when nothing.</summary>
+    public string? LastNotice { get; private set; }
     public IReadOnlyList<string> History => _undo.Reverse().Select(entry => entry.Description).ToList();
     public IReadOnlyList<UndoEntry> Entries => _undo.Reverse().ToList();
 
@@ -45,31 +62,46 @@ public sealed class UndoStack
     {
         if (transferred.Any(item => item.Changes is not null))
         {
-            var entry = MergeTransferUndo.Create(transferred, ops, move: false);
+            var entry = MergeTransferUndo.Create(transferred, ops, move: false, Existence);
             if (entry is not null) Push(entry);
             return;
         }
 
         var items = transferred.ToArray();
         var currentDestinations = items.Select(item => item.Destination).ToArray();
-        // Set by an Undo that failed: the copies that were found gone afterwards.
+        // The copies that are gone: removed by an Undo, or missing when it ran. Redo makes each of them again.
         var removed = new bool[items.Length];
-        string[] pendingDestinations() => currentDestinations.Where((_, index) => !removed[index]).ToArray();
         Push(new UndoEntry
         {
             Description = $"Copy {Items(items.Length)}",
             Undo = async ct =>
             {
+                var pending = Enumerable.Range(0, items.Length).Where(index => !removed[index]).ToArray();
+                if (pending.Length == 0)
+                {
+                    return;
+                }
+
                 try
                 {
-                    await ops.TrashAsync(pendingDestinations(), ct).ConfigureAwait(false);
+                    await ops.TrashAsync(pending.Select(index => currentDestinations[index]).ToArray(), ct)
+                        .ConfigureAwait(false);
+                    foreach (var index in pending)
+                    {
+                        removed[index] = true;
+                    }
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException)
                 {
-                    // The service goes on past a copy it cannot remove. A copy that is gone by now needs
-                    // nothing more; asked for again, it would fail this step every time.
-                    removed = currentDestinations.Select(path => !NativePath.ExistsNoFollow(path)).ToArray();
-                    if (removed.All(gone => gone))
+                    // The service goes on past a copy it cannot remove. A copy that is missing by now needs
+                    // nothing more; asked for again, it would fail this step every time. One that could not be
+                    // checked may still be there.
+                    foreach (var index in pending)
+                    {
+                        removed[index] = Missing(currentDestinations[index]);
+                    }
+
+                    if (pending.All(index => removed[index]))
                     {
                         return;
                     }
@@ -81,6 +113,12 @@ public sealed class UndoStack
             {
                 for (var index = 0; index < items.Length; index++)
                 {
+                    // A copy an Undo that failed left in place is still there.
+                    if (!removed[index])
+                    {
+                        continue;
+                    }
+
                     var item = items[index];
                     var parent = PathRules.GetParentPath(item.Destination) ?? item.Destination;
                     var recreated = await ops.CopyEntryResolvedAsync(item.Source, parent, "rename", ct).ConfigureAwait(false);
@@ -88,6 +126,8 @@ public sealed class UndoStack
                     {
                         currentDestinations[index] = recreated;
                     }
+
+                    removed[index] = false;
                 }
             },
         });
@@ -113,7 +153,7 @@ public sealed class UndoStack
                     recyclePath = recyclePaths.FirstOrDefault();
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException
-                    && !NativePath.ExistsNoFollow(currentPath))
+                    && Missing(currentPath))
                 {
                     // Gone by now: there is nothing to remove, and Redo creates it again.
                     recyclePath = null;
@@ -159,7 +199,7 @@ public sealed class UndoStack
                     recyclePath = recyclePaths.FirstOrDefault();
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException
-                    && !NativePath.ExistsNoFollow(currentPath))
+                    && Missing(currentPath))
                 {
                     // Gone by now: there is nothing to remove, and Redo creates it again.
                     recyclePath = null;
@@ -191,7 +231,7 @@ public sealed class UndoStack
     {
         if (transferred.Any(item => item.Changes is not null))
         {
-            var entry = MergeTransferUndo.Create(transferred, ops, move: true);
+            var entry = MergeTransferUndo.Create(transferred, ops, move: true, Existence);
             if (entry is not null) Push(entry);
             return;
         }
@@ -230,7 +270,7 @@ public sealed class UndoStack
                         movedBack = await ops.MoveEntryResolvedAsync(currentDestinations[index], parent, "rename", ct).ConfigureAwait(false);
                     }
                     catch (Exception exception) when (exception is not OperationCanceledException
-                        && !NativePath.ExistsNoFollow(currentDestinations[index]))
+                        && Missing(currentDestinations[index]))
                     {
                         // No longer where the move put it: there is nothing to move back.
                         gone[index] = true;
@@ -386,7 +426,9 @@ public sealed class UndoStack
             return;
         }
 
+        LastNotice = null;
         var entry = _undo.Pop();
+        entry.Notice = null;
         try
         {
             await entry.Undo(cancellationToken).ConfigureAwait(false);
@@ -397,6 +439,7 @@ public sealed class UndoStack
             throw;
         }
 
+        LastNotice = entry.Notice;
         _redo.Push(entry);
     }
 
@@ -407,7 +450,9 @@ public sealed class UndoStack
             return;
         }
 
+        LastNotice = null;
         var entry = _redo.Pop();
+        entry.Notice = null;
         try
         {
             await entry.Redo(cancellationToken).ConfigureAwait(false);
@@ -418,6 +463,7 @@ public sealed class UndoStack
             throw;
         }
 
+        LastNotice = entry.Notice;
         _undo.Push(entry);
     }
 }

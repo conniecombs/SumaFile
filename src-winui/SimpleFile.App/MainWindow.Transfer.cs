@@ -1397,20 +1397,38 @@ public sealed partial class MainWindow
         var utilityCts = BeginUtilityOperation("UndoLastAsync");
         try
         {
-            await workspace.Undo.UndoAsync(utilityCts.Token);
+            try
+            {
+                await workspace.Undo.UndoAsync(utilityCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (Exception exception)
+            {
+                ShowUndoFailure(workspace, failed, exception.Message);
+                return;
+            }
+
             ClearTransferUndoable();
             if (ReferenceEquals(_workspace, workspace) && !utilityCts.IsCancellationRequested)
             {
-                await workspace.RefreshAffectedPanesAsync(VisiblePanePaths(workspace), utilityCts.Token);
-                SetStatusText(string.IsNullOrWhiteSpace(description) ? "Undone" : $"Undid: {description}");
+                // The step is undone by now: a refresh that fails is reported on its own, not as a failed Undo.
+                var undone = string.IsNullOrWhiteSpace(description) ? "Undone" : $"Undid: {description}";
+                try
+                {
+                    await workspace.RefreshAffectedPanesAsync(VisiblePanePaths(workspace), utilityCts.Token);
+                    SetStatusText(undone);
+                }
+                catch (OperationCanceledException)
+                {
+                }
+                catch (Exception exception)
+                {
+                    ShowMessage("Undo", $"{undone}. The folder view could not be refreshed: {exception.Message}", InfoBarSeverity.Warning);
+                }
             }
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (Exception exception)
-        {
-            ShowUndoFailure(workspace, failed, exception.Message);
         }
         finally
         {
@@ -1434,7 +1452,7 @@ public sealed partial class MainWindow
             if (ReferenceEquals(_workspace, workspace) && !utilityCts.IsCancellationRequested)
             {
                 await workspace.RefreshAffectedPanesAsync(VisiblePanePaths(workspace), utilityCts.Token);
-                SetStatusText("Redone");
+                SetStatusText(workspace.Undo.LastNotice is { } notice ? $"Redone. {notice}" : "Redone");
             }
         }
         catch (OperationCanceledException)

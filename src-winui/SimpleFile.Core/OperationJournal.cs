@@ -13,14 +13,24 @@ public sealed class OperationJournal
 
     private readonly object _gate = new();
     private readonly long _maxBytes;
+    private readonly Action<string> _log;
+    /// <summary>The last attempt to start the journal again failed; logged once until one works.</summary>
+    private bool _restartFailing;
 
     public OperationJournal(string path, long maxBytes = DefaultMaxBytes)
+        : this(path, maxBytes, message => StartupTrace.WriteInstant("OperationJournal", "rotate", message))
+    {
+    }
+
+    /// <summary>A journal that hands what it cannot do to <paramref name="log"/> (tests).</summary>
+    internal OperationJournal(string path, long maxBytes, Action<string> log)
     {
         if (string.IsNullOrWhiteSpace(path))
             throw new ArgumentException("Journal path cannot be empty.", nameof(path));
 
         Path = path;
         _maxBytes = maxBytes;
+        _log = log;
     }
 
     public string Path { get; }
@@ -98,7 +108,9 @@ public sealed class OperationJournal
 
     /// <summary>
     /// The journal was appended to and never trimmed. A full one is kept beside the new one under the same
-    /// name with ".1" added, which replaces the one kept before.
+    /// name with ".1" added, which replaces the one kept before. When it cannot be (the kept file is read-only
+    /// or locked, or another instance holds the journal), the line still goes to the full one: the failure is
+    /// logged once, and the next line tries again.
     /// </summary>
     private void StartAgainWhenLarge()
     {
@@ -108,7 +120,27 @@ public sealed class OperationJournal
             return;
         }
 
-        File.Move(Path, Path + ".1", overwrite: true);
+        try
+        {
+            File.Move(Path, Path + ".1", overwrite: true);
+            _restartFailing = false;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            if (_restartFailing)
+            {
+                return;
+            }
+
+            _restartFailing = true;
+            try
+            {
+                _log($"{Path} could not be started again, so lines go on being added to it: {exception.Message}");
+            }
+            catch
+            {
+            }
+        }
     }
 }
 

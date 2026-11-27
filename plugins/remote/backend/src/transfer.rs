@@ -996,17 +996,10 @@ fn transfer_file(
                     Failure::io("Finalize local temporary destination", &staging, e)
                 })?;
             }
-            // Every byte is in: the file loses the Hidden attribute of a
-            // partial file before it gets its name.
-            sumafile_transfer::staging::clear_hidden(&writer.destination).map_err(|e| {
-                Failure::io(
-                    "Clear the Hidden attribute of the local temporary destination",
-                    &staging,
-                    e,
-                )
-            })?;
             let expected_hash = writer.hasher.take().map(ContentHasher::finish);
-            drop(writer);
+            // The handle is kept for the Hidden attribute, cleared once the
+            // file has passed its checks.
+            let ObservedWriter { destination, .. } = writer;
             if let Some(expected_hash) = expected_hash {
                 // Compare the bytes persisted locally and a fresh remote read.
                 let mut local_file = File::open(&staging)
@@ -1040,6 +1033,17 @@ fn transfer_file(
                     false,
                 ));
             }
+            // Every byte is in and checked: the file loses the Hidden
+            // attribute of a partial file before it gets its name. A drive
+            // that refuses is no reason to fail the download, as for a local
+            // copy; the file is then published hidden, and the log says so.
+            if let Err(error) = sumafile_transfer::staging::clear_hidden(&destination) {
+                log::warn!(
+                    "{} keeps the Hidden attribute of its temporary file: {error}",
+                    target
+                );
+            }
+            drop(destination);
             Ok(count)
         });
         let result = result.and_then(|count| {

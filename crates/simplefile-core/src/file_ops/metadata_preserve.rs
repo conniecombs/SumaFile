@@ -1,9 +1,11 @@
 use std::fs;
 use std::path::Path;
 
-/// The source's times and attributes applied to `dst` by path. Used for
-/// directories and symlinks, and by callers without an open destination handle.
-/// Files written through an open handle use `apply_basic_metadata_to_handle`.
+/// The source's times and attributes applied to `dst` by path. Used for the
+/// folders a transfer creates, and by callers without an open destination
+/// handle. Files written through an open handle use
+/// `apply_basic_metadata_to_handle`. A link is followed, on both sides: called
+/// for one, this would change its target.
 ///
 /// Security descriptors are deliberately not copied: like Explorer, a copied
 /// file inherits the permissions of the folder it lands in.
@@ -120,6 +122,7 @@ pub fn apply_basic_metadata_to_handle(
     info.LastWriteTime = source.last_write_time() as i64;
     // Zero leaves the change time to the system.
     info.ChangeTime = 0;
+    let own_attributes = info.FileAttributes;
     info.FileAttributes = carried_attributes(info.FileAttributes, source.file_attributes());
 
     let Err(both) = set_basic_info(handle, &info) else {
@@ -136,18 +139,49 @@ pub fn apply_basic_metadata_to_handle(
         FileAttributes: 0,
         ..info
     };
-    match (
-        set_basic_info(handle, &attributes_only),
-        set_basic_info(handle, &times_only),
-    ) {
+    let attributes = set_basic_info(handle, &attributes_only).inspect_err(|_| {
+        // A destination that refuses one of the carried attributes (System,
+        // not indexed) refuses them all. Whether the copy can be seen, and
+        // whether it is read-only, are set on their own.
+        set_visibility(handle, own_attributes, source.file_attributes());
+    });
+    match (attributes, set_basic_info(handle, &times_only)) {
         (Ok(()), Ok(())) => Ok(()),
         (Ok(()), Err(error)) => Err(format!("The destination refused the file's times: {error}")),
         (Err(error), Ok(())) => Err(format!(
-            "The destination refused the file's attributes: {error}"
+            "The destination refused some of the file's attributes: {error}"
         )),
         (Err(_), Err(_)) => Err(format!(
-            "The destination refused the file's times and attributes: {both}"
+            "The destination refused the file's times and some of its attributes: {both}"
         )),
+    }
+}
+
+/// The copy's own attributes, with the Hidden attribute of its partial file
+/// taken off unless its source is hidden; then with read-only added when its
+/// source is read-only. Each is a set of its own, so that a destination
+/// that refuses read-only still makes the copy visible.
+#[cfg(windows)]
+fn set_visibility(handle: windows_sys::Win32::Foundation::HANDLE, own: u32, source: u32) {
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_READONLY, FILE_BASIC_INFO,
+    };
+    const SETTABLE: u32 = 0x31a7;
+    let only = |attributes: u32| FILE_BASIC_INFO {
+        CreationTime: 0,
+        LastAccessTime: 0,
+        LastWriteTime: 0,
+        ChangeTime: 0,
+        FileAttributes: if attributes == 0 {
+            FILE_ATTRIBUTE_NORMAL
+        } else {
+            attributes
+        },
+    };
+    let visible = (own & SETTABLE & !FILE_ATTRIBUTE_NORMAL & !FILE_ATTRIBUTE_HIDDEN)
+        | (source & FILE_ATTRIBUTE_HIDDEN);
+    if set_basic_info(handle, &only(visible)).is_ok() && source & FILE_ATTRIBUTE_READONLY != 0 {
+        let _ = set_basic_info(handle, &only(visible | FILE_ATTRIBUTE_READONLY));
     }
 }
 
@@ -164,6 +198,13 @@ fn set_basic_info(
         && (info.CreationTime != 0 || info.LastAccessTime != 0 || info.LastWriteTime != 0)
     {
         // What FAT answers for a time it cannot hold.
+        return Err(std::io::Error::from_raw_os_error(87));
+    }
+    #[cfg(test)]
+    if tests::refuses_system()
+        && info.FileAttributes & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_SYSTEM != 0
+    {
+        // What a server answers for an attribute it does not hold.
         return Err(std::io::Error::from_raw_os_error(87));
     }
     let ok = unsafe {
@@ -428,11 +469,17 @@ mod tests {
 
     thread_local! {
         static REFUSE_TIMES: Cell<bool> = const { Cell::new(false) };
+        static REFUSE_SYSTEM: Cell<bool> = const { Cell::new(false) };
     }
 
     /// Whether this thread's destination refuses every time it is given.
     pub(super) fn refuses_times() -> bool {
         REFUSE_TIMES.get()
+    }
+
+    /// Whether this thread's destination refuses the System attribute.
+    pub(super) fn refuses_system() -> bool {
+        REFUSE_SYSTEM.get()
     }
 
     fn folder(label: &str) -> PathBuf {
@@ -635,6 +682,38 @@ mod tests {
             }
             other => panic!("expected a failure, got {other:?}"),
         }
+        remove(&root);
+    }
+
+    /// A destination that refuses one of the attributes a copy carries over
+    /// (System here) refused them all, the Hidden attribute's removal with
+    /// them, and the copy of a file that is not hidden was published hidden.
+    #[test]
+    fn a_destination_that_refuses_one_attribute_still_makes_the_copy_visible() {
+        let root = folder("refused-system");
+        let source = root.join("source.txt");
+        fs::write(&source, b"system").unwrap();
+        set_attributes(&source, FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_READONLY);
+        let copy = root.join("copy.txt");
+        let file = partial(&copy);
+
+        REFUSE_SYSTEM.set(true);
+        let applied = apply_basic_metadata_to_handle(&file, &fs::metadata(&source).unwrap());
+        REFUSE_SYSTEM.set(false);
+        drop(file);
+
+        let error = applied.expect_err("the System attribute was refused");
+        assert!(error.contains("attributes"), "{error}");
+        assert_eq!(
+            attributes(&copy) & FILE_ATTRIBUTE_HIDDEN,
+            0,
+            "the copy is visible"
+        );
+        assert_ne!(
+            attributes(&copy) & FILE_ATTRIBUTE_READONLY,
+            0,
+            "and read-only, as its source"
+        );
         remove(&root);
     }
 

@@ -3,7 +3,7 @@
 //! This module contains host-independent file system operations that are callable
 //! from the service crate, tests, and future tools.
 
-use crate::models::{FileEntry, TreeNode};
+use crate::models::{FileEntry, PathOutcome, TreeNode};
 use crate::path_conflict::{path_collision_key, path_exists_no_follow, rename_exclusive};
 use crate::utils::{
     get_file_entry, validate_existing_path_no_resolve, validate_name, validate_path_no_follow,
@@ -19,9 +19,9 @@ mod metadata_preserve;
 mod shortcut;
 
 pub use folder_metrics::{calculate_folder_size, count_folder_items, get_folder_metrics};
+pub use metadata_preserve::{apply_basic_metadata_to_handle, preserve_basic_metadata};
 #[cfg(windows)]
 pub use metadata_preserve::{copy_alternate_streams, StreamsNotCopied};
-pub use metadata_preserve::{apply_basic_metadata_to_handle, preserve_basic_metadata};
 pub use shortcut::{create_shortcut, ShortcutRequest};
 
 // ============================================================================
@@ -259,19 +259,13 @@ pub fn move_to_trash(paths: &[String]) -> Result<Vec<String>, String> {
     // Keep going past a failed item so one locked or missing file does not
     // abandon the rest of the selection; report every failure at the end.
     for path in &local_paths {
-        let validated = match validate_path_no_follow(path) {
-            Ok(validated) => validated,
-            Err(error) => {
-                failures.push(error);
-                continue;
+        match trash_local(path) {
+            Ok(original) => trashed_original_paths.push(original),
+            Err(failure) => {
+                trash_unavailable |= failure.trash_unavailable;
+                failures.push(failure.message);
             }
-        };
-        if let Err(error) = trash::delete(&validated) {
-            trash_unavailable = true;
-            failures.push(format!("{}: {error}", validated.display()));
-            continue;
         }
-        trashed_original_paths.push(validated.to_string_lossy().to_string());
     }
 
     if !failures.is_empty() {
@@ -291,6 +285,79 @@ pub fn move_to_trash(paths: &[String]) -> Result<Vec<String>, String> {
         &trashed_original_paths,
         &previous_recycle_paths,
     ))
+}
+
+/// Moves each path to the Recycle Bin and answers, path by path in the order given, what became
+/// of it: the Recycle Bin item it went to (`None` when it is not found there) or why it was not
+/// moved. Unlike [`move_to_trash`], a path that fails does not hide what was done with the others.
+pub fn move_to_trash_each(paths: &[String]) -> Vec<PathOutcome> {
+    let previous_recycle_paths = crate::recycle_bin::recycle_bin_data_path_set();
+    let mut outcomes: Vec<PathOutcome> = paths
+        .iter()
+        .map(|path| PathOutcome::done(path, None))
+        .collect();
+
+    // Archive entries are deleted together, as in `move_to_trash`. The archive
+    // does not say which of its entries failed, so a failure counts for each.
+    let archive_indices: Vec<usize> = (0..paths.len())
+        .filter(|&index| crate::archive::is_archive_virtual_path(&paths[index]))
+        .collect();
+    if !archive_indices.is_empty() {
+        let archive_paths: Vec<String> = archive_indices
+            .iter()
+            .map(|&index| paths[index].clone())
+            .collect();
+        let errors = crate::archive::delete_archive_entries(&archive_paths);
+        if !errors.is_empty() {
+            let message = errors.join("; ");
+            for &index in &archive_indices {
+                outcomes[index].error = Some(message.clone());
+            }
+        }
+    }
+
+    let mut trashed: Vec<(usize, String)> = Vec::new();
+    for (index, path) in paths.iter().enumerate() {
+        if crate::archive::is_archive_virtual_path(path) {
+            continue;
+        }
+        match trash_local(path) {
+            Ok(original) => trashed.push((index, original)),
+            Err(failure) => outcomes[index].error = Some(failure.message),
+        }
+    }
+
+    if !trashed.is_empty() {
+        let originals: Vec<String> = trashed.iter().map(|(_, path)| path.clone()).collect();
+        let items = crate::recycle_bin::recycle_bin_items_for_originals(
+            &originals,
+            &previous_recycle_paths,
+        );
+        for ((index, _), item) in trashed.into_iter().zip(items) {
+            outcomes[index].result = item;
+        }
+    }
+
+    outcomes
+}
+
+struct TrashFailure {
+    message: String,
+    /// The Recycle Bin refused the path, rather than the path being invalid.
+    trash_unavailable: bool,
+}
+
+/// Moves one local path to the Recycle Bin and returns the checked path it had.
+fn trash_local(path: &str) -> Result<String, TrashFailure> {
+    let validated = validate_path_no_follow(path).map_err(|message| TrashFailure {
+        message,
+        trash_unavailable: false,
+    })?;
+    trash::delete(&validated).map_err(|error| TrashFailure {
+        message: format!("{}: {error}", validated.display()),
+        trash_unavailable: true,
+    })?;
+    Ok(validated.to_string_lossy().to_string())
 }
 
 // ============================================================================
@@ -569,7 +636,7 @@ fn batch_rename_recovery_error(
 
 #[cfg(all(test, windows))]
 mod tests {
-    use super::{delete_entry, move_to_trash, preserve_basic_metadata};
+    use super::{delete_entry, move_to_trash, move_to_trash_each, preserve_basic_metadata};
     use std::fs;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -670,6 +737,29 @@ mod tests {
         .expect_err("missing paths cannot be trashed");
         assert!(error.contains("missing-one.txt"), "{error}");
         assert!(error.contains("missing-two.txt"), "{error}");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn move_to_trash_each_answers_for_every_path_in_order() {
+        let root = temp_dir("trash-each");
+        let first = root.join("missing-one.txt").to_string_lossy().to_string();
+        let second = root.join("missing-two.txt").to_string_lossy().to_string();
+
+        let outcomes = move_to_trash_each(&[first.clone(), second.clone()]);
+
+        assert_eq!(outcomes.len(), 2);
+        assert_eq!(outcomes[0].path, first);
+        assert_eq!(outcomes[1].path, second);
+        for outcome in &outcomes {
+            assert_eq!(outcome.result, None);
+            let error = outcome
+                .error
+                .as_deref()
+                .expect("a missing path is not trashed");
+            assert!(error.contains(&outcome.path), "{error}");
+        }
+        assert!(move_to_trash_each(&[]).is_empty());
         let _ = fs::remove_dir_all(root);
     }
 

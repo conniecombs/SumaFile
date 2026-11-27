@@ -17,6 +17,10 @@ public sealed class TransferProgressAccumulator
     private ulong _pendingFiles;
     private ulong _passMaxCurrent;
     private ulong _passMaxCurrentFiles;
+    // Bytes written in the earlier passes, and the most this pass has written: the speed is measured on their sum,
+    // which only grows from one pass to the next.
+    private ulong _completedTransferredOffset;
+    private ulong _passMaxTransferred;
 
     public ulong CompletedBytesOffset => _completedBytesOffset;
 
@@ -109,11 +113,13 @@ public sealed class TransferProgressAccumulator
 
         if (_completedBytesOffset == 0
             && _completedFilesOffset == 0
+            && _completedTransferredOffset == 0
             && _pendingBytes == 0
             && _pendingFiles == 0)
         {
             _passMaxCurrent = Math.Max(_passMaxCurrent, update.Current);
             _passMaxCurrentFiles = Math.Max(_passMaxCurrentFiles, update.CurrentFiles);
+            _passMaxTransferred = Math.Max(_passMaxTransferred, update.Transferred);
             return update;
         }
 
@@ -130,6 +136,7 @@ public sealed class TransferProgressAccumulator
 
         _passMaxCurrent = Math.Max(_passMaxCurrent, update.Current);
         _passMaxCurrentFiles = Math.Max(_passMaxCurrentFiles, update.CurrentFiles);
+        _passMaxTransferred = Math.Max(_passMaxTransferred, update.Transferred);
 
         var passTotal = Math.Max(update.Total, update.Current);
         var passTotalFiles = Math.Max(update.TotalFiles, update.CurrentFiles);
@@ -144,6 +151,7 @@ public sealed class TransferProgressAccumulator
             CurrentItem = update.CurrentItem,
             Status = update.Status,
             Error = update.Error,
+            Transferred = _completedTransferredOffset + update.Transferred,
         };
     }
 
@@ -158,8 +166,10 @@ public sealed class TransferProgressAccumulator
     {
         _completedBytesOffset += _passMaxCurrent;
         _completedFilesOffset += _passMaxCurrentFiles;
+        _completedTransferredOffset += _passMaxTransferred;
         _passMaxCurrent = 0;
         _passMaxCurrentFiles = 0;
+        _passMaxTransferred = 0;
         _pendingBytes = 0;
         _pendingFiles = 0;
 

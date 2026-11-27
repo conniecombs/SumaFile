@@ -1,6 +1,6 @@
 //! Recycle Bin listing, restore, and empty for Windows `$Recycle.Bin`.
 
-use crate::models::{DirectoryListing, FileEntry};
+use crate::models::{DirectoryListing, FileEntry, PathOutcome};
 use crate::path_conflict::path_collision_key;
 use crate::utils::{format_system_time, name_looks_hidden};
 use std::collections::HashSet;
@@ -62,6 +62,19 @@ pub fn restore_recycle_bin(paths: &[String]) -> Result<Vec<String>, String> {
     Ok(restored)
 }
 
+/// Restores each Recycle Bin item and answers, item by item in the order given, where it went
+/// back to or why it was not restored. Unlike [`restore_recycle_bin`], an item that cannot be
+/// restored neither stops the others nor hides the ones restored before it.
+pub fn restore_recycle_bin_each(paths: &[String]) -> Vec<PathOutcome> {
+    paths
+        .iter()
+        .map(|path| match restore_one(path) {
+            Ok(restored) => PathOutcome::done(path, Some(restored)),
+            Err(error) => PathOutcome::failed(path, error),
+        })
+        .collect()
+}
+
 pub fn empty_recycle_bin() -> Result<(), String> {
     empty_recycle_bin_from_roots(&recycle_bin_roots())
 }
@@ -106,28 +119,51 @@ pub(crate) fn recycle_bin_paths_for_originals(
     original_paths: &[String],
     excluded_data_paths: &HashSet<String>,
 ) -> Vec<String> {
-    list_recycle_bin()
-        .map(|listing| {
-            recycle_bin_paths_for_originals_from_entries(
-                original_paths,
-                &listing.entries,
-                excluded_data_paths,
-            )
-        })
-        .unwrap_or_default()
+    recycle_bin_items_for_originals(original_paths, excluded_data_paths)
+        .into_iter()
+        .flatten()
+        .collect()
 }
 
+/// The Recycle Bin item of each original path, in the order given: `None` for one that is not
+/// found there.
+pub(crate) fn recycle_bin_items_for_originals(
+    original_paths: &[String],
+    excluded_data_paths: &HashSet<String>,
+) -> Vec<Option<String>> {
+    match list_recycle_bin() {
+        Ok(listing) => recycle_bin_items_for_originals_from_entries(
+            original_paths,
+            &listing.entries,
+            excluded_data_paths,
+        ),
+        Err(_) => vec![None; original_paths.len()],
+    }
+}
+
+#[cfg(test)]
 fn recycle_bin_paths_for_originals_from_entries(
     original_paths: &[String],
     entries: &[FileEntry],
     excluded_data_paths: &HashSet<String>,
 ) -> Vec<String> {
+    recycle_bin_items_for_originals_from_entries(original_paths, entries, excluded_data_paths)
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
+fn recycle_bin_items_for_originals_from_entries(
+    original_paths: &[String],
+    entries: &[FileEntry],
+    excluded_data_paths: &HashSet<String>,
+) -> Vec<Option<String>> {
     let mut used_data_paths = HashSet::new();
-    let mut matched = Vec::new();
+    let mut matched = Vec::with_capacity(original_paths.len());
 
     for original_path in original_paths {
         let original_key = path_collision_key(Path::new(original_path));
-        if let Some(entry) = entries.iter().find(|entry| {
+        let entry = entries.iter().find(|entry| {
             let data_key = path_collision_key(Path::new(&entry.path));
             if excluded_data_paths.contains(&data_key) || used_data_paths.contains(&data_key) {
                 return false;
@@ -137,10 +173,11 @@ fn recycle_bin_paths_for_originals_from_entries(
                 .symlink_target
                 .as_ref()
                 .is_some_and(|target| path_collision_key(Path::new(target)) == original_key)
-        }) {
+        });
+        if let Some(entry) = entry {
             used_data_paths.insert(path_collision_key(Path::new(&entry.path)));
-            matched.push(entry.path.clone());
         }
+        matched.push(entry.map(|entry| entry.path.clone()));
     }
 
     matched
@@ -541,6 +578,95 @@ mod tests {
         );
 
         assert_eq!(matched, vec![new.to_string()]);
+    }
+
+    #[test]
+    fn recycle_bin_items_keep_the_order_of_the_originals_and_mark_those_not_found() {
+        let notes = r"C:\$Recycle.Bin\S-1-5-21-1\$RNOTES.txt";
+        let other = r"C:\$Recycle.Bin\S-1-5-21-1\$ROTHER.txt";
+        let entries = vec![
+            recycle_entry(other, r"C:\Users\a\other.txt"),
+            recycle_entry(notes, r"C:\Users\a\notes.txt"),
+        ];
+
+        let items = recycle_bin_items_for_originals_from_entries(
+            &[
+                r"C:\Users\a\notes.txt".to_string(),
+                r"C:\Users\a\gone.txt".to_string(),
+                r"C:\Users\a\other.txt".to_string(),
+            ],
+            &entries,
+            &HashSet::new(),
+        );
+
+        assert_eq!(
+            items,
+            vec![Some(notes.to_string()), None, Some(other.to_string())]
+        );
+    }
+
+    #[test]
+    fn path_outcomes_match_the_ipc_golden() {
+        let golden = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../ipc/schema/v1/goldens/move_to_trash_each.result.json");
+        let golden: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(golden).unwrap()).unwrap();
+        let outcomes = vec![
+            PathOutcome::done(
+                r"C:\Users\Public\Photos\a.jpg",
+                Some(r"C:\$Recycle.Bin\S-1-5-21-1\$RABC123.jpg".to_string()),
+            ),
+            PathOutcome::failed(
+                r"C:\Users\Public\Photos\b.jpg",
+                r"C:\Users\Public\Photos\b.jpg: The process cannot access the file because it is being used by another process. (os error 32)".to_string(),
+            ),
+        ];
+
+        assert_eq!(serde_json::to_value(&outcomes).unwrap(), golden["result"]);
+    }
+
+    #[test]
+    fn restore_each_goes_on_past_an_item_it_cannot_restore_and_says_which() {
+        let root = unique_temp("each");
+        let sid = root.join("S-1-5-21-3");
+        fs::create_dir_all(&sid).unwrap();
+        let original_dir = unique_temp("each-dest");
+        let mut items = Vec::new();
+        for name in ["a", "b"] {
+            let data = sid.join(format!("$R{name}.txt"));
+            fs::write(&data, name).unwrap();
+            let original = original_dir.join(format!("{name}.txt"));
+            write_info_v2(
+                &sid.join(format!("$I{name}.txt")),
+                &original.to_string_lossy(),
+                1,
+            );
+            items.push(data.to_string_lossy().to_string());
+        }
+        let gone = sid.join("$Rgone.txt").to_string_lossy().to_string();
+        items.insert(1, gone.clone());
+
+        let outcomes = restore_recycle_bin_each(&items);
+
+        assert_eq!(outcomes.len(), 3);
+        assert_eq!(outcomes[0].path, items[0]);
+        assert_eq!(
+            outcomes[0].result.as_deref(),
+            Some(original_dir.join("a.txt").to_string_lossy().as_ref())
+        );
+        assert_eq!(outcomes[0].error, None);
+        assert_eq!(outcomes[1].path, gone);
+        assert_eq!(outcomes[1].result, None);
+        assert!(outcomes[1]
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("no longer available")));
+        assert_eq!(outcomes[2].error, None);
+        assert_eq!(fs::read(original_dir.join("a.txt")).unwrap(), b"a");
+        assert_eq!(fs::read(original_dir.join("b.txt")).unwrap(), b"b");
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&original_dir);
     }
 
     #[test]

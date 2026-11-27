@@ -63,11 +63,17 @@ public static class TransferProgressFormatter
             : $"{receipt} to {destination}";
     }
 
+    /// <param name="bytesPerSecond">The speed: bytes written per second.</param>
+    /// <param name="progressBytesPerSecond">
+    /// How fast the bytes done grow, skipped and renamed files included; the time remaining is taken from it. The
+    /// speed when not given.
+    /// </param>
     public static TransferProgressDisplay Format(
         TransferProgressContext context,
         ProgressUpdate update,
         double? bytesPerSecond,
-        double? averageFilesPerSecond)
+        double? averageFilesPerSecond,
+        double? progressBytesPerSecond = null)
     {
         var current = Math.Min(update.Current, update.Total > 0 ? update.Total : update.Current);
         var progressPercent = Percent(current, update.Total);
@@ -79,7 +85,7 @@ public static class TransferProgressFormatter
         var currentItemName = CurrentItemName(update.CurrentItem, update.Status);
         var summary = Summary(update, current);
         var speed = Speed(update, bytesPerSecond);
-        var eta = Eta(update, current, bytesPerSecond);
+        var eta = Eta(update, current, progressBytesPerSecond ?? bytesPerSecond);
 
         return new TransferProgressDisplay(
             Title(context, update),

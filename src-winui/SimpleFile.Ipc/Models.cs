@@ -374,11 +374,12 @@ public sealed class ProgressUpdate
     public string? Error { get; set; }
 
     /// <summary>
-    /// Bytes of <see cref="Current"/> that were not transferred: files skipped, found already at the destination,
-    /// or moved by renaming them. They count toward the percentage, not toward the speed.
+    /// Bytes written to destinations in this pass so far, a count that only grows: a file copied again is counted
+    /// again. The speed is measured on it. Files skipped, found already at the destination or moved by renaming them
+    /// count toward <see cref="Current"/>, not toward it.
     /// </summary>
-    [JsonPropertyName("untransferred")]
-    public ulong Untransferred { get; set; }
+    [JsonPropertyName("transferred")]
+    public ulong Transferred { get; set; }
 }
 
 public sealed class ActiveFile
@@ -586,6 +587,27 @@ public sealed class TransferChangeChunk
     public string Field { get; set; } = "";
     [JsonPropertyName("paths")]
     public string[] Paths { get; set; } = [];
+}
+
+/// <summary>
+/// One path of a call that goes on past a path it cannot handle (<c>move_to_trash_each</c>,
+/// <c>restore_recycle_bin_each</c>): the call answers one for each path, in the order given.
+/// </summary>
+public sealed class PathOutcome
+{
+    [JsonPropertyName("path")]
+    public string Path { get; set; } = "";
+
+    /// <summary>What the path became: its Recycle Bin item, or where it was restored. Null when not known.</summary>
+    [JsonPropertyName("result")]
+    public string? Result { get; set; }
+
+    /// <summary>Why the path was not done; null when it was.</summary>
+    [JsonPropertyName("error")]
+    public string? Error { get; set; }
+
+    [JsonIgnore]
+    public bool Done => Error is null;
 }
 
 public sealed class TransferFailure

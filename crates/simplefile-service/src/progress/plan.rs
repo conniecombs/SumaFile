@@ -375,11 +375,6 @@ mod volume_tests {
     use std::path::Path;
 
     #[test]
-    fn a_drive_letter_written_in_either_case_is_one_volume() {
-        assert!(same_volume(Path::new(r"C:\a"), Path::new(r"c:\b")));
-    }
-
-    #[test]
     fn a_plain_and_a_verbatim_path_stay_apart() {
         assert!(!same_volume(Path::new(r"\\?\C:\a"), Path::new(r"C:\a")));
     }

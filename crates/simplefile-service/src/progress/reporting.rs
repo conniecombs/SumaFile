@@ -15,7 +15,10 @@ pub(crate) struct RetryCounts {
     pub(crate) files: AtomicU64,
 }
 
+/// A file's bytes are reported every this many bytes, and at least every
+/// [`PROGRESS_TIME_STEP`] while they change, so that a slow file's line moves.
 pub(crate) const PROGRESS_BYTE_STEP: u64 = 4 * 1024 * 1024;
+pub(crate) const PROGRESS_TIME_STEP: Duration = Duration::from_millis(500);
 pub(crate) const PROGRESS_MIN_INTERVAL: Duration = Duration::from_millis(80);
 
 pub(crate) fn check_cancelled(cancel: &Arc<AtomicBool>) -> Result<(), String> {
@@ -39,22 +42,14 @@ pub(crate) struct ProgressContext<'a> {
     pub(crate) rate_limit: Option<&'a super::resources::RateLimit>,
     /// Where the adaptive scheduler collects write latency, when it is tuning.
     pub(crate) write_latency: Option<&'a sumafile_transfer::tuning::LatencyHistogram>,
-    /// The task's bytes counted as done that were not transferred; see
-    /// `ProgressUpdate::untransferred`.
-    pub(crate) untransferred: Option<&'a AtomicU64>,
+    /// The bytes written to destinations in the pass; see
+    /// `ProgressUpdate::transferred`.
+    pub(crate) transferred: Option<&'a AtomicU64>,
 }
 
 impl ProgressContext<'_> {
     pub(crate) fn check_cancelled(&self) -> Result<(), String> {
         check_cancelled(self.cancel)
-    }
-
-    /// `bytes` of the task are done without being transferred: a skipped
-    /// file, one already at the destination, one moved by renaming it.
-    pub(crate) fn not_transferred(&self, bytes: u64) {
-        if let Some(untransferred) = self.untransferred {
-            untransferred.fetch_add(bytes, Ordering::Relaxed);
-        }
     }
 
     /// Call before a destination write of `bytes`; pass the result to
@@ -66,10 +61,19 @@ impl ProgressContext<'_> {
             .then(Instant::now)
     }
 
-    /// Record how long a successful write took: one relaxed counter increment.
+    /// Count a successful write of `bytes` toward the bytes transferred, and
+    /// record how long it took: relaxed counter increments.
     pub(crate) fn write_finished(&self, started: Option<Instant>, bytes: usize) {
+        self.wrote(bytes as u64);
         if let (Some(histogram), Some(started)) = (self.write_latency, started) {
             histogram.record(started.elapsed(), bytes);
+        }
+    }
+
+    /// `bytes` were written to a destination.
+    pub(crate) fn wrote(&self, bytes: u64) {
+        if let Some(transferred) = self.transferred {
+            transferred.fetch_add(bytes, Ordering::Relaxed);
         }
     }
 
@@ -121,9 +125,9 @@ impl ProgressContext<'_> {
             current_item,
             status: status.to_string(),
             error,
-            untransferred: self
-                .untransferred
-                .map_or(0, |untransferred| untransferred.load(Ordering::Relaxed)),
+            transferred: self
+                .transferred
+                .map_or(0, |transferred| transferred.load(Ordering::Relaxed)),
         });
     }
 

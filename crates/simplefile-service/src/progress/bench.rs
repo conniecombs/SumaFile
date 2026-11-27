@@ -412,14 +412,18 @@ fn transfer_benchmark() {
         let data = root.join("data").join(case.name);
         let mut sources = (case.build)(&data);
         let (files, bytes) = size_of(&sources);
+        // A move takes its source away: every run after the first, of either
+        // flush setting, gets a new one.
+        let mut consumed = false;
         for flush in [true, false] {
             let mut times = Vec::new();
             let mut counts = Counts::default();
             for run in 0..runs {
-                if case.rebuild && run > 0 {
+                if case.rebuild && consumed {
                     let _ = fs::remove_dir_all(&data);
                     sources = (case.build)(&data);
                 }
+                consumed = true;
                 let destination = destination_root.join(format!("{}-{run}", case.name));
                 (case.prepare)(&sources, &destination);
                 tuning::forget_learning().unwrap();

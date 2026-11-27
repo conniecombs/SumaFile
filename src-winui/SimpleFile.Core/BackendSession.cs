@@ -319,6 +319,14 @@ public sealed class BackendSession : IExplorerBackend, IListingViewBackend, IEnt
             _ = _client.On<EntryFactsBatch>(Protocol.EntryFactsEvent, batch => EntryFactsReceived?.Invoke(batch));
             Handshake = await _client.HandshakeAsync(_authToken, cancellationToken).ConfigureAwait(false);
             timer.Mark("handshake", $"methods={Handshake.MethodCount}");
+            // A service that writes another binary frame version than this app reads would end the connection on
+            // its first binary frame, usually a folder listing, with nothing but "IPC pipe closed" to say why.
+            if (Handshake.BinaryHotFrames && Handshake.BinaryFrameVersion != Protocol.BinaryFrameVersion)
+            {
+                throw new InvalidOperationException(
+                    $"The file service writes binary frame version {Handshake.BinaryFrameVersion}, and this app reads "
+                    + $"version {Protocol.BinaryFrameVersion}. The service is from another build of SumaFile.");
+            }
             Health = await _client.HealthAsync(cancellationToken).ConfigureAwait(false);
             timer.Mark("health");
             AppVersion = await _client.GetAppVersionAsync(cancellationToken).ConfigureAwait(false);

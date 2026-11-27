@@ -70,6 +70,22 @@ if (!protocol || !types || !commands || !events) {
   process.exit(1);
 }
 
+// One binary frame version, stated in four places: an app and a service that disagree drop the connection
+// on the first binary frame.
+{
+  const declared = protocol.transport?.binaryFrames?.version;
+  const rust = readRepo('crates/simplefile-ipc/src/lib.rs').match(/pub const BINARY_FRAME_VERSION: u8 = (\d+);/);
+  const csharp = readRepo('src-winui/SimpleFile.Ipc/Protocol.cs').match(/public const byte BinaryFrameVersion = (\d+);/);
+  const handshake = readJson('goldens/ipc.handshake.result.json')?.result?.binaryFrameVersion;
+  if (!rust || !csharp) {
+    fail('cannot find BINARY_FRAME_VERSION in simplefile-ipc or BinaryFrameVersion in Protocol.cs');
+  } else if (![Number(rust[1]), Number(csharp[1]), handshake].every((version) => version === declared)) {
+    fail(
+      `binary frame version differs: protocol.json ${declared}, Rust ${rust[1]}, C# ${csharp[1]}, handshake golden ${handshake}`,
+    );
+  }
+}
+
 const serviceDispatch = readDispatchSource(repoRoot);
 const protocolCs = readRepo('src-winui/SimpleFile.Ipc/Protocol.Generated.cs');
 const protocolGeneratedRs = readRepo('crates/simplefile-ipc/src/protocol_generated.rs');
@@ -81,11 +97,11 @@ const schemaMethods = new Set(
   Object.keys(commands.methods || {}).filter((name) => !name.startsWith('ipc.')),
 );
 
-if (handlers.size !== 82) {
-  fail(`expected 82 domain handlers, found ${handlers.size}`);
+if (handlers.size !== 84) {
+  fail(`expected 84 domain handlers, found ${handlers.size}`);
 }
-if (commands.domainMethodCount !== 82) {
-  fail(`commands.json domainMethodCount must be 82, found ${commands.domainMethodCount}`);
+if (commands.domainMethodCount !== 84) {
+  fail(`commands.json domainMethodCount must be 84, found ${commands.domainMethodCount}`);
 }
 if (protocol.protocolVersion !== 1 || commands.protocolVersion !== 1) {
   fail('schema protocolVersion must be 1');
@@ -224,6 +240,7 @@ const rustCheckedTypes = [
   'ArchiveCapabilities',
   'AppAboutInfo',
   'UpdateInfo',
+  'PathOutcome',
 ];
 for (const typeName of rustCheckedTypes) {
   const schemaFields = types.types?.[typeName]?.fields;
@@ -252,6 +269,7 @@ const requiredGoldens = [
   'list_directory.chunk.event.json',
   'update-chunk.event.json',
   'file-entry.result.json',
+  'move_to_trash_each.result.json',
 ];
 for (const file of requiredGoldens) {
   if (!existsSync(join(schemaDir, 'goldens', file))) {

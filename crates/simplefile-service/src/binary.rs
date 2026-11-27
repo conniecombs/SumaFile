@@ -114,7 +114,7 @@ pub(crate) fn encode_progress_update(update: &ProgressUpdate) -> EncodeResult<Ve
     writer.string(&update.current_item)?;
     writer.string(&update.status)?;
     writer.opt_string(update.error.as_deref())?;
-    writer.u64(update.untransferred);
+    writer.u64(update.transferred);
     Ok(writer.finish())
 }
 

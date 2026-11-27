@@ -1043,16 +1043,15 @@ fn staging_path_with_salt(final_path: &Path, salt: Option<&str>) -> Result<PathB
 }
 
 /// The longest file name NTFS, FAT, exFAT and the usual Linux file systems
-/// take: 255 UTF-16 units on Windows, 255 bytes elsewhere.
+/// take: 255 UTF-16 units on Windows, 255 bytes on Linux, and so on a share a
+/// NAS serves from a Linux file system.
 const NAME_LIMIT: usize = 255;
 
-/// The length of a file name in the units its file system counts.
+/// The length of a file name in the units its file system counts: the larger
+/// of its UTF-16 units and its UTF-8 bytes, so that a name that fits fits on
+/// either kind of file system.
 pub(crate) fn name_units(name: &str) -> usize {
-    if cfg!(windows) {
-        name.encode_utf16().count()
-    } else {
-        name.len()
-    }
+    name.encode_utf16().count().max(name.len())
 }
 
 /// A temporary name for the file named `name`: `before`, the name and `after`.
@@ -1060,20 +1059,18 @@ pub(crate) fn name_units(name: &str) -> usize {
 /// cut at its end and marked with `~`. What makes the temporary name unique
 /// is in `after`, which is never cut.
 fn fitted_name(before: &str, name: &str, after: &str, spare: usize) -> String {
-    let room = NAME_LIMIT.saturating_sub(spare + name_units(before) + name_units(after));
-    if name_units(name) <= room {
-        return format!("{before}{name}{after}");
+    let fits = |name: &str| name_units(name) + spare <= NAME_LIMIT;
+    let whole = format!("{before}{name}{after}");
+    if fits(&whole) {
+        return whole;
     }
-    let limit = room.saturating_sub(1);
     let mut cut = String::new();
-    let mut used = 0;
     for character in name.chars() {
-        let width = name_units(character.encode_utf8(&mut [0; 4]));
-        if used + width > limit {
+        cut.push(character);
+        if !fits(&format!("{before}{cut}~{after}")) {
+            cut.pop();
             break;
         }
-        cut.push(character);
-        used += width;
     }
     format!("{before}{cut}~{after}")
 }
@@ -1108,19 +1105,21 @@ pub fn promote_leased_with_policy(
     cancel: &std::sync::atomic::AtomicBool,
     policy: &crate::policy::Policy,
     lease: &mut crate::journal::StagingLease,
-    handle: Option<&fs::File>,
+    handle: Option<fs::File>,
     mut waiting: impl FnMut(std::time::Duration, &str),
 ) -> Result<(), Failure> {
     // Every byte is already written: a file held open by a scanner for a
     // while is waited out with the whole retry budget, not three attempts.
     let mut retry = Retry::from_policy(policy).patient_with_busy();
     // A Replace moves the existing file aside by path first; only a new name
-    // is given through the handle.
+    // is given through the handle. The handle is closed before any rename by
+    // path: a file system that refused the rename through the handle may well
+    // refuse to rename a file that is still open for writing.
     let mut by_handle = handle.filter(|_| !replace);
     loop {
         crate::reliability::wait(std::time::Duration::ZERO, cancel)
             .map_err(|_| Failure::cancelled())?;
-        if let Some(file) = by_handle {
+        if let Some(file) = &by_handle {
             match rename_handle_exclusive(file, destination) {
                 Ok(()) => return Ok(()),
                 Err(error) if is_already_exists_error(&error) => {
@@ -1846,6 +1845,27 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    /// On Windows a name is counted in UTF-16 units, but a share served from
+    /// a Linux file system (a NAS) takes names of up to 255 bytes: a name of
+    /// 80 CJK characters is 240 bytes and fits there, and its partial name of
+    /// 275 bytes did not.
+    #[test]
+    fn temporary_names_fit_in_255_bytes_as_well() {
+        let root = unique_temp_dir("long_bytes");
+        let destination = root.join("報".repeat(80) + ".txt");
+        let partial = staging_path_for(&destination, "op").unwrap();
+        let backup = unique_backup_path(&destination).unwrap();
+        for path in [&partial, &backup] {
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            assert!(name.len() <= 255, "{} bytes: {name}", name.len());
+        }
+        assert!(
+            partial.file_name().unwrap().to_string_lossy().len() + ".state".len() <= 255,
+            "and the partial file's own record"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn two_long_names_that_begin_alike_get_partial_files_of_their_own() {
         let root = unique_temp_dir("long_alike");
@@ -1985,6 +2005,31 @@ mod tests {
         let renamed = root.join("renamed");
         fs::rename(&recorded, &renamed).unwrap();
         assert!(super::is_recorded_file(&renamed, &identity));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Version 1.1.5 recorded a file's identity as its 32-bit volume serial
+    /// and 64-bit file index; this version records the 64-bit serial and the
+    /// 128-bit ID. A record 1.1.5 left must still name its file, or recovery
+    /// keeps a partial file it should remove. The test above passes without
+    /// the fallback: it records the new form only.
+    #[cfg(windows)]
+    #[test]
+    fn a_file_recorded_by_115_is_recognised() {
+        let root = unique_temp_dir("recorded_by_115");
+        let recorded = root.join("recorded");
+        let other = root.join("other");
+        fs::write(&recorded, b"x").unwrap();
+        fs::write(&other, b"x").unwrap();
+        let old_form =
+            super::legacy_file_id_from_handle(&fs::File::open(&recorded).unwrap()).unwrap();
+        assert_ne!(
+            Some(&old_form),
+            super::file_identity(&recorded).ok().as_ref()
+        );
+
+        assert!(super::is_recorded_file(&recorded, &old_form));
+        assert!(!super::is_recorded_file(&other, &old_form));
         fs::remove_dir_all(root).unwrap();
     }
 
