@@ -664,13 +664,35 @@ pub struct Controller {
     /// Separate bouts of I/O retries so far; each doubles the hold after the
     /// next, so a provider that throttles is not pushed again right away.
     retry_bouts: u32,
-    /// The previous window had I/O retries: the next one with retries is the
-    /// same bout.
-    retrying: bool,
-    /// The lane's setting before the first retry of the task lowered it. A
-    /// setting learned below it was forced by the retries, not chosen for
-    /// the route, and is not offered to be remembered.
+    /// The bout of I/O retries in progress, if any.
+    bout: Option<Bout>,
+    /// The setting the lane had settled on before the first retry of the
+    /// task lowered it (not a probe it was running then). A setting learned
+    /// below it was forced by the retries, not chosen for the route, and is
+    /// not offered to be remembered.
     before_retries: Option<usize>,
+}
+
+/// I/O retries one lane saw in one window.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Retries {
+    /// Every retry: a file's first and its later ones.
+    pub all: u64,
+    /// Files whose first retry came in the window. A file retried again and
+    /// again counts once.
+    pub files: u64,
+}
+
+/// A bout of I/O retries: from a retry until the lane has gone long enough
+/// without one, or its hold has run out.
+#[derive(Clone, Copy, Debug)]
+struct Bout {
+    /// Time measured since the bout's last retry.
+    quiet: Duration,
+    /// Files that have started retrying in the bout.
+    files: u64,
+    /// `files` when the bout last halved the lane; 0 before it has.
+    halved_at: u64,
 }
 
 impl Controller {
@@ -819,7 +841,7 @@ impl Controller {
             grew: false,
             profile,
             retry_bouts: 0,
-            retrying: false,
+            bout: None,
             before_retries: None,
         }
     }
@@ -847,6 +869,10 @@ impl Controller {
             updated.decisions = self.decisions;
             updated.hold = self.hold;
             updated.retry_bouts = self.retry_bouts;
+            // What retries did to the lane outlives a change of settings: the
+            // level they forced is not to be remembered either way.
+            updated.bout = self.bout;
+            updated.before_retries = self.before_retries;
             let ceiling = self.ceiling;
             *self = updated;
             self.set_ceiling(ceiling);
@@ -878,8 +904,18 @@ impl Controller {
 
     /// One measuring window. Windows shorter than a second, or during which
     /// the lane was not kept full, are not evidence for any setting.
+    /// Each of `retries` is taken for the first retry of a file of its own.
     pub fn sample(&mut self, bytes: u64, elapsed: Duration, saturated: bool, retries: u64) {
-        self.sample_with_latency(bytes, elapsed, saturated, retries, None);
+        self.sample_retrying(
+            bytes,
+            elapsed,
+            saturated,
+            Retries {
+                all: retries,
+                files: retries,
+            },
+            None,
+        );
     }
 
     /// As [`Self::sample`], with the window's median write latency when enough
@@ -892,22 +928,57 @@ impl Controller {
         retries: u64,
         latency: Option<u64>,
     ) {
+        self.sample_retrying(
+            bytes,
+            elapsed,
+            saturated,
+            Retries {
+                all: retries,
+                files: retries,
+            },
+            latency,
+        );
+    }
+
+    /// As [`Self::sample`], with the window's retries told apart by file and
+    /// its median write latency when enough writes were timed.
+    pub fn sample_retrying(
+        &mut self,
+        bytes: u64,
+        elapsed: Duration,
+        saturated: bool,
+        retries: Retries,
+        latency: Option<u64>,
+    ) {
         // Custom settings are authoritative; errors only delay their failing file.
         if self.policy.mode == Mode::Manual {
             self.concurrency = self.policy.manual_concurrency.clamp(1, self.cap());
             self.explanation = "Custom limits (memory and provider limits still apply)";
             return;
         }
-        let same_bout = std::mem::replace(&mut self.retrying, retries > 0);
-        if retries > 0 {
-            // A bout halves the lane once. A later window of the same bout
-            // halves it again only when more than one retry happened in it:
-            // then several files are failing and the transport is struggling.
-            // One file retried again and again is a problem of that file, and
-            // it used to take a lane of 32 down to 2 in four seconds.
-            if !same_bout || retries > 1 {
-                self.before_retries.get_or_insert(self.concurrency);
+        if retries.all > 0 || retries.files > 0 {
+            // A file's first retry is evidence about the transport; its later
+            // ones are about that file. The first file to retry in a bout
+            // halves the lane, and the lane halves again each time the number
+            // of files retrying in the bout doubles: one file retried again
+            // and again halves it once, many files failing bring it down fast.
+            let bout = self.bout.get_or_insert(Bout {
+                quiet: Duration::ZERO,
+                files: 0,
+                halved_at: 0,
+            });
+            bout.quiet = Duration::ZERO;
+            bout.files = bout.files.saturating_add(retries.files);
+            let first = bout.halved_at == 0;
+            if retries.files > 0 && bout.files >= bout.halved_at.saturating_mul(2).max(1) {
+                bout.halved_at = bout.files;
+                // What the lane had settled on, not the probe it may be running.
+                self.before_retries.get_or_insert(self.best_concurrency);
                 self.concurrency = (self.concurrency / 2).max(1);
+                // A new bout after the last one ended doubles the next hold.
+                if first {
+                    self.retry_bouts = self.retry_bouts.saturating_add(1);
+                }
             }
             self.best_concurrency = self.concurrency;
             self.best_rate = 0.0;
@@ -917,15 +988,20 @@ impl Controller {
             self.probing = false;
             self.learned = false;
             self.try_lower = false;
-            // Retries in consecutive windows are one bout and keep halving; a
-            // new bout after the hold ran out doubles the next hold.
-            if self.cooldown == 0 {
-                self.retry_bouts = self.retry_bouts.saturating_add(1);
-            }
             let hold = COOLDOWN_SAMPLES << (self.retry_bouts.max(1) - 1).min(MAX_PROBE_BACKOFF);
             self.cooldown = self.cooldown.max(hold);
             self.explanation = "Reduced concurrency after an I/O retry";
             return;
+        }
+        // The bout ends once the lane has gone longer without a retry than a
+        // file waits between two tries (and a window more), or once its hold
+        // has run out and it may grow again.
+        let gap = self.bout_gap();
+        if let Some(bout) = &mut self.bout {
+            bout.quiet = bout.quiet.saturating_add(elapsed);
+            if bout.quiet > gap || self.cooldown == 0 {
+                self.bout = None;
+            }
         }
         if self.settle {
             self.settle = false;
@@ -1145,6 +1221,12 @@ impl Controller {
         }
     }
 
+    /// The longest a file waits between two tries (the retry wait, doubled
+    /// up to sixteen times; see `Retry::failed_with`), and a window more.
+    fn bout_gap(&self) -> Duration {
+        Duration::from_millis(self.policy.retry_sleep_ms.saturating_mul(16)) + SLOW_WINDOW_CAP
+    }
+
     /// The setting worth remembering for the route, if this lane learned
     /// one. A setting below the one retries pulled the lane down from is not:
     /// remembered, it started every later transfer on the route that low.
@@ -1197,6 +1279,9 @@ pub struct LaneReport {
     pub demand: bool,
     /// I/O retries in this lane since the previous report.
     pub retries: u64,
+    /// Files in this lane whose first I/O retry came since the previous
+    /// report: a file retried again and again counts once.
+    pub retrying_files: u64,
     /// Files this lane has finished copying in total.
     pub files: u64,
 }
@@ -1365,11 +1450,14 @@ impl Lanes {
             let median = lane.reader.window_median(latency[index]);
             let before = (lane.controller.concurrency, lane.controller.explanation);
             lane.controller.hold_experiments(other_testing);
-            lane.controller.sample_with_latency(
+            lane.controller.sample_retrying(
                 window.bytes,
                 window.elapsed,
                 window.saturated,
-                report.retries,
+                Retries {
+                    all: report.retries,
+                    files: report.retrying_files,
+                },
                 median,
             );
             if before != (lane.controller.concurrency, lane.controller.explanation) {

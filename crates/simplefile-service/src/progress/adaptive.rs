@@ -431,6 +431,7 @@ mod tests {
             saturated,
             demand: true,
             retries,
+            retrying_files: retries,
             files: 0,
         }
     }

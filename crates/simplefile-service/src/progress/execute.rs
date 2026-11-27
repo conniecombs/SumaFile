@@ -1216,7 +1216,10 @@ fn wait_to_retry(ctx: &CopyContext, retry: &mut Retry, error: Failure) -> Result
     // transient I/O feeds the tuner.
     if transport_retry {
         if let Some(retries) = ctx.progress.retry_count {
-            retries.fetch_add(1, Ordering::Relaxed);
+            retries.all.fetch_add(1, Ordering::Relaxed);
+            if retry.first_report() {
+                retries.files.fetch_add(1, Ordering::Relaxed);
+            }
         }
     }
     if let Some(limiter) = ctx.progress.rate_limit {

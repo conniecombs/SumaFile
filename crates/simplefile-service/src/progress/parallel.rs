@@ -8,7 +8,7 @@
 
 use super::adaptive::Session;
 use super::execute::{copy_file_with_progress_versioned, copy_symlink_with_progress, FileOutcome};
-use super::reporting::{CopyContext, ProgressContext};
+use super::reporting::{CopyContext, ProgressContext, RetryCounts};
 use super::resources::Permit;
 use super::tuning::OrderBy;
 use crate::transfer_reliability::{Failure, FailureKind};
@@ -954,7 +954,7 @@ fn copy_files_streaming_with_sink(
     let channel_cap = backlog_limit.clamp(64, 4096);
     let max_hl_attempts = session.policy().high_level_retry_limit().max(1) as usize;
     let worker_cancel = Arc::new(AtomicBool::new(false));
-    let retry_counts = [AtomicU64::new(0), AtomicU64::new(0)];
+    let retry_counts = [RetryCounts::default(), RetryCounts::default()];
     let mut result = CopyResult::new();
     let mut tasks = BTreeMap::<usize, FileTask>::new();
     let mut next_index = 0usize;
@@ -1090,7 +1090,7 @@ fn copy_files_streaming_with_sink(
         // The file named in a running update when no file is in flight.
         let mut last_item = String::new();
         let mut last_display = Instant::now();
-        let mut last_retries = [0u64; 2];
+        let mut last_retries = [(0u64, 0u64); 2];
         if let Some(&first_idx) = ready.iter().filter_map(VecDeque::front).min() {
             if let Some(first) = tasks.get(&first_idx) {
                 ctx.emit_now(
@@ -1547,13 +1547,17 @@ fn copy_files_streaming_with_sink(
                 .saturating_add(active.values().map(|f| f.current).sum::<u64>());
             let (_, lane_in_flight) = lane_load(&active, two_lanes);
             let reports = [0, 1].map(|lane| {
-                let retries = retry_counts[lane].load(Ordering::Relaxed);
+                let retries = (
+                    retry_counts[lane].all.load(Ordering::Relaxed),
+                    retry_counts[lane].files.load(Ordering::Relaxed),
+                );
                 let report = LaneReport {
                     bytes: lane_done[lane].saturating_add(lane_in_flight[lane]),
                     files: lane_files[lane],
                     saturated: saturated[lane],
                     demand: demand[lane],
-                    retries: retries - last_retries[lane],
+                    retries: retries.0 - last_retries[lane].0,
+                    retrying_files: retries.1 - last_retries[lane].1,
                 };
                 last_retries[lane] = retries;
                 report
@@ -1980,11 +1984,9 @@ mod tests {
                 assert_eq!(context.policy.check_mode, CheckMode::SizeOnly);
                 // A retry notification exercises the same live-refresh path as
                 // a five-second observation without a wall-clock test delay.
-                context
-                    .progress
-                    .retry_count
-                    .unwrap()
-                    .fetch_add(1, Ordering::Relaxed);
+                let counts = context.progress.retry_count.unwrap();
+                counts.all.fetch_add(1, Ordering::Relaxed);
+                counts.files.fetch_add(1, Ordering::Relaxed);
             }
             Ok(FileOutcome::Copied {
                 reused: false,

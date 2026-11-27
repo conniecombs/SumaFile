@@ -225,6 +225,8 @@ pub struct Retry {
     /// Attempts a `Busy` failure gets; [`BUSY_ATTEMPTS`] unless the caller is
     /// willing to wait a file out (see [`Self::patient_with_busy`]).
     busy_attempts: u32,
+    /// A retry of this file has been told to the scheduler.
+    reported: bool,
 }
 
 impl Default for Retry {
@@ -235,6 +237,7 @@ impl Default for Retry {
             max_attempts: 6,
             base_sleep: Duration::from_secs(1),
             busy_attempts: BUSY_ATTEMPTS,
+            reported: false,
         }
     }
 }
@@ -247,7 +250,15 @@ impl Retry {
             max_attempts: max_attempts.clamp(1, 50),
             base_sleep: base_sleep.clamp(Duration::from_millis(10), Duration::from_secs(60)),
             busy_attempts: BUSY_ATTEMPTS,
+            reported: false,
         }
+    }
+
+    /// True the first time only: whether a retry of this file is the first
+    /// the scheduler hears of. Its later retries are about the file; the
+    /// first is evidence about the transport.
+    pub fn first_report(&mut self) -> bool {
+        !std::mem::replace(&mut self.reported, true)
     }
 
     /// Gives a `Busy` failure the full attempt budget instead of the quick

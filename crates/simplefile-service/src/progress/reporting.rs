@@ -5,6 +5,16 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
+/// The I/O retries of one lane, for the scheduler.
+#[derive(Default)]
+pub(crate) struct RetryCounts {
+    /// Every retry.
+    pub(crate) all: AtomicU64,
+    /// Files whose first retry it was: a file retried again and again counts
+    /// once.
+    pub(crate) files: AtomicU64,
+}
+
 pub(crate) const PROGRESS_BYTE_STEP: u64 = 4 * 1024 * 1024;
 pub(crate) const PROGRESS_MIN_INTERVAL: Duration = Duration::from_millis(80);
 
@@ -25,7 +35,7 @@ pub(crate) struct ProgressContext<'a> {
     pub(crate) total_files: &'a Arc<AtomicU64>,
     pub(crate) completed_files: &'a Arc<AtomicU64>,
     pub(crate) last_running_emit: StdMutex<Instant>,
-    pub(crate) retry_count: Option<&'a AtomicU64>,
+    pub(crate) retry_count: Option<&'a RetryCounts>,
     pub(crate) rate_limit: Option<&'a super::resources::RateLimit>,
     /// Where the adaptive scheduler collects write latency, when it is tuning.
     pub(crate) write_latency: Option<&'a sumafile_transfer::tuning::LatencyHistogram>,

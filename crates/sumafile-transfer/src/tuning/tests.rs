@@ -1088,6 +1088,7 @@ impl Job {
             saturated: demand[lane] && !self.draining[lane],
             demand: demand[lane],
             retries: retries[lane],
+            retrying_files: retries[lane],
         };
         let reports = [report(0), report(1)];
         self.bytes = [reports[0].bytes, reports[1].bytes];
@@ -1558,59 +1559,130 @@ fn hard_disks_and_removable_drives_keep_their_caution_in_the_small_lane() {
     );
 }
 
-#[test]
-fn a_retry_storm_brings_the_small_lane_down_fast_and_each_bout_holds_longer() {
+/// A retry of a file whose first retry was already counted.
+const AGAIN: Retries = Retries { all: 1, files: 0 };
+/// The first retry of a file.
+const NEW_FILE: Retries = Retries { all: 1, files: 1 };
+
+/// A small lane that has settled at 32 files at once.
+fn settled_small_lane() -> Controller {
     let mut c = small_lane(Policy::default(), DriveKind::Unknown);
     observe(&mut c, 32);
     observe(&mut c, 48);
     observe(&mut c, 48);
     observe(&mut c, 64);
     assert_eq!(c.concurrency, 32);
-    // The provider throttles: retries in three windows running.
-    for expected in [16, 8, 4] {
-        c.sample(10, SECOND, true, 5);
-        assert_eq!(c.concurrency, expected);
+    c
+}
+
+/// A throttled provider fails one file after another: each file's first
+/// retry is new evidence, and the lane halves each time the number of files
+/// retrying in the bout doubles. The retries arrive in windows of their own,
+/// one or two files at a time; the old rule halved once for all of them.
+#[test]
+fn files_that_start_retrying_one_after_another_keep_halving_the_lane() {
+    let mut c = settled_small_lane();
+    let mut seen = Vec::new();
+    for _ in 0..8 {
+        c.sample_retrying(10, SECOND, true, NEW_FILE, None);
+        seen.push(c.concurrency);
         assert_eq!(c.explanation, "Reduced concurrency after an I/O retry");
     }
+    assert_eq!(seen, vec![16, 8, 8, 4, 4, 4, 4, 2]);
     assert_eq!(c.cooldown(), COOLDOWN_SAMPLES, "one storm is one bout");
     assert_eq!(c.learned_concurrency(), None);
+}
+
+/// One file that fails every try is retried after 1, 2, 4, 8, then 16
+/// seconds, with ordinary windows in between. Each quiet stretch ended the
+/// bout, so every later retry halved the lane again: 32 files at once
+/// became 1 for one file's sake.
+#[test]
+fn one_file_retried_at_the_waits_between_its_tries_halves_the_lane_once() {
+    let mut c = settled_small_lane();
+    c.sample_retrying(10, SECOND, true, NEW_FILE, None);
+    assert_eq!(c.concurrency, 16);
+    for wait in [1, 2, 4, 8, 16, 16, 16, 16] {
+        for _ in 0..wait {
+            c.sample(10, SECOND, true, 0);
+        }
+        c.sample_retrying(10, SECOND, true, AGAIN, None);
+        assert!(
+            c.concurrency >= 16,
+            "one file's retries took the lane to {}",
+            c.concurrency
+        );
+    }
+}
+
+/// Throttled again once its hold has run out, the lane halves again, and
+/// holds twice as long; a third bout four times as long.
+#[test]
+fn a_lane_throttled_again_after_its_hold_halves_again_and_holds_longer() {
+    let mut c = settled_small_lane();
+    c.sample_retrying(10, SECOND, true, NEW_FILE, None);
+    assert_eq!((c.concurrency, c.cooldown()), (16, COOLDOWN_SAMPLES));
     for _ in 0..COOLDOWN_SAMPLES {
-        observe(&mut c, 8);
-        assert_eq!(c.concurrency, 4, "held");
+        observe(&mut c, 16);
+        assert_eq!(c.concurrency, 16, "held");
     }
-    observe(&mut c, 8);
-    assert_eq!(c.concurrency, 6, "then it climbs again, never tests fewer");
-    // Throttled again: the second hold is twice as long, the third four times.
-    c.sample(10, SECOND, true, 1);
-    assert_eq!((c.concurrency, c.cooldown()), (3, 2 * COOLDOWN_SAMPLES));
+    observe(&mut c, 16);
+    assert!(
+        c.concurrency > 16,
+        "then it climbs again, never tests fewer"
+    );
+    let climbed = c.concurrency;
+    c.sample_retrying(10, SECOND, true, NEW_FILE, None);
+    assert_eq!(
+        (c.concurrency, c.cooldown()),
+        (climbed / 2, 2 * COOLDOWN_SAMPLES)
+    );
     for _ in 0..2 * COOLDOWN_SAMPLES {
-        observe(&mut c, 6);
-        assert_eq!(c.concurrency, 3);
+        observe(&mut c, 16);
     }
-    observe(&mut c, 6);
-    assert!(c.concurrency > 3);
-    c.sample(10, SECOND, true, 1);
+    observe(&mut c, 16);
+    c.sample_retrying(10, SECOND, true, NEW_FILE, None);
     assert_eq!(c.cooldown(), 4 * COOLDOWN_SAMPLES);
 }
 
-/// One file retried in window after window used to halve the lane each
-/// time: 32 files at once became 2 within four seconds, for one file's sake.
+/// The setting kept as "before the retries" was the one the lane ran at
+/// when the first retry came, which can be a probe above the setting it had
+/// settled on. Nothing it then learned reached the probe, so nothing was
+/// saved, and remembered values could only ever rise.
 #[test]
-fn one_file_retried_again_and_again_halves_the_lane_once() {
-    let mut c = small_lane(Policy::default(), DriveKind::Unknown);
-    observe(&mut c, 32);
-    observe(&mut c, 48);
-    observe(&mut c, 48);
-    observe(&mut c, 64);
-    assert_eq!(c.concurrency, 32);
-    for _ in 0..4 {
-        c.sample(10, SECOND, true, 1);
-        assert_eq!(c.concurrency, 16, "one bout of one file's retries");
-        assert_eq!(c.explanation, "Reduced concurrency after an I/O retry");
+fn the_setting_before_the_retries_is_the_settled_one_not_a_probe() {
+    let mut c = Controller::new(Policy::default(), 4 << 20, None);
+    observe(&mut c, 1000); // a baseline, and an upward probe starts
+    assert!(
+        c.is_probing() && c.concurrency > c.best_concurrency(),
+        "the lane probes above its setting"
+    );
+    let settled = c.best_concurrency();
+    c.sample_retrying(10, SECOND, true, NEW_FILE, None);
+    assert_eq!(c.before_retries, Some(settled));
+}
+
+/// A change of settings during the task rebuilt the lane and forgot what
+/// retries had done to it, so the level they forced it down to was saved
+/// for the route after all.
+#[test]
+fn a_settings_change_during_a_task_keeps_what_retries_forced() {
+    let mut c = settled_small_lane();
+    c.sample_retrying(10, SECOND, true, NEW_FILE, None);
+    assert_eq!(c.concurrency, 16);
+    c.update_policy(
+        Policy {
+            max_concurrency: 48,
+            ..Policy::default()
+        },
+        512 << 10,
+    );
+    assert_eq!(c.before_retries, Some(32));
+    assert!(c.bout.is_some(), "the bout goes on");
+    for _ in 0..3 * COOLDOWN_SAMPLES {
+        observe(&mut c, 8);
     }
-    // Several files retried in one window: the transport is struggling.
-    c.sample(10, SECOND, true, 3);
-    assert_eq!(c.concurrency, 8);
+    assert_eq!(c.learned_concurrency(), None);
 }
 
 /// A lane that retries pulled down learned its next setting at that lower
