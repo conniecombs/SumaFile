@@ -346,6 +346,13 @@ pub(crate) fn copy_file_attempt_versioned(
         && multi_streams >= 2
         && file_len >= multi_cutoff
         && file_len >= (buffer_size as u64).saturating_mul(2)
+        // A file written directly under its final name is written from its
+        // first byte on: at full length it is whole, which is all recovery
+        // can go by for it. Ranges written out of order reach full length
+        // with the first range.
+        && dst
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().ends_with(".sumafile-partial"))
         // Independent byte ranges only pay off on a local fixed disk; a share
         // or a cloud mount serves one sequential stream far better.
         && simplefile_core::utils::is_local_fixed_volume(src)
@@ -416,7 +423,14 @@ pub(crate) fn copy_file_attempt_versioned(
         ));
     }
     #[cfg(windows)]
-    copy_alternate_streams(&src_file, src, dst, must_sync || verify_checksum);
+    copy_alternate_streams(
+        &src_file,
+        src,
+        &dst_file,
+        dst,
+        must_sync || verify_checksum,
+        ctx.progress.operation_type == "move",
+    )?;
     let content_hash =
         if !need_hash {
             None
@@ -496,25 +510,63 @@ pub(crate) fn copy_file_attempt_versioned(
 
 /// Gives the copy the source's alternate data streams: the mark Windows puts
 /// on a downloaded file, which makes Windows ask before the file is run, and
-/// whatever else programs keep beside a file's bytes. A destination that
-/// cannot hold them (FAT, some shares) gets the file without them, and the
-/// service log says so, as Explorer would warn.
+/// whatever else programs keep beside a file's bytes.
+///
+/// A destination that cannot hold them (FAT, some shares) gets the file
+/// without them, and the service log says so, where Explorer would ask. Any
+/// other failure (a stream another program holds, a full disk) fails a move,
+/// so that its source, which would be deleted with its streams, is kept; the
+/// failure is retried. A copy keeps its source and only logs it.
 #[cfg(windows)]
-fn copy_alternate_streams(source: &fs::File, src: &Path, dst: &Path, sync: bool) {
+fn copy_alternate_streams(
+    source: &fs::File,
+    src: &Path,
+    destination: &fs::File,
+    dst: &Path,
+    sync: bool,
+    moving: bool,
+) -> Result<(), Failure> {
+    use simplefile_core::file_ops::StreamsNotCopied;
     count(Op::Query, src);
-    match simplefile_core::file_ops::copy_alternate_streams(source, src, dst, sync) {
+    match simplefile_core::file_ops::copy_alternate_streams(source, src, destination, dst, sync) {
         Ok(streams) => {
             for _ in 0..streams {
+                // Each stream is opened on both sides, read to its end (the
+                // last read finds it), emptied, written and, with the file,
+                // forced to disk.
                 count(Op::Open, src);
                 count(Op::Read, src);
+                count(Op::Read, src);
                 count(Op::Open, dst);
+                count(Op::Set, dst);
                 count(Op::Write, dst);
+                if sync {
+                    count(Op::Flush, dst);
+                }
             }
+            Ok(())
         }
-        Err(error) => log::warn!(
-            "{} was copied without its alternate data streams: {error}",
-            src.display()
-        ),
+        Err(StreamsNotCopied::Unsupported) => {
+            log::warn!(
+                "{} was copied without its alternate data streams: the destination cannot hold them",
+                src.display()
+            );
+            Ok(())
+        }
+        Err(StreamsNotCopied::Failed(error)) if moving => Err(Failure::new(
+            format!(
+                "Copy the alternate data streams of [{}]: {error}",
+                src.display()
+            ),
+            true,
+        )),
+        Err(StreamsNotCopied::Failed(error)) => {
+            log::warn!(
+                "{} was copied without some of its alternate data streams: {error}",
+                src.display()
+            );
+            Ok(())
+        }
     }
 }
 
@@ -1510,6 +1562,13 @@ pub(crate) fn copy_symlink_with_progress(
     })
 }
 
+/// Whether a rename was refused because the two paths are on different
+/// volumes (`ERROR_NOT_SAME_DEVICE`, `EXDEV`).
+fn crosses_volumes(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::CrossesDevices
+        || (cfg!(windows) && error.raw_os_error() == Some(17))
+}
+
 /// Same-volume moves rename instead of copying. `None` means "not applicable,
 /// copy instead" (different volume, an unpublished tree, or a rename error that
 /// a copy may still get around). A source held by another program is not such
@@ -1535,6 +1594,11 @@ pub(crate) fn move_by_rename(
     }
     match rename_exclusive(source, &dst) {
         Ok(()) => Some(Ok(renamed_outcome(&dst))),
+        // Another volume after all: a folder where one is mounted, a letter
+        // remapped since it was looked up. The item is copied. A name that
+        // exists took this refusal into the Replace swap below, refused the
+        // same way, and the item failed.
+        Err(error) if crosses_volumes(&error) => None,
         Err(error) if is_already_exists_error(&error) || path_exists_no_follow(&dst) => {
             if !replace_existing {
                 return Some(Err(Failure::conflict(conflict_for_existing_destination(
@@ -1560,7 +1624,10 @@ pub(crate) fn move_by_rename(
                     return Some(Err(Failure::cancelled()));
                 }
                 match swap_source_into_place(source, &dst) {
-                    Ok(()) => return Some(Ok(renamed_outcome(&dst))),
+                    Ok(Swapped::Yes) => return Some(Ok(renamed_outcome(&dst))),
+                    // The existing file is back under its name; the item is
+                    // copied over it instead.
+                    Ok(Swapped::OtherVolume) => return None,
                     Err(error) => {
                         let reason = error.to_string();
                         match retry.failed_with(error) {
@@ -1602,7 +1669,15 @@ pub(crate) fn move_by_rename(
 /// removes the backup after a stop one step later. The record is removed when
 /// the swap is over, and left for recovery when it ends with a file still to
 /// put back or a backup still to remove.
-fn swap_source_into_place(source: &Path, dst: &Path) -> Result<(), Failure> {
+/// What a swap through a backup name did, when it failed nothing.
+enum Swapped {
+    Yes,
+    /// The source is on another volume after all: the existing file was put
+    /// back under its name, and nothing else changed.
+    OtherVolume,
+}
+
+fn swap_source_into_place(source: &Path, dst: &Path) -> Result<Swapped, Failure> {
     use crate::transfer_journal::SwapRecord;
     use simplefile_core::path_conflict::rename_exclusive;
 
@@ -1648,28 +1723,32 @@ fn swap_source_into_place(source: &Path, dst: &Path) -> Result<(), Failure> {
         });
     }
     if let Err(error) = rename_exclusive(source, dst) {
-        return Err(match rename_exclusive(&backup, dst) {
-            Ok(()) => {
+        return match rename_exclusive(&backup, dst) {
+            Ok(()) if crosses_volumes(&error) => {
+                over(record);
+                Ok(Swapped::OtherVolume)
+            }
+            Ok(()) => Err({
                 over(record);
                 Failure::io(
                     "Finalize destination (original destination was restored)",
                     dst,
                     error,
                 )
-            }
+            }),
             // The record stays: recovery puts the original back.
-            Err(restore) => Failure::from(format!(
+            Err(restore) => Err(Failure::from(format!(
                 "Finalize destination [{}]: {error}; original remains [{}], restore failed: {restore}",
                 dst.display(),
                 backup.display()
-            )),
-        });
+            ))),
+        };
     }
     // Promotion already committed: never replay it just because backup cleanup failed.
     match crate::transfer_staging::remove_file_or_link(&backup, "destination backup") {
         Ok(()) => {
             over(record);
-            Ok(())
+            Ok(Swapped::Yes)
         }
         // The record stays: recovery removes the backup.
         Err(error) => Err(Failure::from(format!(

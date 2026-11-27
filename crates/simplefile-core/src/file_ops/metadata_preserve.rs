@@ -195,35 +195,83 @@ pub fn apply_basic_metadata_to_handle(
         .map_err(|e| format!("Failed to preserve permissions: {e}"))
 }
 
-/// Copies the named data streams of `source` (open, at `source_path`) to the
-/// file at `destination`: the mark Windows puts on a downloaded file
-/// (`Zone.Identifier`) and whatever else programs keep beside a file's bytes.
-/// Each stream is forced to disk when `sync` is set. Returns how many streams
-/// were copied; a source on a file system without streams has none. The
-/// error names every stream that could not be copied, after all were tried.
+/// Why a file's alternate data streams were not all copied.
+#[cfg(windows)]
+#[derive(Debug, PartialEq, Eq)]
+pub enum StreamsNotCopied {
+    /// The destination's file system holds no named streams (FAT, some
+    /// shares): the copy can only be had without them.
+    Unsupported,
+    /// A stream could not be listed, read or written; the message names each.
+    Failed(String),
+}
+
+/// Copies the named data streams of `source` (open, at `source_path`) to
+/// `destination` (open, at `destination_path`): the mark Windows puts on a
+/// downloaded file (`Zone.Identifier`) and whatever else programs keep beside
+/// a file's bytes. Each stream is forced to disk when `sync` is set. Returns
+/// how many streams were copied; a source on a file system without streams
+/// has none. A failure names every stream that could not be copied, after
+/// all were tried.
 #[cfg(windows)]
 pub fn copy_alternate_streams(
     source: &fs::File,
     source_path: &Path,
-    destination: &Path,
+    destination: &fs::File,
+    destination_path: &Path,
     sync: bool,
-) -> Result<usize, String> {
-    let names = alternate_stream_names(source)
-        .map_err(|e| format!("Failed to list the source's data streams: {e}"))?;
+) -> Result<usize, StreamsNotCopied> {
+    let names = alternate_stream_names(source).map_err(|e| {
+        StreamsNotCopied::Failed(format!("Failed to list the source's data streams: {e}"))
+    })?;
+    if names.is_empty() {
+        return Ok(0);
+    }
+    if holds_no_streams(destination) {
+        return Err(StreamsNotCopied::Unsupported);
+    }
     let mut failures = Vec::new();
     for name in &names {
-        if let Err(error) = copy_stream(source_path, destination, name, sync) {
-            failures.push(format!("{}: {error}", name.to_string_lossy()));
+        match copy_stream(source_path, destination_path, name, sync) {
+            Ok(()) => {}
+            Err(StreamFailure::Unsupported) => return Err(StreamsNotCopied::Unsupported),
+            Err(StreamFailure::Io(error)) => {
+                failures.push(format!("{}: {error}", name.to_string_lossy()))
+            }
         }
     }
     if failures.is_empty() {
         Ok(names.len())
     } else {
-        Err(format!(
+        Err(StreamsNotCopied::Failed(format!(
             "Failed to copy data streams ({})",
             failures.join("; ")
-        ))
+        )))
     }
+}
+
+/// Whether the volume of `file` says it holds no named streams. A volume
+/// that does not answer is taken to hold them; creating a stream then tells.
+#[cfg(windows)]
+fn holds_no_streams(file: &fs::File) -> bool {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::GetVolumeInformationByHandleW;
+    // The volume flag that says it holds named streams (winnt.h).
+    const FILE_NAMED_STREAMS: u32 = 0x0004_0000;
+    let mut flags = 0u32;
+    let answered = unsafe {
+        GetVolumeInformationByHandleW(
+            file.as_raw_handle() as _,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut flags,
+            std::ptr::null_mut(),
+            0,
+        )
+    } != 0;
+    answered && flags & FILE_NAMED_STREAMS == 0
 }
 
 /// The names of a file's named data streams, without the leading colon and
@@ -320,24 +368,46 @@ fn stream_path(path: &Path, name: &std::ffi::OsStr) -> std::path::PathBuf {
 }
 
 #[cfg(windows)]
+enum StreamFailure {
+    /// The destination refused a named stream as such.
+    Unsupported,
+    Io(std::io::Error),
+}
+
+#[cfg(windows)]
 fn copy_stream(
     source: &Path,
     destination: &Path,
     name: &std::ffi::OsStr,
     sync: bool,
-) -> std::io::Result<()> {
-    let mut input = fs::File::open(stream_path(source, name))?;
+) -> Result<(), StreamFailure> {
+    // What a file system without named streams answers for a name with one.
+    const ERROR_INVALID_FUNCTION: i32 = 1;
+    const ERROR_NOT_SUPPORTED: i32 = 50;
+    const ERROR_INVALID_PARAMETER: i32 = 87;
+    const ERROR_INVALID_NAME: i32 = 123;
+
+    let mut input = fs::File::open(stream_path(source, name)).map_err(StreamFailure::Io)?;
     // Emptied through the handle rather than by an open that truncates: the
     // file the stream belongs to can be a hidden partial file.
     let mut output = fs::OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(false)
-        .open(stream_path(destination, name))?;
-    output.set_len(0)?;
-    std::io::copy(&mut input, &mut output)?;
+        .open(stream_path(destination, name))
+        .map_err(|error| match error.raw_os_error() {
+            Some(
+                ERROR_INVALID_FUNCTION
+                | ERROR_NOT_SUPPORTED
+                | ERROR_INVALID_PARAMETER
+                | ERROR_INVALID_NAME,
+            ) => StreamFailure::Unsupported,
+            _ => StreamFailure::Io(error),
+        })?;
+    output.set_len(0).map_err(StreamFailure::Io)?;
+    std::io::copy(&mut input, &mut output).map_err(StreamFailure::Io)?;
     if sync {
-        output.sync_all()?;
+        output.sync_all().map_err(StreamFailure::Io)?;
     }
     Ok(())
 }
@@ -493,10 +563,12 @@ mod tests {
         fs::write(root.join("setup.exe:Zone.Identifier"), &mark).unwrap();
         fs::write(root.join("setup.exe:notes"), b"a stream of its own").unwrap();
         let copy = root.join("copy.exe");
-        drop(partial(&copy));
+        let written = partial(&copy);
 
         let opened = fs::File::open(&source).unwrap();
-        let copied = super::copy_alternate_streams(&opened, &source, &copy, false).unwrap();
+        let copied =
+            super::copy_alternate_streams(&opened, &source, &written, &copy, false).unwrap();
+        drop(written);
 
         assert_eq!(copied, 2);
         assert_eq!(
@@ -524,10 +596,45 @@ mod tests {
         fs::write(&copy, b"plain").unwrap();
 
         let opened = fs::File::open(&source).unwrap();
+        let written = fs::OpenOptions::new().write(true).open(&copy).unwrap();
         assert_eq!(
-            super::copy_alternate_streams(&opened, &source, &copy, true).unwrap(),
+            super::copy_alternate_streams(&opened, &source, &written, &copy, true).unwrap(),
             0
         );
+        drop(written);
+        remove(&root);
+    }
+
+    /// A stream that cannot be read (another program holds it) is a failure
+    /// of its own, apart from a destination that holds no streams: a move
+    /// that deleted its source after it lost the source's streams with it.
+    #[test]
+    fn a_stream_that_cannot_be_read_is_a_failure_not_a_destination_without_streams() {
+        let root = folder("held-stream");
+        let source = root.join("setup.exe");
+        fs::write(&source, b"MZ").unwrap();
+        let mark = root.join("setup.exe:Zone.Identifier");
+        fs::write(&mark, b"[ZoneTransfer]\r\nZoneId=3\r\n").unwrap();
+        // Read and write by nobody else, as an antivirus scan can hold it.
+        let holder = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&mark)
+            .unwrap();
+        let copy = root.join("copy.exe");
+        let written = partial(&copy);
+
+        let opened = fs::File::open(&source).unwrap();
+        let result = super::copy_alternate_streams(&opened, &source, &written, &copy, false);
+
+        drop(holder);
+        drop(written);
+        match result {
+            Err(super::StreamsNotCopied::Failed(message)) => {
+                assert!(message.contains("Zone.Identifier"), "{message}")
+            }
+            other => panic!("expected a failure, got {other:?}"),
+        }
         remove(&root);
     }
 

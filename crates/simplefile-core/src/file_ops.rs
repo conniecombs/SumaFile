@@ -20,7 +20,7 @@ mod shortcut;
 
 pub use folder_metrics::{calculate_folder_size, count_folder_items, get_folder_metrics};
 #[cfg(windows)]
-pub use metadata_preserve::copy_alternate_streams;
+pub use metadata_preserve::{copy_alternate_streams, StreamsNotCopied};
 pub use metadata_preserve::{apply_basic_metadata_to_handle, preserve_basic_metadata};
 pub use shortcut::{create_shortcut, ShortcutRequest};
 

@@ -359,7 +359,7 @@ impl StagingLease {
     pub fn abort(self) -> Result<(), String> {
         // A clean-up that fails leaves the lease unsettled, and with it the
         // record, for the next try of this file or the next visit to the folder.
-        recover(&self.record)?;
+        clean_up(&self.record)?;
         self.finish()
     }
 }
@@ -398,12 +398,15 @@ fn open_staged(staged: &Path, overwrite: bool, hidden: bool) -> std::io::Result<
         };
         const GENERIC_WRITE: u32 = 0x4000_0000;
         const DELETE: u32 = 0x0001_0000;
-        // Delete access lets the partial file be given its final name through
-        // this handle; see `staging::promote_leased_with_policy`. Other
-        // handles to it share delete access, as `std` opens files.
-        options.access_mode(GENERIC_WRITE | DELETE);
         options.custom_flags(FILE_FLAG_SEQUENTIAL_SCAN);
+        // A partial file, under its temporary name, is hidden and is given
+        // its final name through this handle, which takes delete access; see
+        // `staging::promote_leased_with_policy`. Other handles to it share
+        // delete access, as `std` opens files. A file written directly under
+        // its final name is never renamed, and a folder may let a file be
+        // created and written but not deleted.
         if hidden {
+            options.access_mode(GENERIC_WRITE | DELETE);
             options.attributes(FILE_ATTRIBUTE_HIDDEN);
         }
     }
@@ -786,7 +789,7 @@ impl Unsettled {
         let Some((record, _)) = by_staged.get(&key) else {
             return Err(Reclaim::NotOurs);
         };
-        recover(record).map_err(Reclaim::Failed)?;
+        clean_up(record).map_err(Reclaim::Failed)?;
         if let Some((_, home)) = by_staged.remove(&key) {
             home.unsettled.fetch_sub(1, Ordering::Relaxed);
         }
@@ -954,9 +957,14 @@ fn keep_only_copy(record: &Record) -> Result<(), String> {
     // early) is not taken for a complete file. The copy of a hidden source
     // keeps the attribute, so it is kept under its partial name: never taken
     // for complete, and never deleted.
+    // A file written directly under its final name is never created hidden,
+    // and has its source's attributes once it is finished: its length is all
+    // there is to go by. A move deletes its source only after the file was
+    // forced to disk, and such a file is written from its first byte to its
+    // last, so at full length it is whole.
     let complete = fs::symlink_metadata(&record.staged)
         .is_ok_and(|meta| meta.is_file() && Some(meta.len()) == record.moved)
-        && !crate::staging::is_hidden(&record.staged);
+        && (record.staged == record.destination || !crate::staging::is_hidden(&record.staged));
     if complete && record.staged == record.destination {
         // Written under its final name and complete: nothing is left to do.
         return Ok(());
@@ -978,10 +986,23 @@ fn keep_only_copy(record: &Record) -> Result<(), String> {
     Ok(())
 }
 
+/// What recovery does with a recorded file found when a folder is visited,
+/// after a crash or a power loss: the only copy of a moved file is kept,
+/// and anything else is cleaned up.
 fn recover(record: &Record) -> Result<(), String> {
     if is_only_copy(record) {
         return keep_only_copy(record);
     }
+    clean_up(record)
+}
+
+/// What a pass that is still running does with a file it gives up: a file a
+/// Replace moved aside is put back and the partial file is removed. A move
+/// deletes its source only once the file has its name, so in the pass that
+/// writes it the partial file is never the only copy, whatever the source
+/// looks like by then: a source that grew or shrank while it was copied is
+/// not a source that is gone.
+fn clean_up(record: &Record) -> Result<(), String> {
     if let Some((backup, id)) = &record.backup {
         if matches(backup, id) {
             if !path_exists_no_follow(&record.destination) {
@@ -1177,7 +1198,8 @@ pub fn recover_directory(directory: &Path) -> Result<(), String> {
             // A file's own record: its last line is its state.
             Some(last)
                 if last.version == OWN_RECORD
-                    && record_path(&last.staged).is_some_and(|own| same_path(&own, &path))
+                    && (record_path(&last.staged).is_some_and(|own| same_path(&own, &path))
+                        || is_115_direct_record(&last, &path))
                     && within(&last, directory) =>
             {
                 vec![last]
@@ -1234,6 +1256,34 @@ fn names_nothing_for_long(record: &File) -> bool {
 
 /// Whether everything `record` names lies directly in `directory`, and its
 /// backup, if any, has a backup's name.
+/// Whether `path` is where version 1.1.5 kept the record of the file
+/// `record` names, written directly under its final name. 1.1.5 named that
+/// record after another hash of the same path, so its name is
+/// `.<name>.<16 hex digits>.sumafile-partial.state` in the file's folder, but
+/// not the one [`record_path`] gives.
+fn is_115_direct_record(record: &Record, path: &Path) -> bool {
+    if record.staged != record.destination {
+        return false;
+    }
+    let (Some(name), Some(record_name)) = (record.destination.file_name(), path.file_name()) else {
+        return false;
+    };
+    let (Some(folder), Some(record_folder)) = (record.destination.parent(), path.parent()) else {
+        return false;
+    };
+    if !same_path(folder, record_folder) {
+        return false;
+    }
+    let name = name.to_string_lossy();
+    let record_name = record_name.to_string_lossy();
+    record_name
+        .strip_prefix('.')
+        .and_then(|rest| rest.strip_prefix(&*name))
+        .and_then(|rest| rest.strip_suffix(".sumafile-partial.state"))
+        .and_then(|hash| hash.strip_prefix('.'))
+        .is_some_and(|hash| hash.len() == 16 && hash.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
 fn within(record: &Record, directory: &Path) -> bool {
     let inside = |path: &Path| path.parent().is_some_and(|p| same_path(p, directory));
     inside(&record.staged)
@@ -1710,6 +1760,153 @@ mod tests {
 
         assert_eq!(fs::read(&destination).unwrap(), b"downloaded");
         assert!(!record_path(&destination).unwrap().exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Version 1.1.5 named the record of a file written directly under its
+    /// final name with another hash: the record was found, then passed over
+    /// because its name was not the one this version gives it, and the
+    /// half-written file stayed under its name for good.
+    #[test]
+    fn recovery_removes_a_file_that_115_was_writing_directly() {
+        let root = root();
+        let destination = root.join("report.txt");
+        fs::write(&destination, b"half of the rep").unwrap();
+        let record = Record {
+            version: OWN_RECORD,
+            source: root.join("source.txt").to_string_lossy().into_owned(),
+            destination: destination.clone(),
+            staged: destination.clone(),
+            staged_id: file_identity(&destination).unwrap(),
+            backup: None,
+            committed: false,
+            moved: None,
+        };
+        // A name of the 1.1.5 form whose hash is not this version's.
+        let old_name = root.join(".report.txt.0123456789abcdef.sumafile-partial.state");
+        assert_ne!(Some(&old_name), record_path(&destination).as_ref());
+        let mut line = serde_json::to_vec(&record).unwrap();
+        line.push(b'\n');
+        fs::write(&old_name, line).unwrap();
+
+        recover_directory(&root).unwrap();
+
+        assert!(!destination.exists(), "the half-written file is removed");
+        assert!(!old_name.exists(), "and its record");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A record of that form that does not name a file of its own folder,
+    /// written directly under the name the record's name holds, is not
+    /// taken for one.
+    #[test]
+    fn recovery_leaves_a_record_of_the_old_form_that_names_another_file() {
+        let root = root();
+        let destination = root.join("report.txt");
+        fs::write(&destination, b"someone's file").unwrap();
+        let record = Record {
+            version: OWN_RECORD,
+            source: root.join("source.txt").to_string_lossy().into_owned(),
+            destination: destination.clone(),
+            staged: destination.clone(),
+            staged_id: file_identity(&destination).unwrap(),
+            backup: None,
+            committed: false,
+            moved: None,
+        };
+        let other_name = root.join(".notes.txt.0123456789abcdef.sumafile-partial.state");
+        let mut line = serde_json::to_vec(&record).unwrap();
+        line.push(b'\n');
+        fs::write(&other_name, line).unwrap();
+
+        recover_directory(&root).unwrap();
+
+        assert_eq!(fs::read(&destination).unwrap(), b"someone's file");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A move gives a file up during its pass while the source is still in
+    /// place: a move deletes its source only once the file has its name. The
+    /// clean-up used the rule for recovery after a crash, so a source that
+    /// had changed length since the copy began was taken for gone, and the
+    /// partial file, at full length, was given the final name.
+    #[test]
+    fn a_move_given_up_during_its_pass_removes_its_partial_file_whatever_the_source_looks_like() {
+        let root = root();
+        let records = FolderRecords::new("pass");
+        let source = root.join("growing.log");
+        fs::write(&source, b"whole").unwrap();
+        let (lease, stage, destination) = begin_moved(&records, &root, &source, 5, b"whole");
+        // The source grew while it was copied, and the copy failed for it.
+        fs::write(&source, b"whole and more").unwrap();
+
+        lease.abort().unwrap();
+
+        assert!(!stage.exists(), "the partial file is removed");
+        assert!(!destination.exists(), "nothing was given the final name");
+        assert_eq!(fs::read(&source).unwrap(), b"whole and more");
+        drop(records);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The same for a file a move writes directly under its final name.
+    #[test]
+    fn a_direct_write_of_a_move_given_up_during_its_pass_removes_the_file() {
+        let root = root();
+        let source = root.join("shrinking.bin");
+        fs::write(&source, b"ten bytes!").unwrap();
+        let destination = root.join("copy.bin");
+        let mut lease = StagingLease::begin_for_move(
+            &source.to_string_lossy(),
+            &destination,
+            &destination,
+            Some(10),
+        )
+        .unwrap();
+        let mut file = lease.take_staged_file().unwrap();
+        file.write_all(b"ten bytes!").unwrap();
+        drop(file);
+        fs::write(&source, b"short").unwrap();
+
+        lease.abort().unwrap();
+
+        assert!(
+            !destination.exists(),
+            "the file written for the move is removed"
+        );
+        assert!(!record_path(&destination).unwrap().exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A copy keeps its source's Hidden attribute, so a file a move wrote
+    /// directly is hidden when its source was. Recovery took a hidden file
+    /// for unfinished and kept its record for ever, with a warning on every
+    /// visit to the folder. Only a partial file is hidden while it is written.
+    #[cfg(windows)]
+    #[test]
+    fn recovery_settles_a_hidden_file_a_move_wrote_directly_when_its_source_is_gone() {
+        let root = root();
+        let destination = root.join("hidden.ini");
+        let source = root.join("gone");
+        let lease = StagingLease::begin_for_move(
+            &source.to_string_lossy(),
+            &destination,
+            &destination,
+            Some(6),
+        )
+        .unwrap();
+        fs::write(&destination, b"hidden").unwrap();
+        set_hidden(&destination, true);
+        drop(lease);
+
+        recover_directory(&root).unwrap();
+
+        assert_eq!(fs::read(&destination).unwrap(), b"hidden");
+        assert!(
+            !record_path(&destination).unwrap().exists(),
+            "the record is settled"
+        );
+        set_hidden(&destination, false);
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -411,13 +411,10 @@ fn plan_item(
     let conflict = ConflictAction::parse(&item.action);
     // Before any name in the folder is looked at: recovery removes what an
     // interrupted transfer left there and puts back what it had moved aside,
-    // and both change which names are taken.
+    // and both change which names are taken. A folder that is not there yet
+    // holds nothing to recover; it is created once the item passed its checks.
     if let Some(parent) = final_dest.parent() {
-        if !scanned_dirs.contains(parent) {
-            if !parent.is_dir() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|error| format!("Failed to create {}: {error}", parent.display()))?;
-            }
+        if !scanned_dirs.contains(parent) && parent.is_dir() {
             crate::transfer_journal::recover_directory(parent)?;
             // Only once it worked: the next item for this folder tries again.
             scanned_dirs.insert(parent.to_path_buf());
@@ -466,6 +463,13 @@ fn plan_item(
     }
     if is_dir {
         plan::ensure_dir_not_inside_itself(&source_path, &final_dest)?;
+    }
+    if let Some(parent) = final_dest.parent() {
+        if !parent.is_dir() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("Failed to create {}: {error}", parent.display()))?;
+            scanned_dirs.insert(parent.to_path_buf());
+        }
     }
     let is_symlink = file_type.is_symlink();
     Ok(ItemPlan::Transfer(TransferPlan {
@@ -2730,6 +2734,25 @@ mod tests {
             &|_| {},
             &super::tuning::Policy::default,
         )
+    }
+
+    /// A retried folder headed into itself is refused before anything is
+    /// created: the folder its destination was to go into, inside the source,
+    /// used to be created first.
+    #[test]
+    fn a_retried_folder_into_itself_is_refused_without_creating_anything() {
+        let root = unique_temp_path("retry_into_itself");
+        let source = root.join("A");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("file.txt"), b"file").unwrap();
+        let inside = source.join("sub").join("A");
+
+        let error = retry_items("move", vec![retry_item(&source, &inside)], &root)
+            .expect_err("a folder cannot go into itself");
+
+        assert!(!source.join("sub").exists(), "{}", error.message);
+        assert_eq!(fs::read(source.join("file.txt")).unwrap(), b"file");
+        let _ = fs::remove_dir_all(&root);
     }
 
     fn retry_item(source: &std::path::Path, destination: &std::path::Path) -> super::TransferItem {

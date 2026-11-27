@@ -14,6 +14,42 @@ fn unique_root(name: &str) -> PathBuf {
     ))
 }
 
+/// Transfers `source` into `destination` with the conflict answer and the
+/// settings given, and returns what the service answered.
+#[cfg(windows)]
+fn transfer_with(
+    operation: &'static str,
+    source: &Path,
+    destination: &Path,
+    conflict: &str,
+    policy: super::tuning::Policy,
+) -> Result<Vec<super::TransferResult>, super::TransferBatchError> {
+    super::transfer_with_policy_blocking(
+        operation,
+        super::Request::Selection {
+            sources: vec![source.to_string_lossy().into_owned()],
+            conflict_action: conflict.to_string(),
+        },
+        destination.to_string_lossy().into_owned(),
+        super::generate_transfer_operation_id(),
+        Arc::new(AtomicBool::new(false)),
+        &|_| {},
+        &|_| {},
+        &move || policy.clone(),
+    )
+}
+
+/// Settings that give up on a failing file at once.
+#[cfg(windows)]
+fn without_retries() -> super::tuning::Policy {
+    super::tuning::Policy {
+        low_level_retries: 1,
+        high_level_retries: 1,
+        retry_sleep_ms: 10,
+        ..super::tuning::Policy::default()
+    }
+}
+
 fn copy(operation: &'static str, source: &Path, destination: &Path) {
     transfer_with_progress_blocking(
         operation,
@@ -236,4 +272,158 @@ fn a_move_from_a_substituted_drive_into_its_own_volume_renames_the_file() {
     assert_eq!(counts.get(Op::Write), 0, "{}", counts.describe());
     drop(letter);
     let _ = fs::remove_dir_all(&root);
+}
+
+/// Runs `icacls` with `arguments`; false when it is missing or refuses.
+#[cfg(windows)]
+fn icacls(arguments: &[&std::ffi::OsStr]) -> bool {
+    std::process::Command::new("icacls")
+        .args(arguments)
+        .stdout(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// "Write directly" asked for delete access on the file it creates, which it
+/// never uses: only a partial file is renamed through its handle. A folder
+/// where users may create files but not delete them, a drop box, refused
+/// every file, and "Write directly" was the one setting that worked there.
+#[cfg(windows)]
+#[test]
+fn write_directly_copies_into_a_folder_where_files_cannot_be_deleted() {
+    use std::ffi::OsStr;
+
+    let root = unique_root("no_delete");
+    let source = root.join("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("report.txt"), b"report").unwrap();
+    let drop_box = root.join("drop box");
+    fs::create_dir_all(&drop_box).unwrap();
+    let user = std::env::var("USERNAME").unwrap_or_default();
+    let denied = !user.is_empty()
+        && icacls(&[
+            drop_box.as_os_str(),
+            OsStr::new("/deny"),
+            OsStr::new(&format!("{user}:(DC)")),
+        ])
+        && icacls(&[
+            drop_box.as_os_str(),
+            OsStr::new("/deny"),
+            OsStr::new(&format!("{user}:(OI)(IO)(D)")),
+        ]);
+    if !denied {
+        eprintln!("skipped: icacls could not deny deleting in the folder");
+        let _ = fs::remove_dir_all(&root);
+        return;
+    }
+
+    let result = transfer_with(
+        "copy",
+        &source.join("report.txt"),
+        &drop_box,
+        "error",
+        super::tuning::Policy {
+            inplace: true,
+            ..super::tuning::Policy::default()
+        },
+    );
+
+    icacls(&[
+        drop_box.as_os_str(),
+        OsStr::new("/reset"),
+        OsStr::new("/T"),
+        OsStr::new("/Q"),
+    ]);
+    result.unwrap_or_else(|error| panic!("the copy succeeds: {}", error.message));
+    assert_eq!(fs::read(drop_box.join("report.txt")).unwrap(), b"report");
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// A move whose source's streams could not be copied keeps its source. The
+/// failure was only logged; the file got its name and the source was deleted
+/// with the streams, among them the mark that makes Windows ask before a
+/// downloaded file is run.
+#[cfg(windows)]
+#[test]
+fn a_move_whose_streams_cannot_be_copied_fails_and_keeps_its_source() {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    let root = unique_root("held_stream_move");
+    let source = root.join("source");
+    fs::create_dir_all(&source).unwrap();
+    let file = source.join("setup.exe");
+    fs::write(&file, b"MZ").unwrap();
+    let mark = source.join("setup.exe:Zone.Identifier");
+    fs::write(&mark, b"[ZoneTransfer]\r\nZoneId=3\r\n").unwrap();
+    let destination = root.join("destination");
+    fs::create_dir_all(&destination).unwrap();
+    // A verbatim destination is another drive to the service: a copy and a
+    // delete, not a rename.
+    let destination = PathBuf::from(format!(r"\\?\{}", destination.display()));
+    // Nobody else may read the stream, as while an antivirus scans it.
+    let holder = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(&mark)
+        .unwrap();
+
+    let result = transfer_with("move", &file, &destination, "error", without_retries());
+
+    drop(holder);
+    let error = result.expect_err("the move fails");
+    assert!(
+        error.message.contains("alternate data streams"),
+        "{}",
+        error.message
+    );
+    assert_eq!(fs::read(&file).unwrap(), b"MZ", "the source is kept");
+    assert!(fs::read(&mark).unwrap().starts_with(b"[ZoneTransfer]"));
+    assert!(!destination.join("setup.exe").exists());
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// A move that takes two paths for one volume when they are not (a folder
+/// where another volume is mounted) has its rename refused, and copies the
+/// item instead. With Replace and a destination that existed, the refusal
+/// went into the swap with the existing file, which was refused the same way,
+/// and the item failed. Here `/dev/shm` is the other volume.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_replace_move_onto_a_volume_taken_for_the_same_one_is_copied() {
+    use std::os::unix::fs::MetadataExt;
+
+    let other = Path::new("/dev/shm");
+    let root = unique_root("cross_volume_replace");
+    fs::create_dir_all(&root).unwrap();
+    let separate =
+        fs::metadata(other).is_ok_and(|meta| meta.dev() != fs::metadata(&root).unwrap().dev());
+    if !separate {
+        eprintln!("skipped: /dev/shm is not a volume of its own");
+        let _ = fs::remove_dir_all(&root);
+        return;
+    }
+    let destination = other.join(format!(
+        "sumafile_fidelity_cross_{}",
+        super::generate_transfer_operation_id()
+    ));
+    fs::create_dir_all(&destination).unwrap();
+    fs::write(destination.join("a.txt"), b"old").unwrap();
+    fs::write(root.join("a.txt"), b"new").unwrap();
+
+    let result = transfer_with_progress_blocking(
+        "move",
+        vec![root.join("a.txt").to_string_lossy().into_owned()],
+        destination.to_string_lossy().into_owned(),
+        super::generate_transfer_operation_id(),
+        "replace".to_string(),
+        Arc::new(AtomicBool::new(false)),
+        &|_| {},
+    );
+
+    let outcome = result.map(|_| ()).map_err(|error| error.message);
+    let copied = fs::read(destination.join("a.txt"));
+    let _ = fs::remove_dir_all(&destination);
+    let _ = fs::remove_dir_all(&root);
+    outcome.unwrap();
+    assert_eq!(copied.unwrap(), b"new");
 }
