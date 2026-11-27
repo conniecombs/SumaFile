@@ -441,8 +441,27 @@ struct OpenRecords {
 }
 
 struct OpenRecord {
-    record: Arc<FolderRecord>,
+    slot: Arc<FolderSlot>,
     used: u64,
+}
+
+/// A folder's current record, behind a lock of the folder's own: creating,
+/// replacing and closing a record holds up only the files of its folder.
+#[derive(Default)]
+struct FolderSlot {
+    record: Mutex<Option<Arc<FolderRecord>>>,
+}
+
+impl FolderSlot {
+    /// Whether no file of the pass is being recorded in this folder: nothing
+    /// but the slot refers to its record, and nobody is changing it now.
+    fn idle(&self) -> bool {
+        self.record.try_lock().is_ok_and(|record| {
+            record
+                .as_ref()
+                .is_none_or(|record| Arc::strong_count(record) == 1)
+        })
+    }
 }
 
 /// A folder record holds this much before a fresh one takes over.
@@ -553,43 +572,66 @@ impl FolderRecords {
 
     /// The open record of `directory`, a fresh one when there is none or the
     /// open one is full.
+    ///
+    /// The lock every worker takes here is held only to find the folder's
+    /// slot and to choose what to close: no file is created, written or
+    /// deleted under it. A record file is created under the folder's own lock,
+    /// and the records closed to make room are closed after both locks are
+    /// released.
     fn record_for(&self, directory: &Path) -> Result<Arc<FolderRecord>, String> {
         let key = path_collision_key(directory);
-        let mut open = self
-            .open
+        let (slot, closed) = {
+            let mut open = self
+                .open
+                .lock()
+                .map_err(|_| "Transfer ownership records are unusable".to_string())?;
+            open.clock += 1;
+            let now = open.clock;
+            let entry = open
+                .by_folder
+                .entry(key.clone())
+                .or_insert_with(|| OpenRecord {
+                    slot: Arc::default(),
+                    used: now,
+                });
+            entry.used = now;
+            let slot = entry.slot.clone();
+            let mut closed = Vec::new();
+            while open.by_folder.len() > self.keep_open {
+                let idle = open
+                    .by_folder
+                    .iter()
+                    .filter(|(folder, entry)| {
+                        **folder != key && Arc::strong_count(&entry.slot) == 1 && entry.slot.idle()
+                    })
+                    .min_by_key(|(_, entry)| entry.used)
+                    .map(|(folder, _)| folder.clone());
+                let Some(idle) = idle else {
+                    // Every open record has a file being copied.
+                    break;
+                };
+                closed.extend(open.by_folder.remove(&idle));
+            }
+            (slot, closed)
+        };
+        // Closing a record deletes its file when every file in it is done.
+        drop(closed);
+
+        let mut current = slot
+            .record
             .lock()
-            .map_err(|_| "Transfer ownership records are unusable".to_string())?;
-        open.clock += 1;
-        let now = open.clock;
-        if let Some(current) = open.by_folder.get_mut(&key) {
-            if current.record.written.load(Ordering::Relaxed) < self.rotate_at {
-                current.used = now;
-                return Ok(current.record.clone());
+            .map_err(|_| "Transfer ownership record is unusable".to_string())?;
+        if let Some(record) = current.as_ref() {
+            if record.written.load(Ordering::Relaxed) < self.rotate_at {
+                return Ok(record.clone());
             }
         }
         let record = FolderRecord::create(directory, &self.operation)?;
         // A full record that this replaces is deleted when the last file
-        // recorded in it is done.
-        open.by_folder.insert(
-            key.clone(),
-            OpenRecord {
-                record: record.clone(),
-                used: now,
-            },
-        );
-        while open.by_folder.len() > self.keep_open {
-            let idle = open
-                .by_folder
-                .iter()
-                .filter(|(folder, entry)| **folder != key && Arc::strong_count(&entry.record) == 1)
-                .min_by_key(|(_, entry)| entry.used)
-                .map(|(folder, _)| folder.clone());
-            let Some(idle) = idle else {
-                // Every open record has a file being copied.
-                break;
-            };
-            open.by_folder.remove(&idle);
-        }
+        // recorded in it is done, after the folder's lock is released.
+        let replaced = current.replace(record.clone());
+        drop(current);
+        drop(replaced);
         Ok(record)
     }
 }
@@ -599,7 +641,10 @@ impl FolderRecords {
 /// in it was left for recovery.
 struct FolderRecord {
     path: PathBuf,
-    file: Mutex<File>,
+    file: File,
+    /// Held while a line is written, so that lines do not interleave. A
+    /// line's flush to disk happens after it is released.
+    writing: Mutex<()>,
     written: AtomicU64,
     /// Files recorded here whose clean-up is still owed.
     unsettled: AtomicUsize,
@@ -609,6 +654,8 @@ struct FolderRecord {
 
 impl FolderRecord {
     fn create(directory: &Path, operation: &str) -> Result<Arc<Self>, String> {
+        #[cfg(test)]
+        pause::at(pause::Point::Create, directory);
         let key = crate::staging::fnv1a_64(&[
             path_collision_key(directory).as_bytes(),
             &[0xff],
@@ -625,7 +672,8 @@ impl FolderRecord {
                 Ok(file) => {
                     return Ok(Arc::new(Self {
                         path,
-                        file: Mutex::new(file),
+                        file,
+                        writing: Mutex::new(()),
                         written: AtomicU64::new(0),
                         unsettled: AtomicUsize::new(0),
                         torn: AtomicBool::new(false),
@@ -649,10 +697,11 @@ impl FolderRecord {
     /// Adds `record` as one line, in one write. `durable` writes it to disk
     /// before returning.
     fn append(&self, record: &Record, durable: bool) -> Result<(), String> {
-        let mut file = self
-            .file
+        let writing = self
+            .writing
             .lock()
             .map_err(|_| "Transfer ownership record is unusable".to_string())?;
+        let mut file = &self.file;
         let mut line = Vec::new();
         if self.torn.load(Ordering::Relaxed) {
             // The write before this one failed and may have left part of a
@@ -680,9 +729,14 @@ impl FolderRecord {
         self.torn.store(false, Ordering::Relaxed);
         self.written
             .store(written + line.len() as u64, Ordering::Relaxed);
+        // The other files of the folder add their lines while this one waits
+        // for the disk; the flush writes theirs too, which does no harm.
+        drop(writing);
         if durable {
+            #[cfg(test)]
+            pause::at(pause::Point::Flush, &self.path);
             crate::ops::record(crate::ops::Op::Flush, &self.path);
-            file.sync_all().map_err(|e| {
+            self.file.sync_all().map_err(|e| {
                 format!("Persist transfer ownership [{}]: {e}", self.path.display())
             })?;
         }
@@ -1235,6 +1289,64 @@ fn folder_record_lines(path: &Path, lines: &[&[u8]], directory: &Path) -> Option
         }
     }
     read.then_some(records)
+}
+
+/// Points where a test can hold a record operation, to show what waits
+/// for it and what does not.
+#[cfg(test)]
+mod pause {
+    use std::path::{Path, PathBuf};
+    use std::sync::{mpsc, Mutex};
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub(super) enum Point {
+        /// A folder record being created, for a folder.
+        Create,
+        /// A line being written to disk, for a record under a folder.
+        Flush,
+    }
+
+    struct Armed {
+        point: Point,
+        under: PathBuf,
+        entered: mpsc::Sender<()>,
+        release: mpsc::Receiver<()>,
+    }
+
+    static ARMED: Mutex<Vec<Armed>> = Mutex::new(Vec::new());
+
+    /// The operation is held here; it goes on once `release` is sent.
+    pub(super) struct Gate {
+        pub entered: mpsc::Receiver<()>,
+        pub release: mpsc::Sender<()>,
+    }
+
+    /// Holds the next operation at `point` on a path under `under`, once.
+    pub(super) fn arm(point: Point, under: &Path) -> Gate {
+        let (entered_tx, entered) = mpsc::channel();
+        let (release, release_rx) = mpsc::channel();
+        ARMED.lock().unwrap().push(Armed {
+            point,
+            under: under.to_path_buf(),
+            entered: entered_tx,
+            release: release_rx,
+        });
+        Gate { entered, release }
+    }
+
+    pub(super) fn at(point: Point, path: &Path) {
+        let armed = {
+            let mut armed = ARMED.lock().unwrap();
+            let index = armed
+                .iter()
+                .position(|armed| armed.point == point && path.starts_with(&armed.under));
+            index.map(|index| armed.remove(index))
+        };
+        if let Some(armed) = armed {
+            let _ = armed.entered.send(());
+            let _ = armed.release.recv();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1864,6 +1976,82 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// The record of a folder used to be created under the lock that every
+    /// copy thread takes to begin a file, so a slow create (a share, a busy
+    /// disk) held up the files of every other folder.
+    #[test]
+    fn a_folder_record_being_created_does_not_hold_up_another_folder() {
+        let root = root();
+        let slow = root.join("slow");
+        let quick = root.join("quick");
+        fs::create_dir(&slow).unwrap();
+        fs::create_dir(&quick).unwrap();
+        let records = FolderRecords::new("pass");
+        let gate = pause::arm(pause::Point::Create, &slow);
+        let (records_ref, slow_ref, quick_ref) = (&records, &slow, &quick);
+        std::thread::scope(|scope| {
+            let held = scope.spawn(move || begin_in(records_ref, slow_ref, "file", b"slow"));
+            gate.entered
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the slow folder's record is being created");
+            let (done_tx, done) = std::sync::mpsc::channel();
+            let other = scope.spawn(move || {
+                let begun = begin_in(records_ref, quick_ref, "file", b"quick");
+                let _ = done_tx.send(());
+                begun
+            });
+            let other_done = done.recv_timeout(Duration::from_secs(5)).is_ok();
+            gate.release.send(()).unwrap();
+            assert!(
+                other_done,
+                "a file in another folder waited for the slow folder's record"
+            );
+            drop(held.join().unwrap());
+            drop(other.join().unwrap());
+        });
+        drop(records);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A line that must reach the disk (where a Replace moves the existing
+    /// file aside) used to be flushed while the record's write lock was
+    /// held, so every other file of the folder waited for that flush.
+    #[test]
+    fn a_line_written_to_disk_does_not_hold_up_the_other_files_of_its_folder() {
+        let root = root();
+        let records = FolderRecords::new("pass");
+        let (mut replacing, _, destination) = begin_in(&records, &root, "replaced", b"new");
+        fs::write(&destination, b"old").unwrap();
+        let backup = root.join(".replaced.backup.sumafile-replace-backup");
+        let gate = pause::arm(pause::Point::Flush, &root);
+        let (records_ref, root_ref) = (&records, &root);
+        let (replacing_ref, backup_ref, destination_ref) = (&mut replacing, &backup, &destination);
+        std::thread::scope(|scope| {
+            let held =
+                scope.spawn(move || replacing_ref.backup_intent(backup_ref, destination_ref));
+            gate.entered
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the line is being written to disk");
+            let (done_tx, done) = std::sync::mpsc::channel();
+            let other = scope.spawn(move || {
+                let begun = begin_in(records_ref, root_ref, "other", b"other");
+                let _ = done_tx.send(());
+                begun
+            });
+            let other_done = done.recv_timeout(Duration::from_secs(5)).is_ok();
+            gate.release.send(()).unwrap();
+            assert!(
+                other_done,
+                "another file of the folder waited for the flush of a line"
+            );
+            held.join().unwrap().unwrap();
+            drop(other.join().unwrap());
+        });
+        drop(replacing);
+        drop(records);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     /// A written partial file gets its final name through the handle that
     /// wrote it; a handle that cannot be renamed falls back to the rename by
     /// path, and a name that is taken is a conflict either way.
@@ -2346,7 +2534,10 @@ mod tests {
             let Home::Folder { record: home, .. } = &first.home else {
                 panic!("a line of the folder record");
             };
-            home.file.lock().unwrap().write_all(damage).unwrap();
+            {
+                let _writing = home.writing.lock().unwrap();
+                (&home.file).write_all(damage).unwrap();
+            }
             let (second, second_stage, _) = begin_in(&records, &root, "second", b"half");
             drop(first);
             drop(second);
@@ -2403,11 +2594,10 @@ mod tests {
         let Home::Folder { record: home, .. } = &first.home else {
             panic!("a line of the folder record");
         };
-        home.file
-            .lock()
-            .unwrap()
-            .write_all(b"{\"version\":2,\"sou")
-            .unwrap();
+        {
+            let _writing = home.writing.lock().unwrap();
+            (&home.file).write_all(b"{\"version\":2,\"sou").unwrap();
+        }
         home.torn.store(true, Ordering::Relaxed);
 
         let (second, _, _) = begin_in(&records, &root, "second", b"half");
