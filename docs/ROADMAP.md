@@ -39,7 +39,9 @@ on-demand column values have shipped. What remains:
   frame drops while scrolling. Startup stages and the UI smoke are measured
   today; nothing else is.
 - **A benchmark suite in CI** on fixed fixtures, tracking p50, p95 and p99, so
-  a performance claim comes with a before and after.
+  a performance claim comes with a before and after. Transfers have a
+  benchmark (see [Measuring a transfer](TRANSFER_TUNING.md#measuring-a-transfer)),
+  run by hand only.
 - **Cache budgets and controls.** One session budget chosen from physical
   memory, a setting (Off, sizes, Auto), a "Clear session cache" control, and
   trimming under Windows low-memory notifications: thumbnails first, then
@@ -70,17 +72,15 @@ on-demand column values have shipped. What remains:
 
 ## Transfers
 
-- Benchmark copy and move against Windows Explorer on SSD, HDD, USB, a network
-  share and many small files, and on a physical NAS.
+- Run the transfer benchmark on SSD, HDD, USB, a network share and a physical
+  NAS, and compare it with Windows Explorer and robocopy. No numbers have been
+  recorded yet.
   The 1.2.0 notes quote one figure, the move clean-up of 8,000 folders with
   80,000 skipped files going from 43 seconds to 0.1. It came from a single
-  run and nothing in the repository reproduces it; make it a benchmark case.
+  run and the benchmark has no case for it; add one.
 - "Always copy" does not always copy: in a second pass it compares content
   like Checksum, and in a first pass no check mode skips anything. Rename the
   choice or change what it does.
-- While a file waits for a later retry round, its bytes leave the task's
-  bytes done and return when the retry starts, so the readout still falls
-  then. Keep them counted.
 - Why the partial files of the copies that failed before 1.1.4 were not
   removed by the clean-up that follows a failed file was not established.
 - A destination that refuses the attribute update keeps the Hidden attribute
@@ -112,10 +112,6 @@ on-demand column values have shipped. What remains:
   ownership cannot be recorded there, and the file fails.
 - Whether two paths are on the same volume is decided from the first path
   component, which is wrong for mount points and substituted drives.
-- Bytes of skipped files count toward the speed shown.
-- A folder's ownership record is created while a lock that all copy threads
-  share is held. Trees of many small folders may copy more slowly for it;
-  this was not measured.
 - A move within one drive that replaces files flushes one record per
   replaced file, and Checksum mode flushes every file. Measure what these
   cost on a hard disk and a share.
@@ -124,13 +120,16 @@ on-demand column values have shipped. What remains:
   worker at the transfer's destination root would cost a fixed number per
   pass whatever the shape of the tree. A record would then name partial files
   in subfolders, and recovery would have to look in parent folders as well.
-  Measure trees of small folders before deciding.
+  Measure trees of small folders (the benchmark's `one-file-folders` case)
+  before deciding.
 - After a power loss, a partial file whose line had not reached the disk is
   left with no record, and recovery does not remove it. The pass ID in the
   partial file's name could prove which pass made it.
-- What a copied file still costs over a plain copy is the partial file and
-  its rename, and with "Flush to disk before finishing each file" on, one
-  flush.
+- A small file copied into a new folder costs 14 Windows calls (see
+  [Measuring a transfer](TRANSFER_TUNING.md#measuring-a-transfer)). A plain
+  copy makes none of these: the file's line in its folder's record, the query
+  for the ID the line names, the rename, and with "Flush to disk before
+  finishing each file" on, the flush.
 
 ## Search
 

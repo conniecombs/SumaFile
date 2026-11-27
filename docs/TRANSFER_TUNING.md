@@ -123,8 +123,9 @@ is on, every file is copied in these steps:
    partial file and the partial file's identity on its volume. The service
    keeps the record open and locked for as long as the pass may write into the
    folder.
-3. The bytes are written to the partial file, which carries the Windows Hidden
-   attribute while it is written.
+3. The source is opened once; its size and times are read through that
+   handle, and its bytes are written to the partial file, which carries the
+   Windows Hidden attribute while it is written.
 4. After the last byte the service checks that the source still has the size
    and times it had when it was opened; if not, the file fails ("Source
    changed during transfer"). It flushes the partial file to disk when "Flush
@@ -135,12 +136,22 @@ is on, every file is copied in these steps:
    and clears the Hidden attribute.
 5. The partial file is renamed to the final name. This rename never
    overwrites: unless Replace was chosen, a file found under that name is a
-   conflict.
+   conflict. On Windows it is made through the handle the partial file was
+   written through, so the file is not opened again; if the destination
+   refuses that, for a reason other than a file under the name or a file in
+   use, the service renames by path.
 6. In a move, the source is deleted next.
 
 A half-written file therefore never appears under its final name, and an
-existing file is not touched until its replacement is complete. A full disk is
-found by the write that hits it; free space is not checked beforehand.
+existing file is not touched until its replacement is complete.
+
+Before it starts, the service looks for a file under the final name, to apply
+the conflict answer. It does not look in a folder the pass created itself when
+no Replace, Skip or Keep both answer applies: that folder was empty, and a
+file that has appeared in it since is still found by the rename, which never
+overwrites, and reported as a conflict. A copy reads no file identity from the
+source; a move does, for the check made before the source is deleted. A full
+disk is found by the write that hits it; free space is not checked beforehand.
 
 A file's line in the record needs no ending: once the file has its final name
 it is no longer under its partial name, which is all that
@@ -153,7 +164,9 @@ the pass starts a fresh one in the folder, with the next number, and the full
 one is deleted when the last file recorded in it is done. A pass keeps open
 the records of the 64 folders it wrote to last, closes and deletes the others
 as it goes, and deletes them all when it ends. A record is kept only when a
-file it names was left for recovery.
+file it names was left for recovery. A record being created holds up only the
+files of its own folder, and while one file's line is forced to disk the other
+files of the folder go on writing theirs.
 
 Until this was changed, every file had a record of its own, which was created,
 written to disk and deleted for each file. A link, a file written
@@ -612,17 +625,24 @@ line for the whole path, or right-click it and choose **Copy path**.
   written so far for files in progress, plus the bytes that had been written
   for files that then failed for good. A file that fails after its last byte
   stays counted, so the last update of a failed pass counts what was written.
-* A file renamed by a same-drive move counts with its full size; a folder
-  moved by one rename adds no bytes. A skipped file adds no bytes. A file
-  recognized as already copied counts with its full size.
+* A file renamed by a same-drive move, a skipped file and a file recognized as
+  already copied count with their full size; a folder moved by one rename adds
+  no bytes. These bytes count toward the percentage, not toward the speed.
 * The line of one file never goes down. A file set aside for another round
-  keeps the bytes it had reached; the new round copies it from the first byte,
-  and its line moves again once the new copy passes that point. While the file
-  is set aside, its bytes are not in the task's bytes done, which is lower by
-  that amount until the file is queued again.
-* While a file is in its last steps (flush, verification, rename) the
-  percentage can read "Finishing".
-* The speed is a moving average of the change in bytes done.
+  keeps the bytes it had reached, in its line and in the task's bytes done;
+  the new round copies it from the first byte, and its line moves again once
+  the new copy passes that point.
+* While the task's last file is in its last steps (flush, verification,
+  rename), and while the times of the folders it created are set afterwards,
+  the row reads "Finishing" in place of the percentage and the speed. A file
+  finishing while others are still being copied does not change what the row
+  shows.
+* The speed is a moving average of the change in bytes transferred: bytes
+  done without the ones above that were not transferred. After three seconds
+  without a transferred byte it reads "Calculating speed" and no time
+  remaining is shown, until bytes move again.
+* With one file at a time, the row names the file just done between two
+  files, and Details keeps its line until the next one starts.
 * After Retry or a conflict answer, the readout counts only the items of the
   new pass.
 
@@ -768,6 +788,77 @@ own, apart from values learned from bytes per second.
 
 **Forget learned settings** in Transfer defaults empties the record. A task
 that is running keeps what it has measured and can save again when it ends.
+
+## Measuring a transfer
+
+Two tests in `crates/simplefile-service/src/progress/bench.rs` measure what a
+transfer costs. Both count file-system operations: each place in the service
+and in `sumafile-transfer` that opens, asks, reads, writes, flushes, sets,
+renames, deletes, locks, creates or lists names the kind of operation and the
+path. The counting exists only in test builds (the `test-support` feature of
+`sumafile-transfer`); the app's build has no counter and no cost for it.
+
+**What one file costs.** The test
+`a_small_file_copied_into_a_new_folder_costs_these_operations` copies a folder
+of one file and a folder of eleven into a new folder, with the default
+settings, and checks what the ten extra files cost:
+
+| Operation | Per file | What it is |
+| --- | --- | --- |
+| Open | 2 | the source, and the partial file created |
+| Query | 4 | the partial file's ID for its record; the source's size and times when it is opened and after the last read; the copy's attributes before they are set |
+| Read | 1 | the source, in one read |
+| Write | 2 | the file's line in the folder's record, and the data |
+| Flush | 1 | the data, before the file gets its name |
+| Set | 1 | the copy's times and attributes |
+| Rename | 1 | the partial file to its final name, through its own handle |
+
+On Windows that is 14 calls for each file (an open costs a close too); it used
+to be 22. Elsewhere the rename goes by path, after one more
+check of the partial file. A change that adds an operation to every file
+fails this test and has to change the table on purpose.
+
+**The benchmark.** `transfer_benchmark` times whole transfers. It is not run
+with the other tests. On the drive to measure:
+
+```powershell
+$env:SUMAFILE_BENCH_ROOT = "D:\bench"
+cargo test -p simplefile-service --release -- --ignored --nocapture transfer_benchmark
+```
+
+| Case | What is copied |
+| --- | --- |
+| `small-one-folder` | 3000 files of 4 KiB in one folder |
+| `small-300-folders` | the same files in 300 folders |
+| `one-file-folders` | the same files, one in each of 3000 folders |
+| `medium-files` | 300 files of 3 MiB |
+| `one-large-file` | one file of 1 GiB |
+| `skip-all-300-folders` | the 300 folders again into a copy of them, with Skip |
+| `merge-move-300-folders` | a move of the 300 folders into a destination that already holds them empty, so the move merges file by file |
+
+| Variable | Meaning |
+| --- | --- |
+| `SUMAFILE_BENCH_ROOT` | Where the source is built and copied to. The system temporary folder when not set. |
+| `SUMAFILE_BENCH_DST_ROOT` | Where to copy to instead, to measure between two drives or to a share. |
+| `SUMAFILE_BENCH_CASES` | The cases to run, separated by commas. All when not set. |
+| `SUMAFILE_BENCH_RUNS` | Runs of each case with each flush setting; the median is shown. 3 when not set. |
+| `SUMAFILE_BENCH_SMALL_FILES`, `SUMAFILE_BENCH_LARGE_MIB` | The number of small files (3000) and the size of the large one (1024). |
+| `SUMAFILE_BENCH_MODE` | `automatic`, the default, or a number: a Custom limit of that many files at once. |
+
+Each case runs with "Flush to disk before finishing each file" on and off. A
+line shows the files and MiB, the median time and every run's time, files and
+MiB per second, the operations per file and what they cost in Windows calls.
+The benchmark forgets learned settings before every run, so each run starts
+from the defaults, and keeps them in a database of its own (in
+`SUMAFILE_BENCH_ROOT`, unless `SIMPLEFILE_APP_DATA_DIR` is set), never the
+app's. It deletes what it built when it ends.
+
+To compare two commits that both have the benchmark, run the same cases on
+the same drive with each checked out. To compare with robocopy, build a tree of
+the same shape and time
+`robocopy <source> <destination> /E /MT:8 /NFL /NDL /NP` with
+`Measure-Command` in PowerShell. Robocopy does not force each file to disk, so
+compare it with the flush-off line.
 
 ## Limits
 

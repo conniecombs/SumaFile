@@ -178,7 +178,7 @@ service speaks 1 and answers any other with an application error), the token, an
 service may send binary frames. `ipc.health` and `ipc.shutdown` are the other control methods.
 
 The largest payloads skip JSON when the client asked for binary frames, as `HandshakeParams` does
-by default. A binary frame is `SFB1`, a version byte (2), a tag byte and a payload. The tags, 1 to
+by default. A binary frame is `SFB1`, a version byte (3), a tag byte and a payload. The tags, 1 to
 9 in `protocol.json`, cover `list_directory` chunks and results, search batches and results,
 `operation-progress`, `file-change`, thumbnail results and listing view pages.
 `crates/simplefile-service/src/binary.rs` encodes and `BinaryFrameCodec.cs` decodes, so a change to

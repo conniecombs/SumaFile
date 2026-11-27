@@ -134,6 +134,36 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
   remembered for the route; every later transfer on it started that low. In
   exchange, what a task learned is now saved also when some of its files
   failed or met a conflict, which say nothing about the route.
+- A file costs fewer calls to Windows: 14 for a small file copied into a
+  new folder, from 22. The source is opened once and its size and times are
+  read through that handle; a copy no longer reads the source's file ID,
+  which only a move needs; in a folder the transfer created, SumaFile no
+  longer looks for a file under the final name first; and the partial file
+  is renamed through the handle it was written through instead of being
+  opened again. How much faster that makes a transfer has not been measured
+  on Windows yet.
+- Creating the record of one destination folder no longer holds up the
+  files of every other folder, and forcing one file's line to disk no
+  longer holds up the other files of its folder.
+- A transfer benchmark and a count of the file-system operations each file
+  costs, for developers. A test pins the count, so a change that adds a
+  call to every file shows. See
+  [Measuring a transfer](TRANSFER_TUNING.md#measuring-a-transfer).
+- Skipped files, files recognized as already copied and files a same-drive
+  move renames no longer raise the speed shown. Their bytes still count
+  toward the percentage.
+- A file set aside for a later retry round keeps its bytes in the task's
+  bytes done, so the bytes done no longer fall and rise again around a
+  retry.
+- When no byte has been transferred for three seconds, the speed reads
+  "Calculating speed" and no time remaining is shown. The last speed used
+  to stay on screen.
+- "Finishing" is shown while the task's last file finishes and while the
+  times of the folders it created are set. It used to appear for every
+  file that finished while others were still being copied, and not while
+  the folders' times were set.
+- With one file at a time, the row names the file just done between two
+  files. It used to show no name for a moment after each file.
 - Checksum mode flushes each file to disk before it reads the file back, and
   verifies it before the file gets the source's read-only attribute. A
   read-only file whose checksum did not match could not be tried again.

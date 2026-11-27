@@ -5,8 +5,9 @@ Prepared November 24, 2026 for Windows x64.
 This release fixes the open medium-severity findings of the
 [November 23 code audit](CODEBASE_AUDIT_2026-11-23.md), and the ways a
 transfer could lose a file or stop for good that two reviews of the transfer
-engine found. What those reviews found about speed and about file attributes
-is still open and is listed in the [roadmap](ROADMAP.md#transfers). The
+engine found, and part of what those reviews found about speed. The rest of
+it, and what they found about file attributes, is still open and is listed in
+the [roadmap](ROADMAP.md#transfers). The
 release adds no features. The complete list is in the
 [changelog](CHANGELOG.md).
 
@@ -42,6 +43,21 @@ release adds no features. The complete list is in the
 - **Logs.** `service.log` gets the service's warnings, such as each retried
   try with its reason. `operations.jsonl` records, for each transfer, its
   duration, bytes and files and every item that failed, and is kept to 4 MiB.
+- **Fewer calls per file.** A small file copied into a new folder costs 14
+  calls to Windows instead of 22: the source is opened once, a copy no longer
+  reads the source's file ID, a new folder is not searched for the file's
+  name first, and the temporary file is renamed through the handle it was
+  written through. The gain in speed has not been measured on Windows yet.
+  Creating one folder's record no longer holds up the files of other folders.
+- **Files at once after a retry.** A file retried again and again halves the
+  number of files copied at once a single time, instead of in every second it
+  is retried, and a number that retries forced down is not remembered for the
+  route.
+- **Progress.** Skipped files and files already at the destination count
+  toward the percentage but no longer raise the speed. A file waiting for a
+  later retry round keeps its bytes counted. After three seconds without a
+  byte transferred the speed reads "Calculating speed" instead of the last
+  value. "Finishing" is shown for the last file and the folders' times only.
 - **Moves that leave files behind.** Deciding which source folders stay after a
   move with many skipped or failed files took time in proportion to folders
   times files. A tree of 8,000 folders with 80,000 skipped files took 43 seconds

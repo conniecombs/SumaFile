@@ -4,7 +4,7 @@
 //! The benchmark is not run with the other tests. On the drive to measure:
 //!
 //! ```text
-//! set SUMAFILE_BENCH_ROOT=D:\bench
+//! $env:SUMAFILE_BENCH_ROOT = "D:\bench"
 //! cargo test -p simplefile-service --release -- --ignored --nocapture transfer_benchmark
 //! ```
 //!
