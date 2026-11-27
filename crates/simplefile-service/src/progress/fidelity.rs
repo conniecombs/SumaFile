@@ -88,3 +88,46 @@ fn a_copied_tree_keeps_hidden_and_system_on_its_files_and_folders() {
     );
     let _ = fs::remove_dir_all(&root);
 }
+
+/// A copied download keeps the mark that makes Windows ask before it is run,
+/// in a copy and in a move that copies (here forced by a verbatim
+/// destination, which the service treats as another drive). The mark is an
+/// alternate data stream, and the copy used to carry only the file's bytes.
+#[cfg(windows)]
+#[test]
+fn a_copied_or_moved_download_keeps_its_mark_and_its_other_streams() {
+    let mark = b"[ZoneTransfer]\r\nZoneId=3\r\nHostUrl=https://example.com/\r\n".to_vec();
+    for operation in ["copy", "move"] {
+        let root = unique_root(&format!("streams_{operation}"));
+        let source = root.join("source");
+        fs::create_dir_all(source.join("folder")).unwrap();
+        let file = source.join("folder").join("setup.exe");
+        fs::write(&file, b"MZ").unwrap();
+        fs::write(
+            source.join("folder").join("setup.exe:Zone.Identifier"),
+            &mark,
+        )
+        .unwrap();
+        fs::write(source.join("folder").join("setup.exe:notes"), b"kept").unwrap();
+        let destination = root.join("destination");
+        fs::create_dir_all(&destination).unwrap();
+        let destination = if operation == "move" {
+            PathBuf::from(format!(r"\\?\{}", destination.display()))
+        } else {
+            destination
+        };
+
+        copy(operation, &source.join("folder"), &destination);
+
+        let copied = destination.join("folder");
+        assert_eq!(fs::read(copied.join("setup.exe")).unwrap(), b"MZ");
+        assert_eq!(
+            fs::read(copied.join("setup.exe:Zone.Identifier")).unwrap(),
+            mark,
+            "{operation}"
+        );
+        assert_eq!(fs::read(copied.join("setup.exe:notes")).unwrap(), b"kept");
+        assert_eq!(file.exists(), operation == "copy");
+        let _ = fs::remove_dir_all(&root);
+    }
+}

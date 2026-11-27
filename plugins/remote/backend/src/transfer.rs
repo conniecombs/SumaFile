@@ -966,10 +966,9 @@ fn transfer_file(
             let file = match lease.take_staged_file() {
                 Some(file) => file,
                 None => {
-                    let file = OpenOptions::new()
-                        .write(true)
-                        .open(&staging)
-                        .map_err(|e| Failure::io("Open local temporary destination", &staging, e))?;
+                    let file = OpenOptions::new().write(true).open(&staging).map_err(|e| {
+                        Failure::io("Open local temporary destination", &staging, e)
+                    })?;
                     file.set_len(0).map_err(|e| {
                         Failure::io("Empty local temporary destination", &staging, e)
                     })?;

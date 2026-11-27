@@ -60,15 +60,16 @@ fn transfer(
 /// | Operation | Count | What it is |
 /// | --- | --- | --- |
 /// | Open | 2 | the source, and the partial file created |
-/// | Query | 4 | the partial file's ID for its record; the source's size and times when it is opened and again after the last read; the copy's attributes before they are set |
+/// | Query | 5 | the partial file's ID for its record; the source's size and times when it is opened and again after the last read; the source's alternate data streams (Windows only); the copy's attributes before they are set |
 /// | Read | 1 | the source, in one read |
 /// | Write | 2 | the line in the folder's record, and the data |
 /// | Flush | 1 | the data, before the file gets its name |
 /// | Set | 1 | the copy's times and attributes |
 /// | Rename | 1 | the partial file to its final name, through its own handle |
 ///
-/// Elsewhere than on Windows the rename goes by path, and the partial file is
-/// first checked to be the one recorded: one Stat more.
+/// Elsewhere than on Windows there are no alternate data streams to look for,
+/// and the rename goes by path, after the partial file is checked to be the
+/// one recorded: one Query less and one Stat more.
 ///
 /// The cost of the folder (creating it, its record, listing its source,
 /// setting its times) is the same however many files it holds, so it is left
@@ -79,7 +80,7 @@ fn a_small_file_copied_into_a_new_folder_costs_these_operations() {
         match op {
             Op::Stat => u64::from(!cfg!(windows)),
             Op::Open => 2,
-            Op::Query => 4,
+            Op::Query => 4 + u64::from(cfg!(windows)),
             Op::Read => 1,
             Op::Write => 2,
             Op::Flush => 1,

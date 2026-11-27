@@ -87,7 +87,10 @@ fn carried_attributes(destination: u32, source: u32) -> u32 {
 /// apart, so that the attributes, which decide whether the copy can be seen,
 /// do not go with the times. The error then says what was not kept.
 #[cfg(windows)]
-pub fn apply_basic_metadata_to_handle(file: &fs::File, source: &fs::Metadata) -> Result<(), String> {
+pub fn apply_basic_metadata_to_handle(
+    file: &fs::File,
+    source: &fs::Metadata,
+) -> Result<(), String> {
     use std::os::windows::fs::MetadataExt;
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{
@@ -179,7 +182,10 @@ fn set_basic_info(
 }
 
 #[cfg(not(windows))]
-pub fn apply_basic_metadata_to_handle(file: &fs::File, source: &fs::Metadata) -> Result<(), String> {
+pub fn apply_basic_metadata_to_handle(
+    file: &fs::File,
+    source: &fs::Metadata,
+) -> Result<(), String> {
     let times = fs::FileTimes::new()
         .set_accessed(source.accessed().map_err(|e| e.to_string())?)
         .set_modified(source.modified().map_err(|e| e.to_string())?);
@@ -187,6 +193,153 @@ pub fn apply_basic_metadata_to_handle(file: &fs::File, source: &fs::Metadata) ->
         .map_err(|e| format!("Failed to preserve file timestamps: {e}"))?;
     file.set_permissions(source.permissions())
         .map_err(|e| format!("Failed to preserve permissions: {e}"))
+}
+
+/// Copies the named data streams of `source` (open, at `source_path`) to the
+/// file at `destination`: the mark Windows puts on a downloaded file
+/// (`Zone.Identifier`) and whatever else programs keep beside a file's bytes.
+/// Each stream is forced to disk when `sync` is set. Returns how many streams
+/// were copied; a source on a file system without streams has none. The
+/// error names every stream that could not be copied, after all were tried.
+#[cfg(windows)]
+pub fn copy_alternate_streams(
+    source: &fs::File,
+    source_path: &Path,
+    destination: &Path,
+    sync: bool,
+) -> Result<usize, String> {
+    let names = alternate_stream_names(source)
+        .map_err(|e| format!("Failed to list the source's data streams: {e}"))?;
+    let mut failures = Vec::new();
+    for name in &names {
+        if let Err(error) = copy_stream(source_path, destination, name, sync) {
+            failures.push(format!("{}: {error}", name.to_string_lossy()));
+        }
+    }
+    if failures.is_empty() {
+        Ok(names.len())
+    } else {
+        Err(format!(
+            "Failed to copy data streams ({})",
+            failures.join("; ")
+        ))
+    }
+}
+
+/// The names of a file's named data streams, without the leading colon and
+/// the `:$DATA` type: `Zone.Identifier`.
+#[cfg(windows)]
+fn alternate_stream_names(file: &fs::File) -> std::io::Result<Vec<std::ffi::OsString>> {
+    use std::os::windows::ffi::OsStringExt;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{FileStreamInfo, GetFileInformationByHandleEx};
+    const ERROR_INVALID_FUNCTION: i32 = 1;
+    const ERROR_HANDLE_EOF: i32 = 38;
+    const ERROR_NOT_SUPPORTED: i32 = 50;
+    const ERROR_INVALID_PARAMETER: i32 = 87;
+    const ERROR_INSUFFICIENT_BUFFER: i32 = 122;
+    const ERROR_MORE_DATA: i32 = 234;
+
+    // u64 words keep the entries 8-byte aligned, as the system writes them.
+    let mut buffer: Vec<u64> = vec![0; 512];
+    loop {
+        let ok = unsafe {
+            GetFileInformationByHandleEx(
+                file.as_raw_handle() as _,
+                FileStreamInfo,
+                buffer.as_mut_ptr().cast(),
+                (buffer.len() * 8) as u32,
+            )
+        };
+        if ok != 0 {
+            break;
+        }
+        let error = std::io::Error::last_os_error();
+        match error.raw_os_error() {
+            Some(ERROR_MORE_DATA | ERROR_INSUFFICIENT_BUFFER) if buffer.len() < 1 << 17 => {
+                let grown = buffer.len() * 4;
+                buffer.resize(grown, 0);
+            }
+            // No stream at all, or a file system without them (FAT, some
+            // shares).
+            Some(
+                ERROR_HANDLE_EOF
+                | ERROR_INVALID_PARAMETER
+                | ERROR_NOT_SUPPORTED
+                | ERROR_INVALID_FUNCTION,
+            ) => return Ok(Vec::new()),
+            _ => return Err(error),
+        }
+    }
+
+    // FILE_STREAM_INFO: the offset of the next entry (0 for the last), the
+    // name's length in bytes, the stream's size and allocation (8 bytes
+    // each), then the name, `:Zone.Identifier:$DATA`; `::$DATA` is the
+    // file's own bytes.
+    let bytes: Vec<u8> = buffer.iter().flat_map(|word| word.to_le_bytes()).collect();
+    let word = |at: usize| -> Option<usize> {
+        bytes
+            .get(at..at + 4)
+            .map(|four| u32::from_le_bytes([four[0], four[1], four[2], four[3]]) as usize)
+    };
+    let mut names = Vec::new();
+    let mut entry = 0;
+    while let (Some(next), Some(length)) = (word(entry), word(entry + 4)) {
+        let Some(raw) = bytes.get(entry + 24..entry + 24 + length) else {
+            break;
+        };
+        let units: Vec<u16> = raw
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_le_bytes(*pair))
+            .collect();
+        let data: Vec<u16> = ":$DATA".encode_utf16().collect();
+        if units.first() == Some(&u16::from(b':'))
+            && units.ends_with(&data)
+            && units.len() > 1 + data.len()
+        {
+            names.push(std::ffi::OsString::from_wide(
+                &units[1..units.len() - data.len()],
+            ));
+        }
+        if next == 0 {
+            break;
+        }
+        entry += next;
+    }
+    Ok(names)
+}
+
+#[cfg(windows)]
+fn stream_path(path: &Path, name: &std::ffi::OsStr) -> std::path::PathBuf {
+    let mut full = path.as_os_str().to_os_string();
+    full.push(":");
+    full.push(name);
+    full.into()
+}
+
+#[cfg(windows)]
+fn copy_stream(
+    source: &Path,
+    destination: &Path,
+    name: &std::ffi::OsStr,
+    sync: bool,
+) -> std::io::Result<()> {
+    let mut input = fs::File::open(stream_path(source, name))?;
+    // Emptied through the handle rather than by an open that truncates: the
+    // file the stream belongs to can be a hidden partial file.
+    let mut output = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(stream_path(destination, name))?;
+    output.set_len(0)?;
+    std::io::copy(&mut input, &mut output)?;
+    if sync {
+        output.sync_all()?;
+    }
+    Ok(())
 }
 
 #[cfg(all(test, windows))]
@@ -327,6 +480,53 @@ mod tests {
             attributes(&copy) & FILE_ATTRIBUTE_HIDDEN,
             0,
             "the copy kept the Hidden attribute of its partial file"
+        );
+        remove(&root);
+    }
+
+    #[test]
+    fn the_download_mark_and_the_other_streams_go_with_the_copy() {
+        let root = folder("streams");
+        let source = root.join("setup.exe");
+        fs::write(&source, b"MZ").unwrap();
+        let mark = b"[ZoneTransfer]\r\nZoneId=3\r\n".to_vec();
+        fs::write(root.join("setup.exe:Zone.Identifier"), &mark).unwrap();
+        fs::write(root.join("setup.exe:notes"), b"a stream of its own").unwrap();
+        let copy = root.join("copy.exe");
+        drop(partial(&copy));
+
+        let opened = fs::File::open(&source).unwrap();
+        let copied = super::copy_alternate_streams(&opened, &source, &copy, false).unwrap();
+
+        assert_eq!(copied, 2);
+        assert_eq!(
+            fs::read(root.join("copy.exe:Zone.Identifier")).unwrap(),
+            mark
+        );
+        assert_eq!(
+            fs::read(root.join("copy.exe:notes")).unwrap(),
+            b"a stream of its own"
+        );
+        assert_eq!(
+            fs::read(&copy).unwrap(),
+            b"",
+            "the file's own bytes are not a stream"
+        );
+        remove(&root);
+    }
+
+    #[test]
+    fn a_file_without_streams_copies_none() {
+        let root = folder("no-streams");
+        let source = root.join("plain.txt");
+        fs::write(&source, b"plain").unwrap();
+        let copy = root.join("copy.txt");
+        fs::write(&copy, b"plain").unwrap();
+
+        let opened = fs::File::open(&source).unwrap();
+        assert_eq!(
+            super::copy_alternate_streams(&opened, &source, &copy, true).unwrap(),
+            0
         );
         remove(&root);
     }

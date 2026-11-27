@@ -393,6 +393,8 @@ pub(crate) fn copy_file_attempt_versioned(
             false,
         ));
     }
+    #[cfg(windows)]
+    copy_alternate_streams(&src_file, src, dst, must_sync || verify_checksum);
     let content_hash =
         if !need_hash {
             None
@@ -464,6 +466,30 @@ pub(crate) fn copy_file_attempt_versioned(
     }
     ctx.progress.check_cancelled()?;
     Ok((copied, version, dst_file))
+}
+
+/// Gives the copy the source's alternate data streams: the mark Windows puts
+/// on a downloaded file, which makes Windows ask before the file is run, and
+/// whatever else programs keep beside a file's bytes. A destination that
+/// cannot hold them (FAT, some shares) gets the file without them, and the
+/// service log says so, as Explorer would warn.
+#[cfg(windows)]
+fn copy_alternate_streams(source: &fs::File, src: &Path, dst: &Path, sync: bool) {
+    count(Op::Query, src);
+    match simplefile_core::file_ops::copy_alternate_streams(source, src, dst, sync) {
+        Ok(streams) => {
+            for _ in 0..streams {
+                count(Op::Open, src);
+                count(Op::Read, src);
+                count(Op::Open, dst);
+                count(Op::Write, dst);
+            }
+        }
+        Err(error) => log::warn!(
+            "{} was copied without its alternate data streams: {error}",
+            src.display()
+        ),
+    }
 }
 
 /// Overlapped ring-buffered pipeline (`rclone` `AsyncReader` style): a dedicated

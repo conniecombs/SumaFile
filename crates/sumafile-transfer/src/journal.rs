@@ -951,7 +951,9 @@ fn keep_only_copy(record: &Record) -> Result<(), String> {
     }
     // The partial file is hidden until its last byte is written and flushed,
     // so a full length alone (a copy written in several streams reaches it
-    // early) is not taken for a complete file.
+    // early) is not taken for a complete file. The copy of a hidden source
+    // keeps the attribute, so it is kept under its partial name: never taken
+    // for complete, and never deleted.
     let complete = fs::symlink_metadata(&record.staged)
         .is_ok_and(|meta| meta.is_file() && Some(meta.len()) == record.moved)
         && !crate::staging::is_hidden(&record.staged);
