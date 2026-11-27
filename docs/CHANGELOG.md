@@ -127,13 +127,16 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
   removed either, the failure says both. The clean-up's error was discarded.
 - One file that fails again and again no longer empties the lane. Every
   window with a retry halved the number of files copied at once, so one
-  file retried for four seconds took 32 files at once down to 2. A bout of
-  retries now halves the lane once, and again only in a window where
-  several files were retried.
+  file retried for four seconds took 32 files at once down to 2. A file's
+  first retry now halves the lane, and the lane halves again each time the
+  number of files that have retried in the bout doubles: one file retried
+  again and again halves it once, many files failing bring it down fast.
 - A number of files at once that retries forced down is no longer
-  remembered for the route; every later transfer on it started that low. In
-  exchange, what a task learned is now saved also when some of its files
-  failed or met a conflict, which say nothing about the route.
+  remembered for the route; every later transfer on it started that low. The
+  setting it is compared with is the one the lane had settled on before the
+  retries, and a change of settings during the task keeps it. In exchange,
+  what a task learned is now saved also when some of its files failed or met
+  a conflict, which say nothing about the route.
 - A file costs fewer calls to Windows: 15 for a small file copied into a
   new folder, from 22, counting the look for alternate data streams below. The source is opened once and its size and times are
   read through that handle; a copy no longer reads the source's file ID,
@@ -149,35 +152,49 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
   costs, for developers. A test pins the count, so a change that adds a
   call to every file shows. See
   [Measuring a transfer](TRANSFER_TUNING.md#measuring-a-transfer).
-- Skipped files, files recognized as already copied and files a same-drive
-  move renames no longer raise the speed shown. Their bytes still count
-  toward the percentage.
+- The speed is measured on the bytes written. Skipped files, files
+  recognized as already copied and files a same-drive move renames no longer
+  raise it, in the first pass or after Retry; a file copied again in a later
+  round counts again. Their bytes still count toward the percentage.
+- The time remaining follows how fast the bytes done grow, skipped files
+  included. In a merge that skipped most of a tree it read hours for minutes
+  of work.
 - A file set aside for a later retry round keeps its bytes in the task's
   bytes done, so the bytes done no longer fall and rise again around a
-  retry.
-- When no byte has been transferred for three seconds, the speed reads
-  "Calculating speed" and no time remaining is shown. The last speed used
-  to stay on screen.
+  retry, nor fall while the folders' times are set after a file failed.
+- When nothing has been written for three seconds, or for two and a half of
+  the usual gaps between writes when they come further apart, the speed
+  reads "Calculating speed" and no time remaining is shown. The last speed
+  used to stay on screen. A slow transfer, whose file is written a buffer at
+  a time seconds apart, keeps its speed, and a file's line moves at least
+  every half second.
 - "Finishing" is shown while the task's last file finishes and while the
-  times of the folders it created are set. It used to appear for every
-  file that finished while others were still being copied, and not while
-  the folders' times were set.
-- With one file at a time, the row names the file just done between two
-  files. It used to show no name for a moment after each file.
+  times of the folders it created are set, until the task ends. It used to
+  appear for every file that finished while others were still being copied
+  or waited for another round, and the next update took it off the row.
+- The row names the file just done between two files, also a skipped or
+  renamed one. With one file at a time it used to show no name for a moment
+  after each file, or "Preparing transfer" for a whole merge that skipped
+  every file. Details is emptied when no file has been in flight for half a
+  second; it kept files that were done while a slow scan found the next.
 - A copied file keeps its alternate data streams, among them the mark
   Windows puts on a downloaded file, which makes Windows ask before the file
   is run. A copy used to carry the bytes only, so a copied download ran
   without the warning. A destination that cannot hold streams (FAT, some
-  shares) gets the file without them, and `service.log` says so.
+  shares) gets the file without them, and `service.log` says so. Any other
+  failure to copy a stream (another program holds it, the disk is full)
+  fails a move, which keeps its source and tries the file again.
 - A copied file or folder keeps its Hidden, System and not-indexed
   attributes; only read-only was kept, so a copied `desktop.ini` showed in
   every folder it was copied into. A copied folder also keeps its creation
   time.
-- A destination that refuses a file's times (FAT holds no date before 1980)
-  still gets its attributes. Both were refused together, and the copy kept
-  the Hidden attribute of its temporary file.
-- A file whose name is as long as a name can be (255 characters) can be
-  copied, replaced and written directly. Its temporary names added up to 41
+- A destination that refuses a file's times (FAT holds no date before 1980),
+  or one of its attributes, still makes the copy visible, and read-only when
+  its source is. All were refused together, and the copy kept the Hidden
+  attribute of its temporary file.
+- A file whose name is as long as a name can be (255 characters, or 255
+  bytes on a share a NAS serves) can be copied, replaced and written
+  directly. Its temporary names added up to 41
   characters to its own, so any name longer than about 214 characters
   failed. A temporary name that would be too long now cuts the file's name
   and marks the cut with `~`.
@@ -187,11 +204,25 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
   because the paths began differently.
 - Tasks running at the same time share the bandwidth limit: together they
   use at most the highest of their limits, and each stays within its own.
-  Two tasks limited to 10 MB/s used 20. FTP/SFTP transfers share the
+  Two tasks limited to 10 MB/s used 20. They take turns a task at a time,
+  however many files each copies at once. FTP/SFTP transfers share the
   plugin's limit the same way.
-- An FTP/SFTP download clears its temporary file's Hidden attribute before
-  the file gets its name; nothing did. A retry empties the temporary file
+- An FTP/SFTP download clears its temporary file's Hidden attribute once the
+  file has passed its checks, before it gets its name; nothing did. A drive
+  that refuses is noted in the log. A retry empties the temporary file
   through its handle.
+- A move with Replace into a folder where another drive is mounted copies
+  the file. The refused rename went into the Replace swap, which was refused
+  the same way, and the file failed.
+- Recovery also cleans up what an interrupted copy of 1.1.5 left with "Write
+  directly" on. Its records are named after another hash of the path, and
+  were passed over: the half-written file stayed under its name for good.
+- A folder that cannot be read while a task scans the selection fails the
+  files already found and not yet copied with its error, so that Retry
+  offers them. They were reported neither copied nor failed.
+- An app and a file service of different builds that write different
+  binary frames say so when they connect. The connection used to end on the
+  first folder listing with "IPC pipe closed".
 - Checksum mode flushes each file to disk before it reads the file back, and
   verifies it before the file gets the source's read-only attribute. A
   read-only file whose checksum did not match could not be tried again.
@@ -229,6 +260,37 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
   of a file being replaced is protected as before. Records left by earlier
   versions are still cleaned up, and an earlier version leaves the new
   records alone. See [Recovery](TRANSFER_TUNING.md#recovery).
+- Undo and Redo of a copy or a move no longer take a file they could not
+  check for one that is gone. A file whose path is longer than 260
+  characters, or one on a share that is offline or refused access, counted
+  as already undone: Undo said it was done and left the file where it was,
+  and a Redo of it failed every time. Such a file is now sent to the file
+  service, which handles long paths; only a file that is missing is left
+  alone.
+- Undo, Redo and Undo again of a copy removes every copy. When the first
+  Undo had failed part-way, the copies it removed before the failure were
+  made again by Redo and then left behind by the next Undo.
+- An Undo or Redo of a copy into an existing folder that fails on one file
+  keeps what it did with the others. A Redo that had restored some files
+  from the Recycle Bin before one failed then stopped at the first of them,
+  "The destination already exists", every time after; an Undo that could not
+  remove one file forgot where the others had gone in the Recycle Bin, so
+  Redo copied them again from their sources and left the old copies in the
+  Recycle Bin.
+- Redo no longer takes a file put in a copy's place since the Undo for the
+  copy. It counted as copied again, and the next Undo sent it to the Recycle
+  Bin. Redo now reports it in the way until it is moved or renamed. A file
+  that is no longer where Redo would take it from is left out, and the status
+  line says how many were; Redo used to fail on it every time.
+- Undoing the move of several folders into existing folders moves the files
+  of each back in a call of its own. The first file of each folder used to
+  go back with the previous folder's files, under that folder's settings.
+- A refresh of the panes that fails after a successful Undo is shown as such.
+  It used to read as a failed Undo, with a **Remove from undo history**
+  button that did nothing.
+- `operations.jsonl` goes on being written when the full file cannot be set
+  aside as `operations.jsonl.1`, because that file is read-only or in use.
+  Every line was dropped from then on.
 
 ### File lists
 

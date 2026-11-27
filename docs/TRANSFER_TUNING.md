@@ -152,7 +152,11 @@ Before it starts, the service looks for a file under the final name, to apply
 the conflict answer. It does not look in a folder the pass created itself when
 no Replace, Skip or Keep both answer applies: that folder was empty, and a
 file that has appeared in it since is still found by the rename, which never
-overwrites, and reported as a conflict. A copy reads no file identity from the
+overwrites, and reported as a conflict. So is a name the same pass takes there
+first: from a source that tells names apart by case (`\\wsl$`, a Samba share,
+an NTFS folder with case sensitivity on), a file `x` and a folder `X` meet
+under one name at the destination, and the file is found in the folder's way
+only once it has been copied. A copy reads no file identity from the
 source; a move does, for the check made before the source is deleted. A full
 disk is found by the write that hits it; free space is not checked beforehand.
 
@@ -186,10 +190,18 @@ A copy takes from its source:
 It does not take the access-control list: as in Explorer, the copy gets the
 permissions of the folder it lands in. Compression and encryption are the
 destination folder's. When the destination refuses the times (FAT holds no
-date before 1980), the attributes are set without them. When it refuses the
-attributes too, or cannot hold alternate data streams (FAT, some shares), the
-file is kept as it was written and `service.log` says what it lacks; a file
-whose attributes were refused keeps the Hidden attribute of its partial file.
+date before 1980), the attributes are set without them. When it refuses one of
+the attributes (System or not-indexed, say), the copy is still made visible,
+and read-only when its source is; `service.log` says what it lacks. A file
+whose attributes are refused altogether keeps the Hidden attribute of its
+partial file.
+
+A destination that cannot hold alternate data streams (FAT, some shares) gets
+the file without them, and `service.log` says so. Any other failure to copy a
+stream (another program holds it, the disk is full) fails a move and keeps its
+source, which would otherwise be deleted with its streams; the file is tried
+again like any other. A copy keeps its source, and only logs it.
+
 A file that a move renames (see [Moves](#moves)) is the same file and keeps
 everything.
 
@@ -404,7 +416,10 @@ deletes it. If the file has its full length and is no longer hidden (a partial
 file stays hidden until its last byte is written), and its final name is
 free, recovery gives it that name and removes the file a Replace had moved
 aside. Otherwise it keeps the file and the record. The copy of a hidden file
-stays hidden, so it is always kept under its partial name. The same holds for a file
+stays hidden, so a partial file of one is always kept under its partial name.
+A file a move wrote directly under its final name is complete at its full
+length, whatever its attributes: such a file is written from its first byte
+to its last, never in several streams. The same holds for a file
 that a move wrote directly under its final name: complete, it is left as it
 is. "The source no longer exists" means that no file of the recorded length
 has the source's name; another file that has taken the name since is not the
@@ -486,7 +501,10 @@ returns.
 ## Failures and retries
 
 A file that fails does not stop the task. The other files continue, and each
-failure is collected with its exact source and destination.
+failure is collected with its exact source and destination. A folder that
+cannot be read while the task scans the selection stops the pass; the files
+already found and not yet copied, or waiting for another round, are reported
+as failed with that error, so that Retry offers them.
 
 ### Which errors are retried
 
@@ -654,20 +672,30 @@ line for the whole path, or right-click it and choose **Copy path**.
 * The line of one file never goes down. A file set aside for another round
   keeps the bytes it had reached, in its line and in the task's bytes done;
   the new round copies it from the first byte, and its line moves again once
-  the new copy passes that point.
+  the new copy passes that point. A file's line moves at least every half
+  second while its bytes are written.
 * While the task's last file is in its last steps (flush, verification,
   rename), and while the times of the folders it created are set afterwards,
-  the row reads "Finishing" in place of the percentage and the speed. A file
-  finishing while others are still being copied does not change what the row
-  shows.
-* The speed is a moving average of the change in bytes transferred: bytes
-  done without the ones above that were not transferred. After three seconds
-  without a transferred byte it reads "Calculating speed" and no time
-  remaining is shown, until bytes move again.
-* With one file at a time, the row names the file just done between two
-  files, and Details keeps its line until the next one starts.
-* After Retry or a conflict answer, the readout counts only the items of the
-  new pass.
+  the row reads "Finishing" in place of the percentage and the speed, until
+  the task ends or another file starts. A file finishing while others are
+  still being copied, or waiting for another round, does not change what the
+  row shows.
+* The speed is a moving average of the bytes written: a file copied again in a
+  later round counts again, a skipped or renamed file not at all. When nothing
+  has been written for three seconds, or for two and a half of the usual gaps
+  between writes when they come further apart (a slow share writes a buffer
+  every few seconds), it reads "Calculating speed" and no time remaining is
+  shown; the first bytes after that start a new measurement.
+* The time remaining is the bytes left over the pace at which the bytes done
+  grow, skipped and renamed files included: in a merge that skips most files
+  it is not the bytes left over the speed.
+* The row names the file just done between two files, also one skipped or
+  renamed, and Details keeps its line until the next one starts. When no file
+  has been in flight for half a second (a slow folder scan), Details is
+  emptied.
+* After Retry or a conflict answer, the readout carries the earlier passes'
+  bytes and files over: the percentage goes on from where it was, and the
+  speed from the bytes written so far.
 
 ## How the scheduler decides
 
@@ -762,13 +790,16 @@ removable drive or optical disc at either end) the small-file lane keeps the
 starting points in the table above and tests fewer files after any
 unsuccessful step up.
 
-**An I/O retry halves the lane at once.** Retries in consecutive windows are
-one bout. A later window of the bout halves the lane again only when it saw
-more than one retry, so a provider that starts throttling many files brings it
-down within seconds, while one file retried again and again halves it once.
-The setting is then held for four readings; each later bout of retries in the same transfer
-doubles that hold (8, 16, up to 64 readings), so a throttling provider is not
-pushed again straight away. This applies to both lanes. A busy file (a sharing
+**An I/O retry halves the lane at once.** A file's first retry is what counts:
+its later retries are about that file. The first file to retry halves the lane,
+and the lane halves again each time the number of files that have retried in
+the same bout doubles (2, 4, 8...). One file retried again and again halves it
+once; a provider that starts throttling many files brings it down fast. A bout
+ends when no retry has come for longer than a file waits between two tries
+(16 times "Wait before retrying", and a window more), or when its hold has run
+out. The setting is held for four readings; each later bout in the same
+transfer doubles that hold (8, 16, up to 64 readings), so a throttling provider
+is not pushed again straight away. This applies to both lanes. A busy file (a sharing
 or lock violation) is not counted as a retry here.
 
 **It watches write latency as an early warning.** Each write of 64 KiB or more
@@ -837,8 +868,9 @@ settings, and checks what the ten extra files cost:
 | Rename | 1 | the partial file to its final name, through its own handle |
 
 On Windows that is 15 calls for each file (an open costs a close too): it
-used to be 22, and the look for alternate data streams added one. A source
-that has streams costs two opens, a read and a write more for each. Elsewhere
+used to be 22, and the look for alternate data streams added one. Each stream
+a source has costs two opens, two reads (the second finds its end), an
+emptying and a write more, and a flush when the file is flushed. Elsewhere
 there are no streams to look for, and the rename goes by path after one more
 check of the partial file. A change that adds an operation to every file fails
 this test and has to change the table on purpose.
@@ -905,7 +937,8 @@ compare it with the flush-off line.
   and can appear in the Details list while it waits.
 * **Bandwidth.** The limit counts the bytes actually copied. Tasks running
   at the same time share it: together, the tasks that have a limit use at
-  most the highest of their limits, and each stays within its own. A task
+  most the highest of their limits, and each stays within its own. They take
+  turns, a task at a time, however many files each copies at once. A task
   without a limit is not held back. It is not a limit for the whole machine:
   other programs and FTP/SFTP transfers are not counted. The files being
   copied take turns at it, and one turn is at most a sixteenth of a second of
@@ -949,11 +982,12 @@ nearest limit.
   leading `\\` of a UNC path and a `\\?\` or `\\.\` prefix are kept. Files can
   be created and written under a doubled path, but the rename that gives a
   file its final name can be refused there ("The parameter is incorrect").
-* **Long names.** A name can be 255 characters long. A partial file's name
-  is 35 characters longer than the file's own name, the name of a file's own
+* **Long names.** A name can be 255 characters long, and on a share a NAS
+  serves from a Linux file system, 255 bytes. A partial file's name is 35
+  characters longer than the file's own name, the name of a file's own
   record, where it has one, 41 characters longer, and a Replace backup's
-  about 40. A temporary name that would pass 255 characters cuts the file's
-  name at its end and marks the cut with `~`; the hash and the suffix that
+  about 40. A temporary name that would pass 255 characters, or 255 bytes,
+  cuts the file's name at its end and marks the cut with `~`; the hash and the suffix that
   make it unique are kept, so a file whose name is as long as a name can be
   is copied, replaced and written directly like any other.
 * **Long paths.** A destination path close to 260 characters passes that
@@ -983,8 +1017,9 @@ bandwidth limit as local tasks share theirs.
 An FTP/SFTP transfer is a copy: neither direction deletes its source. A
 download writes its local file with the same partial file, rename and
 recovery as a local copy, and with an ownership record of its own for each
-file. The partial file loses its Hidden attribute once its last byte is in,
-before it gets its name. A retry reconnects, empties the partial file and
+file. The partial file loses its Hidden attribute once its last byte is in and
+it has passed its checks, before it gets its name; a drive that refuses is
+noted in the plugin's log, and the file keeps the attribute. A retry reconnects, empties the partial file and
 transfers the file again from its first byte. In Checksum mode the plugin reads the remote file
 once more to verify it. On the upgrade from a version without the plugin, the
 values in `transfer.policy` that differed from the defaults were copied into

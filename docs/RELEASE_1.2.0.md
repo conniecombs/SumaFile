@@ -60,14 +60,16 @@ what a copy keeps of a file. What is still open is listed in the
   written through. The gain in speed has not been measured on Windows yet.
   Creating one folder's record no longer holds up the files of other folders.
 - **Files at once after a retry.** A file retried again and again halves the
-  number of files copied at once a single time, instead of in every second it
-  is retried, and a number that retries forced down is not remembered for the
-  route.
-- **Progress.** Skipped files and files already at the destination count
-  toward the percentage but no longer raise the speed. A file waiting for a
-  later retry round keeps its bytes counted. After three seconds without a
-  byte transferred the speed reads "Calculating speed" instead of the last
-  value. "Finishing" is shown for the last file and the folders' times only.
+  number of files copied at once a single time; many files failing halve it
+  again each time their number doubles. A number that retries forced down is
+  not remembered for the route.
+- **Progress.** The speed is measured on the bytes written, so skipped files
+  and files already at the destination count toward the percentage but no
+  longer raise the speed, in the first pass or after Retry. The time
+  remaining follows how fast the bytes done grow. A slow transfer keeps its
+  speed; when nothing is written for a while, the speed reads "Calculating
+  speed" instead of the last value. "Finishing" is shown for the last file
+  and the folders' times until the task ends.
 - **Moves that leave files behind.** Deciding which source folders stay after a
   move with many skipped or failed files took time in proportion to folders
   times files. A tree of 8,000 folders with 80,000 skipped files took 43 seconds

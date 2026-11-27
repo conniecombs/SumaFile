@@ -83,18 +83,20 @@ on-demand column values have shipped. What remains:
   choice or change what it does.
 - Why the partial files of the copies that failed before 1.1.4 were not
   removed by the clean-up that follows a failed file was not established.
-- A destination that refuses both a file's times and its attributes keeps
-  the Hidden attribute of its partial file on the file, which is published
-  all the same; `service.log` says so. Refused times alone no longer do this.
+- A destination that refuses every attribute change, even the removal of
+  Hidden alone, keeps the Hidden attribute of its partial file on the file,
+  which is published all the same; `service.log` says so. Refused times, or
+  one refused attribute, no longer do this.
 - A request the service refuses while planning, such as copying a folder into
   itself, is reported with the "CONFLICT:" prefix of a name conflict. What
   the app offers the user then was not checked.
 - A copy to a destination that cannot hold alternate data streams (FAT, some
   shares) loses the mark of a downloaded file, and only `service.log` says
   so. Explorer asks first. A folder's alternate data streams are not copied.
-- After an interrupted move, the copy of a hidden file stays under its
-  partial name instead of getting its final name: the Hidden attribute is
-  what tells recovery that a partial file is complete.
+- After an interrupted move, the partial file of a hidden file stays under
+  its partial name instead of getting its final name: the Hidden attribute is
+  what tells recovery that a partial file is complete. A file the move wrote
+  directly under its final name is settled.
 - The bandwidth limit is shared by the tasks of the file service and,
   separately, by the transfers of the FTP/SFTP plugin; the two are not
   counted together.
@@ -111,6 +113,11 @@ on-demand column values have shipped. What remains:
 - A folder where another volume is mounted is taken for part of the drive it
   is in, so a move into it tries a rename, which is refused, before it
   copies.
+- In a folder the pass created, a file's name is not looked up before the
+  file is copied. From a source that tells names apart by case, a file and a
+  folder whose names differ only by case meet at the destination, and the
+  file's conflict shows only after it was copied. Looking the names of each
+  source folder over first would hold up the first copy of a large folder.
 - A move within one drive that replaces files flushes one record per
   replaced file, and Checksum mode flushes every file. Measure what these
   cost on a hard disk and a share.

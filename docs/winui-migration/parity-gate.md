@@ -89,6 +89,8 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `delete_entry` | Permanent delete | Shift+Delete confirm | Core `file_ops.rs` tests (`delete_entry_removes_readonly_directory_tree`); no C# test calls `DeleteAsync` | Shift+Delete | `PASS` |
 | `move_to_trash` | Recycle Bin | Delete; the prompt follows the `ConfirmDelete` setting | `FileOperationServiceTests` trash prefix | Delete; network `TRASH_UNAVAILABLE:` | `PASS` |
 | `restore_recycle_bin` | Restore Recycle Bin items | Context Restore | Core recycle_bin tests | Restore a deleted file | `PASS` |
+| `move_to_trash_each` | Recycle Bin, one outcome per path | Undo of a merged copy (`MergeTransferUndo`) | Core `file_ops.rs` tests, dispatch tests, `UndoRobustnessTests` | Undo a copy into an existing folder | `PASS` |
+| `restore_recycle_bin_each` | Restore, one outcome per item | Redo of a merged copy (`MergeTransferUndo`) | Core recycle_bin tests, dispatch tests, `UndoRobustnessTests` | Undo, then Redo, a copy into an existing folder | `PASS` |
 | `empty_recycle_bin` | Empty Recycle Bin | Command palette | Core recycle_bin tests | Empty Recycle Bin | `PASS` |
 | `rename_entry` | Rename | F2 dialog | `FileOperationServiceTests` | F2 | `PASS` |
 | `batch_rename` | Advanced rename apply | Prefix/suffix/number dialog | IPC wrapper | Advanced rename on 3 files | `MANUAL` |
