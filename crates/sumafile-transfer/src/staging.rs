@@ -56,6 +56,7 @@ impl<'de> Deserialize<'de> for FileIdentity {
 }
 
 pub fn file_identity(path: &Path) -> Result<FileIdentity, String> {
+    crate::ops::record(crate::ops::Op::Stat, path);
     #[cfg(windows)]
     {
         let file = open_for_identity(path)?;
@@ -80,6 +81,7 @@ pub fn file_identity(path: &Path) -> Result<FileIdentity, String> {
 pub fn is_recorded_file(path: &Path, recorded: &FileIdentity) -> bool {
     #[cfg(windows)]
     {
+        crate::ops::record(crate::ops::Op::Stat, path);
         let Ok(file) = open_for_identity(path) else {
             return false;
         };
@@ -287,6 +289,7 @@ pub fn capture_source_version_from_open_file(
 }
 
 pub fn capture_source_version_for_path(path: &Path) -> Result<SourceVersion, String> {
+    crate::ops::record(crate::ops::Op::Stat, path);
     let meta = fs::symlink_metadata(path)
         .map_err(|e| format!("Failed to stat source [{}]: {e}", path.display()))?;
     #[cfg(windows)]
@@ -311,9 +314,11 @@ pub fn capture_source_version_for_path(path: &Path) -> Result<SourceVersion, Str
     }
 
     let file = open_source_for_verification(path)?;
+    crate::ops::record(crate::ops::Op::Query, path);
     let file_meta = file
         .metadata()
         .map_err(|e| format!("Failed to stat opened source [{}]: {e}", path.display()))?;
+    crate::ops::record(crate::ops::Op::Query, path);
     Ok(capture_source_version_from_open_file(
         &file, &file_meta, None,
     ))
@@ -381,6 +386,7 @@ fn metadata_matches_source_version(meta: &fs::Metadata, expected: &SourceVersion
 }
 
 pub fn verify_source_unchanged(path: &Path, expected: &SourceVersion) -> Result<(), String> {
+    crate::ops::record(crate::ops::Op::Stat, path);
     let lstat = fs::symlink_metadata(path)
         .map_err(|e| format!("Failed to stat source [{}]: {e}", path.display()))?;
     if !metadata_matches_source_version(&lstat, expected) {
@@ -395,6 +401,7 @@ pub fn verify_source_unchanged(path: &Path, expected: &SourceVersion) -> Result<
     }
 
     let mut file = open_source_for_verification(path)?;
+    crate::ops::record(crate::ops::Op::Query, path);
     let file_meta = file
         .metadata()
         .map_err(|e| format!("Failed to stat source handle [{}]: {e}", path.display()))?;
@@ -406,6 +413,7 @@ pub fn verify_source_unchanged(path: &Path, expected: &SourceVersion) -> Result<
     }
     #[cfg(windows)]
     {
+        crate::ops::record(crate::ops::Op::Query, path);
         if expected.file_id.is_none() || expected.file_id != file_id_from_handle(&file) {
             return Err(format!(
                 "Source identity changed before move completion and was retained: {}",
@@ -428,6 +436,7 @@ pub fn verify_source_unchanged(path: &Path, expected: &SourceVersion) -> Result<
 #[cfg(windows)]
 fn open_source_handle(path: &Path, deleting: bool) -> Result<fs::File, String> {
     use std::os::windows::fs::OpenOptionsExt;
+    crate::ops::record(crate::ops::Op::Open, path);
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE,
         FILE_SHARE_READ,
@@ -483,6 +492,7 @@ fn open_for_identity(path: &Path) -> Result<fs::File, String> {
 
 #[cfg(not(windows))]
 fn open_source_for_verification(path: &Path) -> Result<fs::File, String> {
+    crate::ops::record(crate::ops::Op::Open, path);
     fs::File::open(path).map_err(|e| format!("Failed to open source [{}]: {e}", path.display()))
 }
 
@@ -583,6 +593,7 @@ fn delete_open_source(file: &fs::File, path: &Path) -> Result<(), String> {
 }
 
 pub fn delete_verified_source(path: &Path, expected: &SourceVersion) -> Result<(), String> {
+    crate::ops::record(crate::ops::Op::Stat, path);
     let lstat = fs::symlink_metadata(path)
         .map_err(|e| format!("Failed to stat source [{}]: {e}", path.display()))?;
     if !metadata_matches_source_version(&lstat, expected) {
@@ -616,6 +627,7 @@ pub fn delete_verified_source(path: &Path, expected: &SourceVersion) -> Result<(
     let mut file = open_source_handle(path, true)?;
     #[cfg(not(windows))]
     let mut file = open_source_for_verification(path)?;
+    crate::ops::record(crate::ops::Op::Query, path);
     let file_meta = file
         .metadata()
         .map_err(|e| format!("Failed to stat source handle [{}]: {e}", path.display()))?;
@@ -627,6 +639,7 @@ pub fn delete_verified_source(path: &Path, expected: &SourceVersion) -> Result<(
     }
     #[cfg(windows)]
     {
+        crate::ops::record(crate::ops::Op::Query, path);
         if expected.file_id.is_none() || expected.file_id != file_id_from_handle(&file) {
             return Err(format!(
                 "Source identity changed before move completion and was retained: {}",
@@ -644,6 +657,7 @@ pub fn delete_verified_source(path: &Path, expected: &SourceVersion) -> Result<(
         }
     }
 
+    crate::ops::record(crate::ops::Op::Delete, path);
     #[cfg(windows)]
     {
         delete_open_source(&file, path)
@@ -780,8 +794,10 @@ fn clear_readonly_for_delete(path: &Path) {
 fn clear_readonly_for_delete(_path: &Path) {}
 
 pub fn remove_path(path: &Path, label: &str) -> Result<(), String> {
+    crate::ops::record(crate::ops::Op::Stat, path);
     let meta =
         fs::symlink_metadata(path).map_err(|error| format!("Failed to stat {label}: {error}"))?;
+    crate::ops::record(crate::ops::Op::Delete, path);
     if meta.file_type().is_symlink() {
         if meta.is_dir() {
             fs::remove_dir(path)
@@ -818,6 +834,7 @@ pub fn remove_path(path: &Path, label: &str) -> Result<(), String> {
 #[cfg(windows)]
 pub fn is_hidden(path: &Path) -> bool {
     use std::os::windows::fs::MetadataExt;
+    crate::ops::record(crate::ops::Op::Stat, path);
     const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
     fs::symlink_metadata(path).is_ok_and(|meta| meta.file_attributes() & FILE_ATTRIBUTE_HIDDEN != 0)
 }
@@ -829,6 +846,7 @@ pub fn is_hidden(_path: &Path) -> bool {
 
 /// Whether `path` is a folder itself, not a link to one.
 pub fn is_real_directory(path: &Path) -> bool {
+    crate::ops::record(crate::ops::Op::Stat, path);
     fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir() && !meta.file_type().is_symlink())
 }
 
@@ -865,6 +883,7 @@ pub fn cleanup_owned_file(path: &Path) -> Result<(), String> {
 fn cleanup_owned(path: &Path, remove: fn(&Path, &str) -> Result<(), String>) -> Result<(), String> {
     let mut last = String::new();
     for attempt in 0..5 {
+        crate::ops::record(crate::ops::Op::Stat, path);
         match fs::symlink_metadata(path) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(error) => last = error.to_string(),
@@ -872,6 +891,7 @@ fn cleanup_owned(path: &Path, remove: fn(&Path, &str) -> Result<(), String>) -> 
                 if let Err(error) = remove(path, "operation temporary path") {
                     last = error;
                 }
+                crate::ops::record(crate::ops::Op::Stat, path);
                 if matches!(fs::symlink_metadata(path), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
                 {
                     return Ok(());
@@ -1136,6 +1156,8 @@ pub fn existing_file_matches_source_with_mode(
 ) -> Result<bool, String> {
     use crate::policy::CheckMode;
 
+    crate::ops::record(crate::ops::Op::Stat, src);
+    crate::ops::record(crate::ops::Op::Stat, dst);
     let source = fs::symlink_metadata(src)
         .map_err(|error| format!("Failed to stat source file: {error}"))?;
     let destination = fs::symlink_metadata(dst)
@@ -1177,6 +1199,9 @@ pub fn retried_file_already_transferred(
 }
 
 fn files_have_same_contents(left: &Path, right: &Path) -> Result<bool, String> {
+    // The reads are not counted: a comparison reads both files in full.
+    crate::ops::record(crate::ops::Op::Open, left);
+    crate::ops::record(crate::ops::Op::Open, right);
     let mut left =
         fs::File::open(left).map_err(|error| format!("Failed to open source file: {error}"))?;
     let mut right = fs::File::open(right)

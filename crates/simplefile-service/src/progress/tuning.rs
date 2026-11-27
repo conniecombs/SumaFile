@@ -100,6 +100,17 @@ fn read_history() -> History {
         .unwrap_or_default()
 }
 
+/// Forgets every learned starting point, so that each run of the benchmark
+/// starts from none.
+#[cfg(test)]
+pub(crate) fn forget_learning() -> Result<(), String> {
+    let _guard = HISTORY_LOCK.lock().map_err(|e| e.to_string())?;
+    set_db_setting(
+        HISTORY_KEY.into(),
+        serde_json::to_string(&History::default()).map_err(|e| e.to_string())?,
+    )
+}
+
 pub(crate) fn recall(key: &str) -> Option<usize> {
     let _guard = HISTORY_LOCK.lock().ok()?;
     let mut history = read_history();

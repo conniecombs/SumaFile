@@ -266,6 +266,7 @@ pub(crate) struct SelectionResult {
 /// owns it for Undo, including when two transfers reach the same path together.
 fn prepare_directory(path: &Path, allow_merge: bool) -> Result<bool, Failure> {
     if !super::execute::is_real_directory(path) {
+        sumafile_transfer::ops::record(sumafile_transfer::ops::Op::CreateDir, path);
         match fs::create_dir(path) {
             Ok(()) => return Ok(true),
             Err(error) if simplefile_core::path_conflict::is_already_exists_error(&error) => {
@@ -431,6 +432,7 @@ pub(crate) fn copy_selection(
                             .push((depth, root_index, src_dir.clone(), version));
                     }
 
+                    sumafile_transfer::ops::record(sumafile_transfer::ops::Op::List, &src_dir);
                     let entries = fs::read_dir(&src_dir)
                         .map_err(|e| Failure::io("Read directory", &src_dir, e))?;
 
@@ -655,6 +657,13 @@ const DIRECTORIES_PER_METADATA_THREAD: usize = 64;
 /// on a share a tree of many folders spent that time after its last file.
 fn restore_directory_metadata(created: &[(usize, usize, PathBuf, PathBuf)], threads: usize) {
     let restore = |(_, _, src, dst): &(usize, usize, PathBuf, PathBuf)| {
+        // The source folder's facts by path, then its times through a handle
+        // opened on the copy, then its attributes by path.
+        use sumafile_transfer::ops::{record, Op};
+        record(Op::Stat, src);
+        record(Op::Open, dst);
+        record(Op::Set, dst);
+        record(Op::Set, dst);
         if let Err(error) = simplefile_core::file_ops::preserve_basic_metadata(src, dst) {
             log::warn!(
                 "Could not preserve directory metadata for {}: {error}",

@@ -121,12 +121,14 @@ fn reclaim_abandoned(path: &Path, staged: &Path, original: String) -> Result<Fil
 }
 
 fn open_locked(path: &Path, create: bool) -> Result<File, String> {
+    crate::ops::record(crate::ops::Op::Open, path);
     let file = OpenOptions::new()
         .read(true)
         .write(true)
         .create_new(create)
         .open(path)
         .map_err(|e| format!("Open transfer ownership record [{}]: {e}", path.display()))?;
+    crate::ops::record(crate::ops::Op::Lock, path);
     file.try_lock()
         .map_err(|e| format!("Transfer artifact is in use [{}]: {e}", path.display()))?;
     Ok(file)
@@ -315,6 +317,7 @@ impl StagingLease {
         // nothing to act on. It needs no space, where writing a completion
         // mark first failed on a full volume and left a finished file to be
         // deleted as unfinished.
+        crate::ops::record(crate::ops::Op::Delete, &path);
         let removed = fs::remove_file(&path)
             .map_err(|e| format!("Remove transfer ownership record [{}]: {e}", path.display()));
         let Err(error) = removed else {
@@ -380,6 +383,7 @@ impl Drop for StagingLease {
 /// temporary name, which is hidden while it is written.
 #[cfg_attr(not(windows), allow(unused_variables))]
 fn open_staged(staged: &Path, overwrite: bool, hidden: bool) -> std::io::Result<File> {
+    crate::ops::record(crate::ops::Op::Open, staged);
     let mut options = OpenOptions::new();
     if overwrite {
         options.write(true).create(true).truncate(true);
@@ -659,6 +663,7 @@ impl FolderRecord {
             );
         }
         // Nothing else writes to this file, so it is always at its end.
+        crate::ops::record(crate::ops::Op::Write, &self.path);
         if let Err(error) = file.write_all(&line) {
             self.torn.store(true, Ordering::Relaxed);
             return Err(format!(
@@ -670,6 +675,7 @@ impl FolderRecord {
         self.written
             .store(written + line.len() as u64, Ordering::Relaxed);
         if durable {
+            crate::ops::record(crate::ops::Op::Flush, &self.path);
             file.sync_all().map_err(|e| {
                 format!("Persist transfer ownership [{}]: {e}", self.path.display())
             })?;
@@ -682,6 +688,7 @@ impl Drop for FolderRecord {
     fn drop(&mut self) {
         if self.unsettled.load(Ordering::Relaxed) == 0 {
             // Every file recorded here was published or cleaned up.
+            crate::ops::record(crate::ops::Op::Delete, &self.path);
             let _ = fs::remove_file(&self.path);
         }
     }
@@ -794,6 +801,7 @@ impl SwapRecord {
     /// the destination is back under its name. A swap that ends any other
     /// way drops its record without this, and recovery finishes it.
     pub fn finish(self) {
+        crate::ops::record(crate::ops::Op::Delete, &self.path);
         if let Err(error) = fs::remove_file(&self.path) {
             // Recovery removes it: the state it describes needs nothing done.
             log::warn!(
@@ -815,6 +823,7 @@ fn persist_own(file: &mut File, path: &Path, record: &Record) -> Result<(), Stri
         // An earlier write that failed may have left part of a line. Glued
         // to it, this line could not be read, and it is the record's state.
         let mut last = [0u8; 1];
+        crate::ops::record(crate::ops::Op::Read, path);
         file.seek(SeekFrom::Start(end - 1))
             .and_then(|_| file.read_exact(&mut last))
             .map_err(|e| e.to_string())?;
@@ -828,13 +837,16 @@ fn persist_own(file: &mut File, path: &Path, record: &Record) -> Result<(), Stri
     if end.saturating_add(line.len() as u64) > RECORD_LIMIT {
         return Err("Transfer ownership record is full; artifacts retained for recovery".into());
     }
+    crate::ops::record(crate::ops::Op::Write, path);
     file.write_all(&line).map_err(|e| e.to_string())?;
+    crate::ops::record(crate::ops::Op::Flush, path);
     file.sync_all()
         .map_err(|e| format!("Persist transfer ownership [{}]: {e}", path.display()))
 }
 
 #[cfg(windows)]
 fn identity_from_handle(handle: &File, staged: &Path) -> Result<FileIdentity, String> {
+    crate::ops::record(crate::ops::Op::Query, staged);
     crate::staging::file_id_from_handle(handle)
         .ok_or_else(|| format!("Cannot establish file identity [{}]", staged.display()))
 }
@@ -842,6 +854,7 @@ fn identity_from_handle(handle: &File, staged: &Path) -> Result<FileIdentity, St
 #[cfg(not(windows))]
 fn identity_from_handle(handle: &File, staged: &Path) -> Result<FileIdentity, String> {
     use std::os::unix::fs::MetadataExt;
+    crate::ops::record(crate::ops::Op::Query, staged);
     let meta = handle
         .metadata()
         .map_err(|e| format!("Cannot establish file identity [{}]: {e}", staged.display()))?;
@@ -984,6 +997,7 @@ fn is_record_name(name: &std::ffi::OsStr) -> bool {
 /// a hundred thousand files on a share is not listed over the network to find
 /// none. Where that is not possible the folder is listed and filtered here.
 fn record_files(directory: &Path) -> std::io::Result<Vec<PathBuf>> {
+    crate::ops::record(crate::ops::Op::List, directory);
     #[cfg(windows)]
     if let Some(records) = record_files_by_pattern(directory) {
         return Ok(records);
@@ -1136,6 +1150,7 @@ pub fn recover_directory(directory: &Path) -> Result<(), String> {
         if retained {
             continue;
         }
+        crate::ops::record(crate::ops::Op::Delete, &path);
         fs::remove_file(&path)
             .map_err(|e| format!("Remove recovered transfer record [{}]: {e}", path.display()))?;
     }

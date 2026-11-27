@@ -4,6 +4,7 @@ use std::fs;
 use std::path::Path;
 
 pub fn path_exists_no_follow(path: &Path) -> bool {
+    crate::ops::record(crate::ops::Op::Stat, path);
     fs::symlink_metadata(path).is_ok()
 }
 
@@ -124,6 +125,7 @@ pub(crate) fn wide_path(path: &Path) -> Vec<u16> {
 pub fn rename_exclusive(source: &Path, destination: &Path) -> std::io::Result<()> {
     use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
 
+    crate::ops::record(crate::ops::Op::Rename, destination);
     let src_wide = wide_path(source);
     let dst_wide = wide_path(destination);
     // Flags = 0: omit MOVEFILE_REPLACE_EXISTING so Windows atomically refuses replacement.
@@ -145,16 +147,20 @@ pub fn rename_exclusive(source: &Path, destination: &Path) -> std::io::Result<()
 
 #[cfg(not(windows))]
 pub fn rename_exclusive(source: &Path, destination: &Path) -> std::io::Result<()> {
-    if path_exists_no_follow(destination) {
+    // Not counted: Windows refuses an existing destination in the rename
+    // itself, and the counter stands for what a transfer costs there.
+    if fs::symlink_metadata(destination).is_ok() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::AlreadyExists,
             "destination already exists",
         ));
     }
+    crate::ops::record(crate::ops::Op::Rename, destination);
     fs::rename(source, destination)
 }
 
 pub fn create_dir_exclusive(path: &Path) -> Result<(), String> {
+    crate::ops::record(crate::ops::Op::CreateDir, path);
     fs::create_dir(path).map_err(|error| {
         if is_already_exists_error(&error) {
             format!(

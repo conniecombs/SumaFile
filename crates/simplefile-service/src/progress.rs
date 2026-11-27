@@ -1,6 +1,8 @@
 //! Progress tracking and cancellation for bulk file transfers.
 
 mod adaptive;
+#[cfg(test)]
+mod bench;
 mod execute;
 mod parallel;
 mod plan;

@@ -19,10 +19,12 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
+use sumafile_transfer::ops::{record as count, Op};
 
 const OVERLAPPED_RING_SLOTS: usize = 3;
 
 pub(crate) fn is_real_directory(path: &Path) -> bool {
+    count(Op::Stat, path);
     fs::symlink_metadata(path)
         .map(|meta| {
             let file_type = meta.file_type();
@@ -34,6 +36,7 @@ pub(crate) fn is_real_directory(path: &Path) -> bool {
 #[cfg(windows)]
 fn open_source_sequential(src: &Path) -> std::io::Result<fs::File> {
     use std::os::windows::fs::OpenOptionsExt;
+    count(Op::Open, src);
     const FILE_FLAG_SEQUENTIAL_SCAN: u32 = 0x0800_0000;
     fs::OpenOptions::new()
         .read(true)
@@ -43,12 +46,14 @@ fn open_source_sequential(src: &Path) -> std::io::Result<fs::File> {
 
 #[cfg(not(windows))]
 fn open_source_sequential(src: &Path) -> std::io::Result<fs::File> {
+    count(Op::Open, src);
     fs::File::open(src)
 }
 
 #[cfg(windows)]
 fn create_new_staging_sequential(dst: &Path) -> std::io::Result<fs::File> {
     use std::os::windows::fs::OpenOptionsExt;
+    count(Op::Open, dst);
     const FILE_FLAG_SEQUENTIAL_SCAN: u32 = 0x0800_0000;
     const FILE_ATTRIBUTE_HIDDEN: u32 = 0x0000_0002;
     let is_staging = dst
@@ -67,6 +72,7 @@ fn create_new_staging_sequential(dst: &Path) -> std::io::Result<fs::File> {
 
 #[cfg(not(windows))]
 fn create_new_staging_sequential(dst: &Path) -> std::io::Result<fs::File> {
+    count(Op::Open, dst);
     fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -174,6 +180,7 @@ pub(crate) fn copy_file_attempt_versioned(
     let buffer_size = buffer_size.min(usize::try_from(file_len.max(1)).unwrap_or(usize::MAX));
     let mut src_file =
         open_source_sequential(src).map_err(|e| Failure::io("Open source", src, e))?;
+    count(Op::Query, src);
     let source_initial = src_file
         .metadata()
         .map_err(|e| Failure::io("Inspect opened source", src, e))?;
@@ -189,6 +196,7 @@ pub(crate) fn copy_file_attempt_versioned(
             Ok(file) => Ok(file),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 if let Some(parent) = dst.parent() {
+                    count(Op::CreateDir, parent);
                     fs::create_dir_all(parent)
                         .map_err(|e| Failure::io("Create parent directory", parent, e))?;
                 }
@@ -200,11 +208,13 @@ pub(crate) fn copy_file_attempt_versioned(
     let (resume_from, mut dst_file) = match first_open {
         Ok(file) => {
             if ctx.policy.preallocates(ctx.network, file_len) {
+                count(Op::Set, dst);
                 preallocate_file(&file, file_len);
             }
             (0u64, file)
         }
         Err(open_error) => {
+            count(Op::Stat, dst);
             let existing = match fs::symlink_metadata(dst) {
                 Ok(meta) if meta.file_type().is_file() && meta.len() <= file_len => meta.len(),
                 Ok(_) => {
@@ -230,6 +240,7 @@ pub(crate) fn copy_file_attempt_versioned(
             if existing > 0 && partial == Partial::Compare {
                 // Resume only a verified prefix. A reused operation ID or a
                 // short write cannot silently splice stale bytes into a move.
+                count(Op::Open, dst);
                 let mut partial = fs::File::open(dst)
                     .map_err(|e| Failure::io("Inspect resume prefix", dst, e))?;
                 let chunk = crate::transfer_staging::VERIFY_CHUNK;
@@ -238,20 +249,22 @@ pub(crate) fn copy_file_attempt_versioned(
                 let mut remaining = existing;
                 while remaining > 0 {
                     ctx.progress.check_cancelled()?;
-                    let count = remaining.min(chunk as u64) as usize;
+                    count(Op::Read, src);
+                    count(Op::Read, dst);
+                    let length = remaining.min(chunk as u64) as usize;
                     src_file
-                        .read_exact(&mut left.as_mut_slice()[..count])
+                        .read_exact(&mut left.as_mut_slice()[..length])
                         .map_err(|e| Failure::io("Read source prefix", src, e))?;
                     partial
-                        .read_exact(&mut right.as_mut_slice()[..count])
+                        .read_exact(&mut right.as_mut_slice()[..length])
                         .map_err(|e| Failure::io("Read resume prefix", dst, e))?;
-                    if left[..count] != right[..count] {
+                    if left[..length] != right[..length] {
                         return Err(Failure::new(
                             "Temporary destination does not match the source prefix",
                             false,
                         ));
                     }
-                    remaining -= count as u64;
+                    remaining -= length as u64;
                 }
             }
             if existing > 0 {
@@ -260,11 +273,13 @@ pub(crate) fn copy_file_attempt_versioned(
                     .map_err(|e| Failure::io("Resume source", src, e))?;
             }
             // An existing zero-byte, operation-owned partial is a valid resume point too.
+            count(Op::Open, dst);
             let mut file = fs::OpenOptions::new()
                 .write(true)
                 .open(dst)
                 .map_err(|e| Failure::io("Open temporary destination", dst, e))?;
             if partial == Partial::Discard {
+                count(Op::Set, dst);
                 // Still in doubt when this fails, so the attempt after it
                 // empties the file too.
                 file.set_len(0).map_err(|e| {
@@ -274,6 +289,7 @@ pub(crate) fn copy_file_attempt_versioned(
             file.seek(SeekFrom::Start(existing))
                 .map_err(|e| Failure::io("Seek temporary destination", dst, e))?;
             if existing == 0 && ctx.policy.preallocates(ctx.network, file_len) {
+                count(Op::Set, dst);
                 preallocate_file(&file, file_len);
             }
             (existing, file)
@@ -348,6 +364,7 @@ pub(crate) fn copy_file_attempt_versioned(
         )?
     };
 
+    count(Op::Query, src);
     let source_after = src_file
         .metadata()
         .map_err(|e| Failure::io("Recheck source", src, e))?;
@@ -375,6 +392,8 @@ pub(crate) fn copy_file_attempt_versioned(
                 Failure::new(format!("Hash source [{}]: {e}", src.display()), false)
             })?)
         };
+    // The source's file ID, read through the handle.
+    count(Op::Query, src);
     let version = capture_source_version_from_open_file(&src_file, &source_after, content_hash);
     ctx.progress.check_cancelled()?;
     // The checksum is of what the file holds once every write has reached
@@ -382,6 +401,7 @@ pub(crate) fn copy_file_attempt_versioned(
     // write the system reports as failed only later is caught here instead
     // of after the file was verified from memory.
     if must_sync || verify_checksum {
+        count(Op::Flush, dst);
         dst_file
             .sync_all()
             .map_err(|e| Failure::io("Finalize temporary destination", dst, e).restart_file())?;
@@ -420,6 +440,8 @@ pub(crate) fn copy_file_attempt_versioned(
     // Every byte is written and verified by now; a target that refuses
     // timestamp or attribute updates (some SMB and FAT volumes) gets the same
     // treatment as directories: keep the file, log the loss.
+    count(Op::Query, dst);
+    count(Op::Set, dst);
     if let Err(error) = simplefile_core::file_ops::apply_basic_metadata_to_handle(
         &dst_file,
         &source_after,
@@ -476,6 +498,7 @@ fn copy_file_overlapped_with_hash(
                     break;
                 };
                 let requested = buffer_size.min(usize::try_from(remaining).unwrap_or(usize::MAX));
+                count(Op::Read, src);
                 match src_file.read(&mut buf.as_mut_slice()[..requested]) {
                     Ok(0) => {
                         let _ = full_tx.send(Err(Failure::new(
@@ -518,6 +541,7 @@ fn copy_file_overlapped_with_hash(
                         }
                     }
                     let write_started = ctx.progress.write_started(read);
+                    count(Op::Write, dst);
                     if let Err(error) = dst_file.write_all(&buf[..read]) {
                         write_result =
                             Err(Failure::io("Write temporary destination", dst, error)
@@ -594,7 +618,9 @@ pub(crate) fn copy_file_multistream(
     use sumafile_transfer::tuning::LatencyHistogram;
 
     let stream_count = streams.clamp(1, 16);
+    count(Op::Set, dst);
     preallocate_file(dst_file, file_len);
+    count(Op::Set, dst);
     let sparse = set_sparse(dst_file, true);
 
     let stripe_cancel = AtomicBool::new(false);
@@ -669,6 +695,7 @@ pub(crate) fn copy_file_multistream(
                     }
                     let mut read_total = 0usize;
                     while read_total < requested {
+                        count(Op::Read, src);
                         match src_handle.seek_read(
                             &mut buf.as_mut_slice()[read_total..requested],
                             offset + read_total as u64,
@@ -697,6 +724,7 @@ pub(crate) fn copy_file_multistream(
                         .map(|_| std::time::Instant::now());
                     let mut written_total = 0usize;
                     while written_total < read_total {
+                        count(Op::Write, dst);
                         match dst_handle.seek_write(
                             &buf[written_total..read_total],
                             offset + written_total as u64,
@@ -779,6 +807,7 @@ pub(crate) fn copy_file_multistream(
         Err(err) => return Err(discard_stripes(dst_file, dst, err)),
     };
     if sparse {
+        count(Op::Set, dst);
         set_sparse(dst_file, false);
     }
     ctx.progress.finalizing(
@@ -933,6 +962,7 @@ fn copy_file_stream_with_hash(
         if let Some(limiter) = ctx.progress.rate_limit {
             limiter.wait(requested, ctx.progress.cancel)?;
         }
+        count(Op::Read, src);
         let read = reader
             .read(&mut buffer.as_mut_slice()[..requested])
             .map_err(|e| Failure::io("Read source", src, e))?;
@@ -949,6 +979,7 @@ fn copy_file_stream_with_hash(
             hasher.update(&buffer[..read]);
         }
         let write_started = ctx.progress.write_started(read);
+        count(Op::Write, dst);
         writer
             .write_all(&buffer[..read])
             .map_err(|e| Failure::io("Write temporary destination", dst, e).restart_file())?;
@@ -1022,6 +1053,7 @@ fn resolve_file_conflict(
         ConflictAction::Replace => {
             // Replace swaps a file for a file. A directory occupying the name is
             // a type conflict the user must resolve; never delete it to make room.
+            count(Op::Stat, dst);
             let existing_is_dir = fs::symlink_metadata(dst)
                 .is_ok_and(|meta| meta.file_type().is_dir() && !meta.file_type().is_symlink());
             if existing_is_dir {
@@ -1068,6 +1100,7 @@ pub(crate) fn copy_file_with_progress_versioned(
     completed_bytes: &mut u64,
     conflict: ConflictAction,
 ) -> Result<FileOutcome, Failure> {
+    count(Op::Stat, src);
     let source_metadata =
         fs::symlink_metadata(src).map_err(|error| Failure::io("Inspect source", src, error))?;
     let file_len = source_metadata.len();
@@ -1138,10 +1171,11 @@ pub(crate) fn copy_file_with_progress_versioned(
         if ctx.progress.check_cancelled().is_err() {
             break Err(Failure::cancelled());
         }
-        if retry.failures > 0
-            && fs::metadata(src)
+        if retry.failures > 0 && {
+            count(Op::Stat, src);
+            fs::metadata(src)
                 .is_ok_and(|meta| meta.len() != file_len || meta.modified().ok() != source_modified)
-        {
+        } {
             break Err(Failure::from(format!(
                 "Source changed before retry [{}]",
                 src.display()
@@ -1256,6 +1290,7 @@ pub(crate) fn copy_file_with_progress_versioned(
             })
         }
         Err(error) => {
+            count(Op::Stat, &staged_path);
             if fs::symlink_metadata(&staged_path)
                 .is_ok_and(|meta| !meta.file_type().is_file() || meta.len() > file_len)
             {
@@ -1391,6 +1426,7 @@ pub(crate) fn move_by_rename(
                     &dst,
                 ))));
             }
+            count(Op::Stat, &dst);
             let existing_is_dir = fs::symlink_metadata(&dst)
                 .is_ok_and(|meta| meta.file_type().is_dir() && !meta.file_type().is_symlink());
             if existing_is_dir {
