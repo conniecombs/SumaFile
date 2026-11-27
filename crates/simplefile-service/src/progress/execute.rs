@@ -127,6 +127,28 @@ pub(crate) mod test_faults {
     use std::sync::Mutex;
 
     static CORRUPT_ONCE: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+    static FAIL: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    /// Every file whose partial file's name holds `name` fails once its
+    /// bytes are written, for good: the failure is not retried. For a test
+    /// that needs one file of a tree to fail; the name should be its own.
+    pub(crate) fn fail_files_named(name: &str) {
+        FAIL.lock().unwrap().push(name.to_string());
+    }
+
+    pub(super) fn injected_failure(written: &Path) -> Option<crate::transfer_reliability::Failure> {
+        let name = written.file_name()?.to_string_lossy().into_owned();
+        FAIL.lock()
+            .unwrap()
+            .iter()
+            .any(|failing| name.contains(failing.as_str()))
+            .then(|| {
+                crate::transfer_reliability::Failure::new(
+                    format!("Injected failure [{}]", written.display()),
+                    false,
+                )
+            })
+    }
 
     /// The next file written under `dir` gets its first byte changed after
     /// it was written and before it is verified. Once.
@@ -425,6 +447,10 @@ pub(crate) fn copy_file_attempt_versioned(
     }
     #[cfg(test)]
     test_faults::after_write(dst);
+    #[cfg(test)]
+    if let Some(failure) = test_faults::injected_failure(dst) {
+        return Err(failure);
+    }
     // Verified before the attributes are applied: a copy that is read-only
     // by then could not be opened for writing by the attempt that follows a
     // mismatch.

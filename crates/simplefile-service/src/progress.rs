@@ -2397,11 +2397,11 @@ mod tests {
         fs::create_dir_all(source.join("nested")).unwrap();
         fs::create_dir_all(&destination).unwrap();
         fs::write(source.join("nested").join("good.txt"), b"good").unwrap();
-        // A name longer than the staging suffix leaves room for: the hidden
-        // partial file cannot be created, so this one file fails.
-        let long_name = format!("{}.txt", "n".repeat(240));
-        fs::write(source.join("nested").join(&long_name), b"long").unwrap();
-        let expected = destination.join("source").join("nested").join(&long_name);
+        // This one file fails for good once it is written.
+        let failing = "fails-op_failure_final_destination.txt";
+        super::execute::test_faults::fail_files_named(failing);
+        fs::write(source.join("nested").join(failing), b"fails").unwrap();
+        let expected = destination.join("source").join("nested").join(failing);
 
         let error = transfer_with_progress_blocking(
             "copy",
@@ -2412,7 +2412,7 @@ mod tests {
             Arc::new(AtomicBool::new(false)),
             &|_| {},
         )
-        .expect_err("the over-long name cannot be staged");
+        .expect_err("one file fails");
 
         let failed: Vec<_> = error
             .outcome
