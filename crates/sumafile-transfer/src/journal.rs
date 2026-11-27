@@ -1654,8 +1654,11 @@ mod tests {
     fn a_write_directly_file_whose_record_cannot_be_settled_is_removed_at_once() {
         let root = root();
         let destination = root.join("inplace");
-        let lease = StagingLease::begin("source", &destination, &destination, false).unwrap();
-        fs::write(&destination, b"downloaded").unwrap();
+        let mut lease = StagingLease::begin("source", &destination, &destination, false).unwrap();
+        // Written and closed, as a copy leaves the file before it finishes.
+        let mut written = lease.take_staged_file().unwrap();
+        written.write_all(b"downloaded").unwrap();
+        drop(written);
         let record = record_path(&destination).unwrap();
         // The record cannot be removed: a folder with something in it has
         // its name. It cannot be marked either: it is full.
@@ -1663,9 +1666,12 @@ mod tests {
         fs::rename(&record, &moved_away).unwrap();
         fs::create_dir(&record).unwrap();
         fs::write(record.join("occupant"), b"x").unwrap();
-        let padding = OpenOptions::new().append(true).open(&moved_away).unwrap();
-        padding.set_len(RECORD_LIMIT).unwrap();
-        drop(padding);
+        // Filled through the lease's own handle, which holds the record's
+        // lock. Windows refuses the change to any other handle.
+        let Home::Own { file, .. } = &lease.home else {
+            panic!("a file's own record");
+        };
+        file.set_len(RECORD_LIMIT).unwrap();
 
         let error = lease.finish().unwrap_err();
 
@@ -1774,7 +1780,67 @@ mod tests {
         let mut partial = lease.take_staged_file().unwrap();
         partial.write_all(contents).unwrap();
         drop(partial);
+        // A copy clears the Hidden attribute of its partial file once the last
+        // byte is written and flushed; until then the file is unfinished,
+        // whatever its length.
+        if contents.len() as u64 == length {
+            set_hidden(&stage, false);
+        }
         (lease, stage, destination)
+    }
+
+    /// Sets or clears the Hidden attribute, which only Windows has.
+    #[cfg(windows)]
+    fn set_hidden(path: &Path, hidden: bool) {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            GetFileAttributesW, SetFileAttributesW, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL,
+            INVALID_FILE_ATTRIBUTES,
+        };
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+        let attributes = unsafe { GetFileAttributesW(wide.as_ptr()) };
+        assert_ne!(attributes, INVALID_FILE_ATTRIBUTES, "{}", path.display());
+        let changed = if hidden {
+            attributes | FILE_ATTRIBUTE_HIDDEN
+        } else {
+            attributes & !FILE_ATTRIBUTE_HIDDEN
+        };
+        let changed = if changed == 0 {
+            FILE_ATTRIBUTE_NORMAL
+        } else {
+            changed
+        };
+        assert_ne!(
+            unsafe { SetFileAttributesW(wide.as_ptr(), changed) },
+            0,
+            "{}",
+            path.display()
+        );
+    }
+
+    #[cfg(not(windows))]
+    fn set_hidden(_path: &Path, _hidden: bool) {}
+
+    /// A partial file of the full length that is still Hidden is not
+    /// complete: a copy written in several streams reaches the full length
+    /// with its first write. Recovery keeps it instead of publishing it.
+    #[cfg(windows)]
+    #[test]
+    fn recovery_keeps_a_moved_file_of_full_length_that_is_still_hidden() {
+        let root = root();
+        let records = FolderRecords::new("pass");
+        let (lease, stage, destination) =
+            begin_moved(&records, &root, &root.join("gone-source"), 5, b"moved");
+        set_hidden(&stage, true);
+        drop(lease);
+        drop(records);
+
+        recover_directory(&root).unwrap();
+
+        assert_eq!(fs::read(&stage).unwrap(), b"moved");
+        assert!(!destination.exists());
+        assert_eq!(record_count(&root), 1);
+        fs::remove_dir_all(root).unwrap();
     }
 
     /// A move deleted its source after giving the file its final name, and the
@@ -2192,12 +2258,14 @@ mod tests {
             };
             home.file.lock().unwrap().write_all(damage).unwrap();
             let (second, second_stage, _) = begin_in(&records, &root, "second", b"half");
-            let text = fs::read(record_files(&root).unwrap().remove(0)).unwrap();
-            assert_eq!(text.split(|byte| *byte == b'\n').count(), 4, "three lines");
             drop(first);
             drop(second);
             drop(records);
             assert_eq!(record_count(&root), 1);
+            // Read once the pass has let go of it: Windows refuses a read of a
+            // locked record from any other handle.
+            let text = fs::read(record_files(&root).unwrap().remove(0)).unwrap();
+            assert_eq!(text.split(|byte| *byte == b'\n').count(), 4, "three lines");
 
             recover_directory(&root).unwrap();
 
@@ -2253,6 +2321,11 @@ mod tests {
         home.torn.store(true, Ordering::Relaxed);
 
         let (second, _, _) = begin_in(&records, &root, "second", b"half");
+        // Read once the pass has let go of it: Windows refuses a read of a
+        // locked record from any other handle.
+        drop(first);
+        drop(second);
+        drop(records);
 
         let text = fs::read_to_string(&record).unwrap();
         let lines: Vec<&str> = text.lines().collect();
@@ -2260,8 +2333,6 @@ mod tests {
         assert!(serde_json::from_str::<Record>(lines[0]).is_ok());
         assert!(serde_json::from_str::<Record>(lines[1]).is_err());
         assert!(serde_json::from_str::<Record>(lines[2]).is_ok());
-        drop(first);
-        drop(second);
         fs::remove_dir_all(root).unwrap();
     }
 
