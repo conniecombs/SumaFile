@@ -5,16 +5,26 @@ Prepared November 24, 2026 for Windows x64.
 This release fixes the open medium-severity findings of the
 [November 23 code audit](CODEBASE_AUDIT_2026-11-23.md), and the ways a
 transfer could lose a file or stop for good that two reviews of the transfer
-engine found, and part of what those reviews found about speed. The rest of
-it, and what they found about file attributes, is still open and is listed in
-the [roadmap](ROADMAP.md#transfers). The
-release adds no features. The complete list is in the
+engine found, and most of what those reviews found about speed and about
+what a copy keeps of a file. What is still open is listed in the
+[roadmap](ROADMAP.md#transfers). The release adds no features. The complete list is in the
 [changelog](CHANGELOG.md).
 
 ## Transfers
 
 - **Bandwidth limit.** Large files no longer stand still until every small file
-  is done. The files being copied take turns at the limit.
+  is done. The files being copied take turns at the limit, and tasks running
+  at the same time share it: two tasks limited to 10 MB/s use 10 together,
+  not 20.
+- **What a copy keeps.** A copied file keeps its alternate data streams, among
+  them the mark Windows puts on a downloaded file, so a copied download still
+  asks before it is run. Files and folders keep their Hidden and System
+  attributes, and folders their creation time. A file whose name is 255
+  characters long can be copied; names longer than about 214 characters
+  failed.
+- **Moves between drive letters.** A move from a `subst` letter into its
+  folder's drive, from a mapped drive to its share's path, or between two
+  letters of one volume renames the files instead of copying them.
 - **Same-drive moves.** A moved file is no longer read back after it is renamed,
   which saves several requests per file on a network share. A file that another
   program holds open is reported as busy; before, it was copied whole and the
@@ -43,8 +53,8 @@ release adds no features. The complete list is in the
 - **Logs.** `service.log` gets the service's warnings, such as each retried
   try with its reason. `operations.jsonl` records, for each transfer, its
   duration, bytes and files and every item that failed, and is kept to 4 MiB.
-- **Fewer calls per file.** A small file copied into a new folder costs 14
-  calls to Windows instead of 22: the source is opened once, a copy no longer
+- **Fewer calls per file.** A small file copied into a new folder costs 15
+  calls to Windows instead of 22, one of them the look for its streams: the source is opened once, a copy no longer
   reads the source's file ID, a new folder is not searched for the file's
   name first, and the temporary file is renamed through the handle it was
   written through. The gain in speed has not been measured on Windows yet.

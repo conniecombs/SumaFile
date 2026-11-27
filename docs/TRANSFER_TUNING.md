@@ -50,7 +50,7 @@ Advanced. Defaults are the file service's.
 | --- | --- | --- | --- |
 | Mode | Automatic | Automatic, Conservative, Maximum throughput, Custom | How the number of files copied at once is chosen. See [Modes](#modes). |
 | Files at once | 4 | 1–32 | Shown only in Custom mode: the fixed number of files copied at once, within the caps listed below the table. |
-| Bandwidth limit (MB/s, 0 = unlimited) | 0 | 0–1,048,576 | Byte-rate limit for one task. The unit is mebibytes: 1 means 1,048,576 bytes per second. 0 means no limit, in every mode. |
+| Bandwidth limit (MB/s, 0 = unlimited) | 0 | 0–1,048,576 | Byte-rate limit for one task, shared with the other tasks running at the same time (see [Limits](#limits)). The unit is mebibytes: 1 means 1,048,576 bytes per second. 0 means no limit, in every mode. |
 | Verify copies with a checksum (slower) | Off | | The same setting as **Checksum** under "Decide a file is already up to date by"; changing one changes the other. See [Check modes](#check-modes). |
 | Most files at once in automatic modes | 16 | 1–32 | Ceiling for Automatic and Maximum throughput. Conservative never exceeds 4. It also caps Custom. |
 | Folder scanners | 8 | 1–64; the engine uses at most 32 | Threads that read source folders and create destination folders while files are copied. |
@@ -115,7 +115,8 @@ is on, every file is copied in these steps:
 1. In the destination folder the service creates a partial file named
    `.<name>.<16 hex digits>.sumafile-partial`. The hex digits are a hash of
    the destination path and the ID of the pass, which keeps the partial files
-   of different tasks apart.
+   of different tasks apart. When that name would be longer than a name can
+   be (255 characters), `<name>` is cut at its end and ends with `~`.
 2. It adds a line for the file to the folder's ownership record, a text file
    named `.sumafile-transfer.<16 hex digits>.<number>.sumafile-partial.state`.
    A pass has one record in each destination folder, shared by all the files
@@ -131,9 +132,11 @@ is on, every file is copied in these steps:
    changed during transfer"). It flushes the partial file to disk when "Flush
    to disk before finishing each file" is on, and always in a move and in
    Checksum mode. In Checksum mode it then reads the partial file back and
-   compares it with what was read from the source. Last, it gives the file the
-   source's created, accessed and modified times and its read-only attribute,
-   and clears the Hidden attribute.
+   compares it with what was read from the source. Before the flush it
+   copies the source's alternate data streams to the partial file. Last, it
+   gives the file the source's created, accessed and modified times and its
+   read-only, hidden, system and not-indexed attributes, which clears the
+   Hidden attribute of the partial file unless the source is hidden.
 5. The partial file is renamed to the final name. This rename never
    overwrites: unless Replace was chosen, a file found under that name is a
    conflict. On Windows it is made through the handle the partial file was
@@ -173,11 +176,22 @@ written to disk and deleted for each file. A link, a file written
 [directly to the destination](#write-directly-to-the-destination) and a file
 downloaded over FTP or SFTP still have one.
 
-Nothing but the content, the three times and the read-only attribute is
-carried over: not the Hidden or System attribute, alternate data streams or
-the access-control list. If the destination refuses the times or attributes,
-the file is kept as it was written. A file that a move renames (see
-[Moves](#moves)) is the same file and keeps everything.
+A copy takes from its source:
+
+* the content and the alternate data streams, among them the mark Windows
+  puts on a downloaded file, which makes Windows ask before the file is run;
+* the created, accessed and modified times;
+* the read-only, hidden, system and not-indexed attributes.
+
+It does not take the access-control list: as in Explorer, the copy gets the
+permissions of the folder it lands in. Compression and encryption are the
+destination folder's. When the destination refuses the times (FAT holds no
+date before 1980), the attributes are set without them. When it refuses the
+attributes too, or cannot hold alternate data streams (FAT, some shares), the
+file is kept as it was written and `service.log` says what it lacks; a file
+whose attributes were refused keeps the Hidden attribute of its partial file.
+A file that a move renames (see [Moves](#moves)) is the same file and keeps
+everything.
 
 ### Folders
 
@@ -185,8 +199,10 @@ Folders are not staged. A folder that does not exist at the destination is
 created under its final name when the scan reaches it, and its files are then
 copied into it one by one as above. A folder that already exists is merged
 into. When all files are done, each folder the task created gets its source
-folder's modified and accessed times and read-only attribute; folders that
-existed before are left as they were, and a cancelled task skips this step.
+folder's created, modified and accessed times and its read-only, hidden,
+system and not-indexed attributes, in one call; folders that existed before
+are left as they were, and a cancelled task skips this step. A folder's
+alternate data streams are not copied.
 
 A symbolic link is recreated as a link, through the same partial name and
 rename; what it points to is not copied.
@@ -229,7 +245,13 @@ reuses the answer for subsequent conflicts in the same transfer.
 ### Moves
 
 * On the same drive or share, a selected folder whose name is free at the
-  destination is moved by one rename, and so is a selected file. Nothing is
+  destination is moved by one rename, and so is a selected file. Paths that
+  begin with different drive letters are on the same drive when the letters
+  stand for one volume: a letter given to a folder with `subst` and that
+  folder's drive, a mapped drive and its share's path, two letters of one
+  volume. What a letter stands for is looked up once a minute. A folder where
+  another volume is mounted is taken for part of the drive it is in; the
+  rename into it is refused and the item is copied. Nothing is
   copied and no partial file is used. If the rename is refused, the item is
   copied instead. One refusal is not answered by a copy: a file that another
   program holds open (a sharing or lock violation) could not be deleted after
@@ -381,7 +403,8 @@ When recovery finds such a file and the source no longer exists, it never
 deletes it. If the file has its full length and is no longer hidden (a partial
 file stays hidden until its last byte is written), and its final name is
 free, recovery gives it that name and removes the file a Replace had moved
-aside. Otherwise it keeps the file and the record. The same holds for a file
+aside. Otherwise it keeps the file and the record. The copy of a hidden file
+stays hidden, so it is always kept under its partial name. The same holds for a file
 that a move wrote directly under its final name: complete, it is left as it
 is. "The source no longer exists" means that no file of the recorded length
 has the source's name; another file that has taken the name since is not the
@@ -806,17 +829,19 @@ settings, and checks what the ten extra files cost:
 | Operation | Per file | What it is |
 | --- | --- | --- |
 | Open | 2 | the source, and the partial file created |
-| Query | 4 | the partial file's ID for its record; the source's size and times when it is opened and after the last read; the copy's attributes before they are set |
+| Query | 5 | the partial file's ID for its record; the source's size and times when it is opened and after the last read; the source's alternate data streams; the copy's attributes before they are set |
 | Read | 1 | the source, in one read |
 | Write | 2 | the file's line in the folder's record, and the data |
 | Flush | 1 | the data, before the file gets its name |
 | Set | 1 | the copy's times and attributes |
 | Rename | 1 | the partial file to its final name, through its own handle |
 
-On Windows that is 14 calls for each file (an open costs a close too); it used
-to be 22. Elsewhere the rename goes by path, after one more
-check of the partial file. A change that adds an operation to every file
-fails this test and has to change the table on purpose.
+On Windows that is 15 calls for each file (an open costs a close too): it
+used to be 22, and the look for alternate data streams added one. A source
+that has streams costs two opens, a read and a write more for each. Elsewhere
+there are no streams to look for, and the rename goes by path after one more
+check of the partial file. A change that adds an operation to every file fails
+this test and has to change the table on purpose.
 
 **The benchmark.** `transfer_benchmark` times whole transfers. It is not run
 with the other tests. On the drive to measure:
@@ -878,11 +903,14 @@ compare it with the flush-off line.
   it is larger. A file copied in several streams reserves one per stream, and
   never fewer than three. Each file adds 128 KiB. A file that does not fit waits,
   and can appear in the Details list while it waits.
-* **Bandwidth.** The limit is per task and counts the bytes actually copied.
-  It is not a limit for the whole machine. The files being copied take turns
-  at it, and one turn is at most a sixteenth of a second of the limit (never
-  less than 64 KiB), so a large file and the small files beside it all keep
-  moving however low the limit is.
+* **Bandwidth.** The limit counts the bytes actually copied. Tasks running
+  at the same time share it: together, the tasks that have a limit use at
+  most the highest of their limits, and each stays within its own. A task
+  without a limit is not held back. It is not a limit for the whole machine:
+  other programs and FTP/SFTP transfers are not counted. The files being
+  copied take turns at it, and one turn is at most a sixteenth of a second of
+  the limit (never less than 64 KiB), so a large file and the small files
+  beside it all keep moving however low the limit is.
 * **Folder depth.** A folder 1,024 levels or more below a selected folder is
   not entered; it is reported and the rest continues.
 * **Memory outside the buffers.** The limits above cover copy buffers only.
@@ -921,13 +949,18 @@ nearest limit.
   leading `\\` of a UNC path and a `\\?\` or `\\.\` prefix are kept. Files can
   be created and written under a doubled path, but the rename that gives a
   file its final name can be refused there ("The parameter is incorrect").
-* **Long paths.** A partial file's name is 35 characters longer than the
-  file's own name, and the name of a file's own record, where it has one, 41
-  characters longer, so a
-  destination close to 260 characters passes that length during the copy. The
-  rename converts any path of 248 characters or more to the extended form
-  (`\\?\`, or `\\?\UNC\` for a share), as the service's other file calls do
-  for long paths.
+* **Long names.** A name can be 255 characters long. A partial file's name
+  is 35 characters longer than the file's own name, the name of a file's own
+  record, where it has one, 41 characters longer, and a Replace backup's
+  about 40. A temporary name that would pass 255 characters cuts the file's
+  name at its end and marks the cut with `~`; the hash and the suffix that
+  make it unique are kept, so a file whose name is as long as a name can be
+  is copied, replaced and written directly like any other.
+* **Long paths.** A destination path close to 260 characters passes that
+  length during the copy, under the longer temporary name. The rename
+  converts any path of 248 characters or more to the extended form (`\\?\`,
+  or `\\?\UNC\` for a share), as the service's other file calls do for long
+  paths.
 * **A folder into itself.** Copying or moving a folder into itself or one of
   its subfolders is refused.
 
@@ -944,12 +977,15 @@ downloads to disk before finishing each file", "Retry a failing file up to"
 (10), "Retry rounds per failed file" (3) and "Wait before retrying
 (milliseconds)" (1000). There are no settings for concurrency or buffers: a
 remote session transfers one file at a time, with buffers sized by the
-protocol.
+protocol. FTP/SFTP transfers running at the same time share the plugin's
+bandwidth limit as local tasks share theirs.
 
-A download writes its local file with the same partial file, rename and
+An FTP/SFTP transfer is a copy: neither direction deletes its source. A
+download writes its local file with the same partial file, rename and
 recovery as a local copy, and with an ownership record of its own for each
-file. A retry reconnects and transfers the file
-again from its first byte. In Checksum mode the plugin reads the remote file
+file. The partial file loses its Hidden attribute once its last byte is in,
+before it gets its name. A retry reconnects, empties the partial file and
+transfers the file again from its first byte. In Checksum mode the plugin reads the remote file
 once more to verify it. On the upgrade from a version without the plugin, the
 values in `transfer.policy` that differed from the defaults were copied into
 the plugin's settings once; remote transfers do not read that row afterwards.

@@ -134,8 +134,8 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
   remembered for the route; every later transfer on it started that low. In
   exchange, what a task learned is now saved also when some of its files
   failed or met a conflict, which say nothing about the route.
-- A file costs fewer calls to Windows: 14 for a small file copied into a
-  new folder, from 22. The source is opened once and its size and times are
+- A file costs fewer calls to Windows: 15 for a small file copied into a
+  new folder, from 22, counting the look for alternate data streams below. The source is opened once and its size and times are
   read through that handle; a copy no longer reads the source's file ID,
   which only a move needs; in a folder the transfer created, SumaFile no
   longer looks for a file under the final name first; and the partial file
@@ -164,6 +164,34 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
   the folders' times were set.
 - With one file at a time, the row names the file just done between two
   files. It used to show no name for a moment after each file.
+- A copied file keeps its alternate data streams, among them the mark
+  Windows puts on a downloaded file, which makes Windows ask before the file
+  is run. A copy used to carry the bytes only, so a copied download ran
+  without the warning. A destination that cannot hold streams (FAT, some
+  shares) gets the file without them, and `service.log` says so.
+- A copied file or folder keeps its Hidden, System and not-indexed
+  attributes; only read-only was kept, so a copied `desktop.ini` showed in
+  every folder it was copied into. A copied folder also keeps its creation
+  time.
+- A destination that refuses a file's times (FAT holds no date before 1980)
+  still gets its attributes. Both were refused together, and the copy kept
+  the Hidden attribute of its temporary file.
+- A file whose name is as long as a name can be (255 characters) can be
+  copied, replaced and written directly. Its temporary names added up to 41
+  characters to its own, so any name longer than about 214 characters
+  failed. A temporary name that would be too long now cuts the file's name
+  and marks the cut with `~`.
+- A move between two drive letters of one volume, from a `subst` letter
+  into the folder's own drive, or from a mapped drive to its share's path,
+  renames the files. It used to copy every file and delete the source,
+  because the paths began differently.
+- Tasks running at the same time share the bandwidth limit: together they
+  use at most the highest of their limits, and each stays within its own.
+  Two tasks limited to 10 MB/s used 20. FTP/SFTP transfers share the
+  plugin's limit the same way.
+- An FTP/SFTP download clears its temporary file's Hidden attribute before
+  the file gets its name; nothing did. A retry empties the temporary file
+  through its handle.
 - Checksum mode flushes each file to disk before it reads the file back, and
   verifies it before the file gets the source's read-only attribute. A
   read-only file whose checksum did not match could not be tried again.

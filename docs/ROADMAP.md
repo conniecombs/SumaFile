@@ -83,35 +83,34 @@ on-demand column values have shipped. What remains:
   choice or change what it does.
 - Why the partial files of the copies that failed before 1.1.4 were not
   removed by the clean-up that follows a failed file was not established.
-- A destination that refuses the attribute update keeps the Hidden attribute
-  on a file that is published all the same.
+- A destination that refuses both a file's times and its attributes keeps
+  the Hidden attribute of its partial file on the file, which is published
+  all the same; `service.log` says so. Refused times alone no longer do this.
 - A request the service refuses while planning, such as copying a folder into
   itself, is reported with the "CONFLICT:" prefix of a name conflict. What
   the app offers the user then was not checked.
-- A partial file's name is 35 characters longer than the file's own, and its
-  record's 41, so a file whose name is longer than about 220 characters
-  cannot be copied. Shorten the temporary names for long names.
-- A copy does not keep a file's Hidden and System attributes or its alternate
-  data streams. The mark Windows puts on a downloaded file is one of those
-  streams, so a copied download no longer asks before it is run.
-- The bandwidth limit is per task: two tasks running at once use twice the
-  limit.
+- A copy to a destination that cannot hold alternate data streams (FAT, some
+  shares) loses the mark of a downloaded file, and only `service.log` says
+  so. Explorer asks first. A folder's alternate data streams are not copied.
+- After an interrupted move, the copy of a hidden file stays under its
+  partial name instead of getting its final name: the Hidden attribute is
+  what tells recovery that a partial file is complete.
+- The bandwidth limit is shared by the tasks of the file service and,
+  separately, by the transfers of the FTP/SFTP plugin; the two are not
+  counted together.
 - An FTP/SFTP transfer that is interrupted starts its file again from the
   first byte.
-- An FTP/SFTP download that is part of a move deletes the remote file once
-  the local one is complete, and its record does not say it is a move. When
-  the local rename, or the record's removal, has not reached the disk, the
-  next transfer into the folder deletes the local file. The rule for local
-  moves cannot be used as it is: a remote source cannot be looked up.
+- A queue of tasks that survives a restart, overlapped I/O, and copying
+  through Windows' own copy function: worth doing only where the benchmark
+  shows a gain, and it has no numbers yet.
 - On FAT and exFAT a file's ID can change when it is renamed. Recovery then
   does not recognise a file a Replace had moved aside and keeps it under its
   backup name instead of putting it back. This was not tried on such a drive.
-- Whether an FTP/SFTP download can empty a partial file that still has the
-  Hidden attribute was not checked on Windows.
 - A destination whose file system reports no file ID cannot be copied to:
   ownership cannot be recorded there, and the file fails.
-- Whether two paths are on the same volume is decided from the first path
-  component, which is wrong for mount points and substituted drives.
+- A folder where another volume is mounted is taken for part of the drive it
+  is in, so a move into it tries a rename, which is refused, before it
+  copies.
 - A move within one drive that replaces files flushes one record per
   replaced file, and Checksum mode flushes every file. Measure what these
   cost on a hard disk and a share.
@@ -125,7 +124,7 @@ on-demand column values have shipped. What remains:
 - After a power loss, a partial file whose line had not reached the disk is
   left with no record, and recovery does not remove it. The pass ID in the
   partial file's name could prove which pass made it.
-- A small file copied into a new folder costs 14 Windows calls (see
+- A small file copied into a new folder costs 15 Windows calls (see
   [Measuring a transfer](TRANSFER_TUNING.md#measuring-a-transfer)). A plain
   copy makes none of these: the file's line in its folder's record, the query
   for the ID the line names, the rename, and with "Flush to disk before
