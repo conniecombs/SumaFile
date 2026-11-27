@@ -303,6 +303,119 @@ pub fn is_network_path(path: &Path) -> bool {
     false
 }
 
+/// What names the volume `path` is on, for telling whether two paths are on
+/// one volume. A drive letter is the volume it shows: a letter given to a
+/// folder with `subst` is that folder's volume, a mapped drive is the share
+/// it connects to, and two letters of one volume give one name. A share path
+/// names its share. `None` when the volume cannot be told. What a letter
+/// stands for is kept for a minute.
+///
+/// A folder where another volume is mounted is not told apart from the
+/// volume it is in.
+#[cfg(windows)]
+pub fn volume_identity(path: &Path) -> Option<String> {
+    volume_identity_at(path, 0)
+}
+
+/// Elsewhere than on Windows a path's volume is not looked up.
+#[cfg(not(windows))]
+pub fn volume_identity(_path: &Path) -> Option<String> {
+    None
+}
+
+#[cfg(windows)]
+fn volume_identity_at(path: &Path, depth: usize) -> Option<String> {
+    use std::path::{Component, Prefix};
+    let Some(Component::Prefix(prefix)) = path.components().next() else {
+        return None;
+    };
+    match prefix.kind() {
+        Prefix::Disk(letter) | Prefix::VerbatimDisk(letter) => drive_identity(letter, depth),
+        Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => Some(
+            format!(
+                r"\\{}\{}",
+                server.to_string_lossy(),
+                share.to_string_lossy()
+            )
+            .to_lowercase(),
+        ),
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+fn drive_identity(letter: u8, depth: usize) -> Option<String> {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static KNOWN: Mutex<Vec<(u8, Instant, Option<String>)>> = Mutex::new(Vec::new());
+    const KEPT: Duration = Duration::from_secs(60);
+
+    let letter = letter.to_ascii_uppercase();
+    if !letter.is_ascii_uppercase() {
+        return None;
+    }
+    if let Some((_, _, known)) = KNOWN
+        .lock()
+        .ok()?
+        .iter()
+        .find(|(known, at, _)| *known == letter && at.elapsed() < KEPT)
+    {
+        return known.clone();
+    }
+    let found = resolve_drive(letter, depth);
+    if let Ok(mut known) = KNOWN.lock() {
+        known.retain(|(known, _, _)| *known != letter);
+        known.push((letter, Instant::now(), found.clone()));
+    }
+    found
+}
+
+#[cfg(windows)]
+fn resolve_drive(letter: u8, depth: usize) -> Option<String> {
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetVolumeNameForVolumeMountPointW, QueryDosDeviceW,
+    };
+    let text = |buffer: &[u16]| {
+        let end = buffer
+            .iter()
+            .position(|&unit| unit == 0)
+            .unwrap_or(buffer.len());
+        String::from_utf16_lossy(&buffer[..end])
+    };
+    let drive = format!("{}:", letter as char);
+
+    // A letter given to a folder with `subst` names that folder.
+    let device: Vec<u16> = drive.encode_utf16().chain([0]).collect();
+    let mut target = vec![0u16; 1024];
+    let written =
+        unsafe { QueryDosDeviceW(device.as_ptr(), target.as_mut_ptr(), target.len() as u32) };
+    if written > 0 {
+        if let Some(folder) = text(&target).strip_prefix(r"\??\") {
+            if depth >= 4 {
+                return None;
+            }
+            let folder = match folder.strip_prefix(r"UNC\") {
+                Some(share) => format!(r"\\{share}"),
+                None => folder.to_string(),
+            };
+            return volume_identity_at(Path::new(&folder), depth + 1);
+        }
+    }
+    // A mapped drive names its share.
+    if let Some(remote) = crate::drives::mapped_network_remote_path(&drive) {
+        return volume_identity_at(Path::new(&remote), depth + 1);
+    }
+    // Any other letter names its volume, which other letters can show too.
+    let root: Vec<u16> = format!("{drive}\\").encode_utf16().chain([0]).collect();
+    let mut name = vec![0u16; 64];
+    let ok = unsafe {
+        GetVolumeNameForVolumeMountPointW(root.as_ptr(), name.as_mut_ptr(), name.len() as u32)
+    };
+    (ok != 0)
+        .then(|| text(&name).to_lowercase())
+        .filter(|name| !name.is_empty())
+}
+
 /// True only for a drive letter that Windows reports as a fixed disk and whose
 /// filesystem is not a virtual/cloud mount. UNC paths, removable, remote and
 /// unknown volumes are false, so callers fall back to sequential I/O.

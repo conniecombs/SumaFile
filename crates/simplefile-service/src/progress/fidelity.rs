@@ -168,3 +168,72 @@ fn a_file_with_a_name_as_long_as_a_name_can_be_is_copied_and_replaced() {
     assert_eq!(left, vec![name], "only the file is left");
     let _ = fs::remove_dir_all(&root);
 }
+
+/// A letter given to a folder with `subst`, removed again when dropped.
+#[cfg(windows)]
+pub(crate) struct Substituted(char);
+
+#[cfg(windows)]
+impl Substituted {
+    pub(crate) fn new(folder: &Path) -> Option<Self> {
+        let letter = ('M'..='Z')
+            .rev()
+            .find(|letter| !Path::new(&format!("{letter}:\\")).exists())?;
+        let made = std::process::Command::new("subst")
+            .arg(format!("{letter}:"))
+            .arg(folder)
+            .status()
+            .ok()?
+            .success();
+        made.then_some(Self(letter))
+    }
+    pub(crate) fn path(&self, rest: &str) -> PathBuf {
+        PathBuf::from(format!("{}:\\{rest}", self.0))
+    }
+}
+
+#[cfg(windows)]
+impl Drop for Substituted {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("subst")
+            .arg(format!("{}:", self.0))
+            .arg("/D")
+            .status();
+    }
+}
+
+/// A move from a `subst` letter into the folder's own drive renames each
+/// file: nothing is written. It used to copy every file and delete its
+/// source, because the two paths begin with different letters.
+#[cfg(windows)]
+#[test]
+fn a_move_from_a_substituted_drive_into_its_own_volume_renames_the_file() {
+    use sumafile_transfer::ops::{Counter, Op};
+
+    let root = unique_root("subst_move");
+    fs::create_dir_all(root.join("source")).unwrap();
+    fs::create_dir_all(root.join("destination")).unwrap();
+    fs::write(root.join("source").join("file.bin"), b"moved").unwrap();
+    let Some(letter) = Substituted::new(&root) else {
+        eprintln!("skipped: no free drive letter for subst");
+        let _ = fs::remove_dir_all(&root);
+        return;
+    };
+    let counter = Counter::under(&root);
+
+    copy(
+        "move",
+        &letter.path(r"source\file.bin"),
+        &root.join("destination"),
+    );
+
+    let counts = counter.counts();
+    assert_eq!(
+        fs::read(root.join("destination").join("file.bin")).unwrap(),
+        b"moved"
+    );
+    assert!(!root.join("source").join("file.bin").exists());
+    assert_eq!(counts.get(Op::Write), 0, "{}", counts.describe());
+    drop(letter);
+    let _ = fs::remove_dir_all(&root);
+}

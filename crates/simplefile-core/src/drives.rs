@@ -107,7 +107,7 @@ fn windows_volume_details(wide_path: &[u16]) -> (Option<String>, Option<String>)
     )
 }
 
-fn mapped_network_remote_path(drive_path: &str) -> Option<String> {
+pub(crate) fn mapped_network_remote_path(drive_path: &str) -> Option<String> {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Foundation::{ERROR_MORE_DATA, NO_ERROR};

@@ -70,12 +70,35 @@ pub(crate) fn volume_key(path: &Path) -> String {
     trimmed.to_lowercase()
 }
 
-/// Whether a move between these paths can be a rename (same volume prefix).
-/// Mixing a plain path with a verbatim `\\?\` prefix intentionally stays on
-/// the staged copy + verified-delete path (used by single-drive tests to
-/// exercise cross-volume streaming).
+/// Whether a move between these paths can be a rename: whether they are on
+/// one volume. Paths that begin alike are; paths that begin with different
+/// drive letters or shares are when the letters stand for one volume (see
+/// [`simplefile_core::utils::volume_identity`]): a `subst` letter and the
+/// folder it was given, a mapped drive and its share, two letters of one
+/// volume. A wrong answer costs one refused rename, after which the item is
+/// copied.
+///
+/// A plain path and a verbatim `\\?\` one stay apart, so that tests can
+/// copy and delete on one drive as between two.
 pub(crate) fn same_volume(source: &Path, destination: &Path) -> bool {
-    source.components().next() == destination.components().next()
+    use std::path::Component;
+    fn first(path: &Path) -> Option<Component<'_>> {
+        path.components().next()
+    }
+    if first(source) == first(destination) {
+        return true;
+    }
+    let verbatim = |path: &Path| matches!(first(path), Some(Component::Prefix(prefix)) if prefix.kind().is_verbatim());
+    if verbatim(source) != verbatim(destination) {
+        return false;
+    }
+    match (
+        simplefile_core::utils::volume_identity(source),
+        simplefile_core::utils::volume_identity(destination),
+    ) {
+        (Some(source), Some(destination)) => source == destination,
+        _ => false,
+    }
 }
 
 pub(super) fn ensure_dir_not_inside_itself(
@@ -343,6 +366,40 @@ pub(crate) fn prime_transfer(
         total.files = total.files.saturating_add(plan.file_count);
     }
     Ok(total)
+}
+
+#[cfg(all(test, windows))]
+mod volume_tests {
+    use super::super::fidelity::Substituted;
+    use super::same_volume;
+    use std::path::Path;
+
+    #[test]
+    fn a_drive_letter_written_in_either_case_is_one_volume() {
+        assert!(same_volume(Path::new(r"C:\a"), Path::new(r"c:\b")));
+    }
+
+    #[test]
+    fn a_plain_and_a_verbatim_path_stay_apart() {
+        assert!(!same_volume(Path::new(r"\\?\C:\a"), Path::new(r"C:\a")));
+    }
+
+    /// A `subst` letter is the folder it was given: a move from it into that
+    /// folder's drive is a rename. Its first path component differs, so the
+    /// move used to copy every file and delete the source.
+    #[test]
+    fn a_substituted_drive_is_the_volume_of_its_folder() {
+        let folder = std::env::temp_dir();
+        let Some(letter) = Substituted::new(&folder) else {
+            eprintln!("skipped: no free drive letter for subst");
+            return;
+        };
+        assert!(same_volume(&letter.path("a.txt"), &folder.join("b.txt")));
+        assert!(!same_volume(
+            &letter.path("a.txt"),
+            Path::new(r"\\server\share\b.txt")
+        ));
+    }
 }
 
 #[cfg(test)]
