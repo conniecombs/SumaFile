@@ -4,6 +4,8 @@ mod adaptive;
 #[cfg(test)]
 mod bench;
 mod execute;
+#[cfg(test)]
+mod fidelity;
 mod parallel;
 mod plan;
 mod registry;

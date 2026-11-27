@@ -959,11 +959,23 @@ fn transfer_file(
             if !lease.owns_staged() {
                 return Err(Failure::new("Transfer staging identity changed", false));
             }
-            let file = OpenOptions::new()
-                .write(true)
-                .truncate(true)
-                .open(&staging)
-                .map_err(|e| Failure::io("Open local temporary destination", &staging, e))?;
+            // The first try writes through the handle the partial file was
+            // created with. A later try opens it again and empties it itself
+            // rather than through an open that truncates, which Windows file
+            // systems treat differently for a file with the Hidden attribute.
+            let file = match lease.take_staged_file() {
+                Some(file) => file,
+                None => {
+                    let file = OpenOptions::new()
+                        .write(true)
+                        .open(&staging)
+                        .map_err(|e| Failure::io("Open local temporary destination", &staging, e))?;
+                    file.set_len(0).map_err(|e| {
+                        Failure::io("Empty local temporary destination", &staging, e)
+                    })?;
+                    file
+                }
+            };
             if progress.policy.preallocate {
                 sumafile_transfer::staging::preallocate_file(&file, expected_size);
             }
@@ -985,6 +997,15 @@ fn transfer_file(
                     Failure::io("Finalize local temporary destination", &staging, e)
                 })?;
             }
+            // Every byte is in: the file loses the Hidden attribute of a
+            // partial file before it gets its name.
+            sumafile_transfer::staging::clear_hidden(&writer.destination).map_err(|e| {
+                Failure::io(
+                    "Clear the Hidden attribute of the local temporary destination",
+                    &staging,
+                    e,
+                )
+            })?;
             let expected_hash = writer.hasher.take().map(ContentHasher::finish);
             drop(writer);
             if let Some(expected_hash) = expected_hash {
@@ -1666,6 +1687,43 @@ mod tests {
             assert_eq!(outcome.retry_sources, vec!["/source"]);
             assert_eq!(fs::read(&local).unwrap(), b"original");
             assert_eq!(fs::read_dir(fixture.local()).unwrap().count(), 1);
+        }
+    }
+
+    /// A download is written under a hidden partial name, which has to lose
+    /// the Hidden attribute before it gets its final name. Nothing cleared
+    /// it: whether a downloaded file ended up hidden depended on what the
+    /// drive did when the partial file was opened again to empty it.
+    #[cfg(windows)]
+    #[test]
+    fn a_downloaded_file_is_not_hidden_on_the_first_try_or_after_a_retry() {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+        for transient_failures in [0, 1] {
+            let fixture = Fixture::new();
+            let mut provider = fixture.provider();
+            provider.transient_failures = transient_failures;
+            fs::write(provider.path("/source"), b"downloaded").unwrap();
+            let request = fixture.request("download", vec!["/source".into()]);
+            let outcome = transfer_entries(
+                &mut provider,
+                &request,
+                &AtomicBool::new(false),
+                &Quiet,
+                &|| Policy {
+                    retry_sleep_ms: 10,
+                    ..Policy::default()
+                },
+            )
+            .unwrap();
+            assert!(outcome.retry_sources.is_empty(), "{:?}", outcome.items);
+            let local = Path::new(&fixture.local()).join("source");
+            assert_eq!(fs::read(&local).unwrap(), b"downloaded");
+            assert_eq!(
+                fs::metadata(&local).unwrap().file_attributes() & FILE_ATTRIBUTE_HIDDEN,
+                0,
+                "the download is hidden after {transient_failures} failed tries"
+            );
         }
     }
 

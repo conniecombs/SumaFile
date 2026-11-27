@@ -868,6 +868,67 @@ pub fn is_hidden(_path: &Path) -> bool {
     false
 }
 
+/// Clears the Hidden attribute of an open file, which a partial file carries
+/// until its last byte is written; its other attributes and its times stay.
+/// A file that is not hidden is left alone. Elsewhere than on Windows there
+/// is no such attribute.
+#[cfg(windows)]
+pub fn clear_hidden(file: &fs::File) -> std::io::Result<()> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FileBasicInfo, GetFileInformationByHandleEx, SetFileInformationByHandle,
+        FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL, FILE_BASIC_INFO,
+    };
+    let handle = file.as_raw_handle() as _;
+    let mut info: FILE_BASIC_INFO = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<FILE_BASIC_INFO>() as u32;
+    if unsafe {
+        GetFileInformationByHandleEx(
+            handle,
+            FileBasicInfo,
+            (&mut info as *mut FILE_BASIC_INFO).cast(),
+            size,
+        )
+    } == 0
+    {
+        return Err(std::io::Error::last_os_error());
+    }
+    if info.FileAttributes & FILE_ATTRIBUTE_HIDDEN == 0 {
+        return Ok(());
+    }
+    // The attributes the set may name (FILE_ATTRIBUTE_VALID_SET_FLAGS); zero
+    // times leave the times as they are.
+    let attributes = info.FileAttributes & 0x31a7 & !FILE_ATTRIBUTE_HIDDEN & !FILE_ATTRIBUTE_NORMAL;
+    let cleared = FILE_BASIC_INFO {
+        CreationTime: 0,
+        LastAccessTime: 0,
+        LastWriteTime: 0,
+        ChangeTime: 0,
+        FileAttributes: if attributes == 0 {
+            FILE_ATTRIBUTE_NORMAL
+        } else {
+            attributes
+        },
+    };
+    if unsafe {
+        SetFileInformationByHandle(
+            handle,
+            FileBasicInfo,
+            (&cleared as *const FILE_BASIC_INFO).cast(),
+            size,
+        )
+    } == 0
+    {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub fn clear_hidden(_file: &fs::File) -> std::io::Result<()> {
+    Ok(())
+}
+
 /// Whether `path` is a folder itself, not a link to one.
 pub fn is_real_directory(path: &Path) -> bool {
     crate::ops::record(crate::ops::Op::Stat, path);

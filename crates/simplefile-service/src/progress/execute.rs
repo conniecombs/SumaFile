@@ -446,22 +446,17 @@ pub(crate) fn copy_file_attempt_versioned(
             .restart_file());
         }
     }
-    // Timestamps, the read-only bit and the staging hidden flag in one call on
-    // the handle we already hold, instead of reopening the file afterwards.
-    let is_staging = dst
-        .file_name()
-        .and_then(|n| n.to_str())
-        .is_some_and(|n| n.ends_with(".sumafile-partial"));
+    // The source's times and its read-only, hidden and system attributes in
+    // one call on the handle already held, which also clears the Hidden
+    // attribute of a partial file whose source is not hidden.
     // Every byte is written and verified by now; a target that refuses
     // timestamp or attribute updates (some SMB and FAT volumes) gets the same
     // treatment as directories: keep the file, log the loss.
     count(Op::Query, dst);
     count(Op::Set, dst);
-    if let Err(error) = simplefile_core::file_ops::apply_basic_metadata_to_handle(
-        &dst_file,
-        &source_after,
-        is_staging,
-    ) {
+    if let Err(error) =
+        simplefile_core::file_ops::apply_basic_metadata_to_handle(&dst_file, &source_after)
+    {
         log::warn!(
             "Could not preserve file metadata for {}: {error}",
             dst.display()

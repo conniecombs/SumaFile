@@ -662,21 +662,22 @@ pub(crate) fn copy_selection(
 /// Fewest created folders that are worth a second thread.
 const DIRECTORIES_PER_METADATA_THREAD: usize = 64;
 
-/// Give each folder the transfer created its source folder's times and
-/// read-only attribute, now that nothing is written into it any more.
+/// Give each folder the transfer created its source folder's times and its
+/// read-only, hidden and system attributes, now that nothing is written into
+/// it any more.
 ///
 /// The folders do not depend on one another (setting a folder's times does
 /// not touch its parent's), so they are shared out between up to `threads`
-/// threads. One after another, each folder costs three or four requests, and
+/// threads. One after another, each folder costs a few requests, and
 /// on a share a tree of many folders spent that time after its last file.
 fn restore_directory_metadata(created: &[(usize, usize, PathBuf, PathBuf)], threads: usize) {
     let restore = |(_, _, src, dst): &(usize, usize, PathBuf, PathBuf)| {
-        // The source folder's facts by path, then its times through a handle
-        // opened on the copy, then its attributes by path.
+        // The source folder's facts by path, then its times and attributes
+        // in one call through a handle opened on the copy.
         use sumafile_transfer::ops::{record, Op};
         record(Op::Stat, src);
         record(Op::Open, dst);
-        record(Op::Set, dst);
+        record(Op::Query, dst);
         record(Op::Set, dst);
         if let Err(error) = simplefile_core::file_ops::preserve_basic_metadata(src, dst) {
             log::warn!(
