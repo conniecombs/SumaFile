@@ -63,7 +63,8 @@
     },
     "ProgressUpdate": {
       "source": "crates/simplefile-core/src/models.rs",
-      "fields": ["operation_id", "operation_type", "current", "total", "current_files", "total_files", "current_item", "status", "error"]
+      "fields": ["operation_id", "operation_type", "current", "total", "current_files", "total_files", "current_item", "status", "error", "untransferred"],
+      "notes": "untransferred: the bytes of current that were not transferred (files skipped, found already at the destination, or moved by renaming them); they count toward the percentage, not toward the speed."
     },
     "FileChangeEvent": {
       "source": "crates/simplefile-core/src/models.rs",

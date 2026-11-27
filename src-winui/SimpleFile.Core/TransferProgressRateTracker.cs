@@ -4,6 +4,9 @@ namespace SimpleFile.Core;
 
 public sealed class TransferProgressRateTracker
 {
+    /// <summary>Seconds without a transferred byte after which no speed is shown.</summary>
+    public const double StallSeconds = 3;
+
     private readonly Func<DateTimeOffset> _now;
     private DateTimeOffset _lastSampleAt;
     private DateTimeOffset _startedAt;
@@ -44,35 +47,50 @@ public sealed class TransferProgressRateTracker
             return _bytesPerSecond;
         }
 
+        // Files skipped, found already copied or moved by renaming count as done, not as transferred.
+        var transferred = update.Current - Math.Min(update.Untransferred, update.Current);
         var now = _now();
         if (!_hasSample)
         {
             _hasSample = true;
             _lastSampleAt = now;
-            _lastSampleBytes = update.Current;
+            _lastSampleBytes = transferred;
             return _bytesPerSecond;
         }
 
-        if (update.Current < _lastSampleBytes)
+        if (transferred < _lastSampleBytes)
         {
             _lastSampleAt = now;
-            _lastSampleBytes = update.Current;
+            _lastSampleBytes = transferred;
             _bytesPerSecond = null;
             return _bytesPerSecond;
         }
 
         var elapsed = (now - _lastSampleAt).TotalSeconds;
-        if (elapsed < 0.25 || update.Current == _lastSampleBytes)
+        if (transferred == _lastSampleBytes)
+        {
+            if (elapsed >= StallSeconds)
+            {
+                // Nothing has moved for a while: the last speed no longer says anything, and the time remaining
+                // it gave never changed. The next bytes are measured from here.
+                _bytesPerSecond = null;
+                _lastSampleAt = now;
+            }
+
+            return _bytesPerSecond;
+        }
+
+        if (elapsed < 0.25)
         {
             return _bytesPerSecond;
         }
 
-        var sample = (update.Current - _lastSampleBytes) / elapsed;
+        var sample = (transferred - _lastSampleBytes) / elapsed;
         _bytesPerSecond = _bytesPerSecond is > 0
             ? (_bytesPerSecond.Value * 0.65) + (sample * 0.35)
             : sample;
         _lastSampleAt = now;
-        _lastSampleBytes = update.Current;
+        _lastSampleBytes = transferred;
         return _bytesPerSecond;
     }
 

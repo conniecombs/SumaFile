@@ -106,6 +106,7 @@ public static class BinaryFrameCodec
         writer.WriteString(update.CurrentItem);
         writer.WriteString(update.Status);
         writer.WriteOptionalString(update.Error);
+        writer.WriteUInt64(update.Untransferred);
         return writer.ToArray();
     }
 
@@ -336,6 +337,7 @@ public static class BinaryFrameCodec
             CurrentItem = reader.ReadString(),
             Status = reader.ReadString(),
             Error = reader.ReadOptionalString(),
+            Untransferred = reader.ReadUInt64(),
         };
     }
 

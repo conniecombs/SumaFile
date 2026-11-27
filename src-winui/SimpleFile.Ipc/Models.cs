@@ -372,6 +372,13 @@ public sealed class ProgressUpdate
 
     [JsonPropertyName("error")]
     public string? Error { get; set; }
+
+    /// <summary>
+    /// Bytes of <see cref="Current"/> that were not transferred: files skipped, found already at the destination,
+    /// or moved by renaming them. They count toward the percentage, not toward the speed.
+    /// </summary>
+    [JsonPropertyName("untransferred")]
+    public ulong Untransferred { get; set; }
 }
 
 public sealed class ActiveFile

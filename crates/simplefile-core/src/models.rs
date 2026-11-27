@@ -147,6 +147,11 @@ pub struct ProgressUpdate {
     pub current_item: String,
     pub status: String, // "running", "finalizing", "completed", "error", "cancelled"
     pub error: Option<String>,
+    /// Bytes of `current` that were not transferred: files skipped, found
+    /// already at the destination, or moved by renaming them. They count
+    /// toward the percentage, not toward the speed.
+    #[serde(default)]
+    pub untransferred: u64,
 }
 
 /// File system change event

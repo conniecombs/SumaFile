@@ -540,6 +540,7 @@ fn transfer_with_policy_blocking(
     let total_bytes = Arc::new(AtomicU64::new(0));
     let total_files = Arc::new(AtomicU64::new(0));
     let completed_files = Arc::new(AtomicU64::new(0));
+    let untransferred = AtomicU64::new(0);
     let progress = ProgressContext {
         emit,
         operation_id: &operation_id,
@@ -552,6 +553,7 @@ fn transfer_with_policy_blocking(
         retry_count: None,
         rate_limit: None,
         write_latency: None,
+        untransferred: Some(&untransferred),
     };
     // The first event precedes every volume probe and destination scan.
     progress.emit_now(0, 0, "Preparing transfer...".to_string(), "running", None);
@@ -665,6 +667,8 @@ fn transfer_with_policy_blocking(
     total_bytes.store(initial_total_bytes, Ordering::Relaxed);
     total_files.store(initial_total_files, Ordering::Relaxed);
     completed_files.store(planned_skipped_files, Ordering::Relaxed);
+    // Skipped while planning: done, and never transferred.
+    untransferred.store(planned_skipped_bytes, Ordering::Relaxed);
     progress.emit_with_total(
         planned_skipped_bytes,
         initial_total_bytes,
@@ -1878,6 +1882,7 @@ mod tests {
             retry_count: None,
             rate_limit: None,
             write_latency: None,
+            untransferred: None,
         };
         let ctx = CopyContext {
             progress: &progress,
@@ -1932,6 +1937,7 @@ mod tests {
             retry_count: None,
             rate_limit: None,
             write_latency: None,
+            untransferred: None,
         };
         let ctx = CopyContext {
             progress: &progress,
@@ -1990,6 +1996,7 @@ mod tests {
             retry_count: None,
             rate_limit: None,
             write_latency: None,
+            untransferred: None,
         };
         let ctx = CopyContext {
             progress: &progress,
@@ -2076,6 +2083,7 @@ mod tests {
             retry_count: None,
             rate_limit: None,
             write_latency: None,
+            untransferred: None,
         };
         let ctx = CopyContext {
             progress: &progress,
@@ -2574,6 +2582,9 @@ mod tests {
             fs::write(source.join(format!("file-{index:03}.txt")), b"tiny").unwrap();
         }
         let tuning_updates = AtomicU64::new(0);
+        let saw_empty_list = AtomicBool::new(false);
+        let listed_after_empty = AtomicU64::new(0);
+        let unnamed_updates = AtomicU64::new(0);
 
         let results = super::transfer_with_policy_blocking(
             "copy",
@@ -2584,9 +2595,22 @@ mod tests {
             dst_root.to_string_lossy().to_string(),
             "op_tuning_flood".to_string(),
             Arc::new(AtomicBool::new(false)),
-            &|_| {},
-            &|_| {
+            &|update| {
+                // Once a file is done there is always one to name.
+                if update.status == "running"
+                    && update.current_files > 0
+                    && update.current_item.is_empty()
+                {
+                    unnamed_updates.fetch_add(1, Ordering::Relaxed);
+                }
+            },
+            &|update| {
                 tuning_updates.fetch_add(1, Ordering::Relaxed);
+                if update.active_files.is_empty() {
+                    saw_empty_list.store(true, Ordering::Relaxed);
+                } else if saw_empty_list.load(Ordering::Relaxed) {
+                    listed_after_empty.fetch_add(1, Ordering::Relaxed);
+                }
             },
             &|| super::tuning::Policy {
                 mode: super::tuning::Mode::Manual,
@@ -2607,6 +2631,12 @@ mod tests {
             sent <= (files / 2) as u64,
             "{sent} tuning updates for {files} files"
         );
+        // Between two files nothing is in flight. An update then named no
+        // file (the window showed "Preparing transfer") and listed no file
+        // (Details lost every row); only the final updates list none.
+        assert_eq!(unnamed_updates.load(Ordering::Relaxed), 0);
+        assert!(saw_empty_list.load(Ordering::Relaxed), "the end is shown");
+        assert_eq!(listed_after_empty.load(Ordering::Relaxed), 0);
 
         let _ = fs::remove_dir_all(&src_root);
         let _ = fs::remove_dir_all(&dst_root);
@@ -3093,6 +3123,7 @@ mod tests {
             retry_count: None,
             rate_limit: None,
             write_latency: None,
+            untransferred: None,
         };
 
         progress.emit_with_total(1, 100, "first".to_string(), "running", None);

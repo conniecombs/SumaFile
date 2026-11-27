@@ -29,11 +29,22 @@ pub(crate) struct ProgressContext<'a> {
     pub(crate) rate_limit: Option<&'a super::resources::RateLimit>,
     /// Where the adaptive scheduler collects write latency, when it is tuning.
     pub(crate) write_latency: Option<&'a sumafile_transfer::tuning::LatencyHistogram>,
+    /// The task's bytes counted as done that were not transferred; see
+    /// `ProgressUpdate::untransferred`.
+    pub(crate) untransferred: Option<&'a AtomicU64>,
 }
 
 impl ProgressContext<'_> {
     pub(crate) fn check_cancelled(&self) -> Result<(), String> {
         check_cancelled(self.cancel)
+    }
+
+    /// `bytes` of the task are done without being transferred: a skipped
+    /// file, one already at the destination, one moved by renaming it.
+    pub(crate) fn not_transferred(&self, bytes: u64) {
+        if let Some(untransferred) = self.untransferred {
+            untransferred.fetch_add(bytes, Ordering::Relaxed);
+        }
     }
 
     /// Call before a destination write of `bytes`; pass the result to
@@ -100,6 +111,9 @@ impl ProgressContext<'_> {
             current_item,
             status: status.to_string(),
             error,
+            untransferred: self
+                .untransferred
+                .map_or(0, |untransferred| untransferred.load(Ordering::Relaxed)),
         });
     }
 
