@@ -113,6 +113,9 @@ pub(crate) struct FileTask {
     /// A targeted retry: a destination that already holds the same file is this
     /// operation's own earlier copy, not a conflict.
     pub retry: bool,
+    /// The destination's folder was created by this transfer, so no other
+    /// item can have the destination's name.
+    pub in_new_folder: bool,
 }
 
 /// A selected directory: walked by the checkers, published as a whole when its
@@ -310,6 +313,7 @@ pub(crate) fn copy_selection(
     let march_state = Mutex::new(MarchState::default());
     let mut initial_dirs = VecDeque::new();
     let mut merged_roots = vec![false; roots.len()];
+    let mut roots_created = vec![false; roots.len()];
     let mut root_errors: Vec<Option<Failure>> = Vec::with_capacity(roots.len());
     for (root_index, root) in roots.iter().enumerate() {
         let mut root_error = None;
@@ -319,6 +323,7 @@ pub(crate) fn copy_selection(
         );
         match prepare_directory(&root.destination, allow_merge) {
             Ok(created) => {
+                roots_created[root_index] = created;
                 merged_roots[root_index] =
                     !created || (root.retry && root.conflict != ConflictAction::CreateOnly);
                 if created {
@@ -365,6 +370,7 @@ pub(crate) fn copy_selection(
     let mut pending_files: VecDeque<FileTask> = files.into_iter().collect();
 
     let merged_roots = &merged_roots;
+    let roots_created = &roots_created;
     let mut changes: Vec<_> = merged_roots
         .iter()
         .map(|merged| merged.then(super::TransferChanges::default))
@@ -409,15 +415,20 @@ pub(crate) fn copy_selection(
                             "Directory nesting exceeds the safe transfer limit",
                         ));
                     }
-                    if depth > 0
-                        && prepare_directory(&dst_dir, conflict != ConflictAction::CreateOnly)?
-                    {
-                        march_state
-                            .lock()
-                            .expect("march state lock poisoned")
-                            .created_dirs
-                            .push((depth, root_index, src_dir.clone(), dst_dir.clone()));
-                    }
+                    let created_here = if depth > 0 {
+                        let created =
+                            prepare_directory(&dst_dir, conflict != ConflictAction::CreateOnly)?;
+                        if created {
+                            march_state
+                                .lock()
+                                .expect("march state lock poisoned")
+                                .created_dirs
+                                .push((depth, root_index, src_dir.clone(), dst_dir.clone()));
+                        }
+                        created
+                    } else {
+                        roots_created[root_index]
+                    };
                     // Only a move looks at these again, to delete each source
                     // directory it emptied. A copy would pay several requests
                     // per directory, and keep one record per directory for the
@@ -488,6 +499,7 @@ pub(crate) fn copy_selection(
                                 merge_root: merged_roots[root_index].then_some(root_index),
                                 delete_source,
                                 retry: root.retry && root.conflict == ConflictAction::Error,
+                                in_new_folder: created_here,
                             };
                             if task_tx.send(Ok(task)).is_err() {
                                 return Ok(());
@@ -789,6 +801,7 @@ fn copy_task(
             context,
             copied,
             task.conflict,
+            task.in_new_folder,
         )?
     };
     if task.delete_source {
@@ -1590,6 +1603,7 @@ mod tests {
             merge_root: None,
             delete_source: false,
             retry: false,
+            in_new_folder: false,
         }
     }
 
@@ -1742,6 +1756,7 @@ mod tests {
                     merge_root: None,
                     delete_source: false,
                     retry: false,
+                    in_new_folder: false,
                 }))
             };
             let threads = Mutex::new(std::collections::HashSet::new());
@@ -1837,6 +1852,7 @@ mod tests {
                 merge_root: None,
                 delete_source: false,
                 retry: false,
+                in_new_folder: false,
             }))
         };
         let copy = |task: &FileTask, context: &CopyContext<'_>, _: &mut u64| {
@@ -1926,6 +1942,7 @@ mod tests {
                 merge_root: None,
                 delete_source: false,
                 retry: false,
+                in_new_folder: false,
             }))
         };
         let mut count = 0;
@@ -1992,6 +2009,7 @@ mod tests {
                 merge_root: None,
                 delete_source: false,
                 retry: false,
+                in_new_folder: false,
             })
             .collect();
         let cancel = Arc::new(AtomicBool::new(false));
@@ -2080,6 +2098,7 @@ mod tests {
                     merge_root: None,
                     delete_source: false,
                     retry: false,
+                    in_new_folder: false,
                 }
             })
             .collect();
@@ -2196,6 +2215,7 @@ mod tests {
                         merge_root: None,
                         delete_source: false,
                         retry: false,
+                        in_new_folder: false,
                     }
                 })
                 .collect();
@@ -2328,6 +2348,7 @@ mod tests {
                     merge_root: None,
                     delete_source: false,
                     retry: false,
+                    in_new_folder: false,
                 }
             })
             .collect();
@@ -2536,6 +2557,7 @@ mod tests {
                     merge_root: None,
                     delete_source: false,
                     retry: false,
+                    in_new_folder: false,
                 }
             })
             .collect();
@@ -2644,6 +2666,7 @@ mod tests {
                         merge_root: None,
                         delete_source: false,
                         retry: false,
+                        in_new_folder: false,
                     }
                 })
                 .collect()
@@ -2729,6 +2752,7 @@ mod tests {
                     merge_root: None,
                     delete_source: false,
                     retry: false,
+                    in_new_folder: false,
                 }
             })
             .collect();
@@ -2842,6 +2866,7 @@ mod tests {
             merge_root: None,
             delete_source: true,
             retry: true,
+            in_new_folder: false,
         };
 
         // Same size, different bytes: not the copy.
@@ -2918,6 +2943,7 @@ mod tests {
             &ctx,
             &mut completed_bytes,
             ConflictAction::Error,
+            false,
         )
         .expect("overlapped ring-buffer copy should succeed");
         let FileOutcome::Copied { version, .. } = outcome else {
@@ -2994,6 +3020,7 @@ mod tests {
                 merge_root: None,
                 delete_source: false,
                 retry: false,
+                in_new_folder: false,
             },
             FileTask {
                 source: root.join("copied.bin"),
@@ -3006,6 +3033,7 @@ mod tests {
                 merge_root: None,
                 delete_source: false,
                 retry: false,
+                in_new_folder: false,
             },
         ];
 

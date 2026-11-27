@@ -396,6 +396,12 @@ fn open_staged(staged: &Path, overwrite: bool, hidden: bool) -> std::io::Result<
         use windows_sys::Win32::Storage::FileSystem::{
             FILE_ATTRIBUTE_HIDDEN, FILE_FLAG_SEQUENTIAL_SCAN,
         };
+        const GENERIC_WRITE: u32 = 0x4000_0000;
+        const DELETE: u32 = 0x0001_0000;
+        // Delete access lets the partial file be given its final name through
+        // this handle; see `staging::promote_leased_with_policy`. Other
+        // handles to it share delete access, as `std` opens files.
+        options.access_mode(GENERIC_WRITE | DELETE);
         options.custom_flags(FILE_FLAG_SEQUENTIAL_SCAN);
         if hidden {
             options.attributes(FILE_ATTRIBUTE_HIDDEN);
@@ -1855,6 +1861,75 @@ mod tests {
         assert_eq!(fs::read(&stage).unwrap(), b"moved");
         assert!(!destination.exists());
         assert_eq!(record_count(&root), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A written partial file gets its final name through the handle that
+    /// wrote it; a handle that cannot be renamed falls back to the rename by
+    /// path, and a name that is taken is a conflict either way.
+    #[test]
+    fn a_partial_file_is_renamed_through_its_handle_or_else_by_path() {
+        use std::sync::atomic::AtomicBool;
+        let root = root();
+        let records = FolderRecords::new("pass");
+        fn promote(
+            lease: &mut StagingLease,
+            stage: &Path,
+            destination: &Path,
+            handle: Option<&File>,
+        ) -> Result<(), crate::reliability::Failure> {
+            crate::staging::promote_leased_with_policy(
+                stage,
+                destination,
+                false,
+                &AtomicBool::new(false),
+                &crate::policy::Policy::default(),
+                lease,
+                handle,
+                |_, _| {},
+            )
+        }
+
+        // Through the handle the lease created.
+        let destination = root.join("first");
+        let stage = crate::staging::staging_path_for(&destination, "pass").unwrap();
+        let mut lease = records.begin("source", &destination, &stage, None).unwrap();
+        let mut written = lease.take_staged_file().unwrap();
+        written.write_all(b"first").unwrap();
+        promote(&mut lease, &stage, &destination, Some(&written)).unwrap();
+        drop(written);
+        lease.finish().unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), b"first");
+        assert!(!stage.exists());
+
+        // Through a handle opened without delete access, as a later attempt
+        // opens the partial file: by path.
+        let destination = root.join("second");
+        let stage = crate::staging::staging_path_for(&destination, "pass").unwrap();
+        let mut lease = records.begin("source", &destination, &stage, None).unwrap();
+        drop(lease.take_staged_file());
+        let mut reopened = OpenOptions::new().write(true).open(&stage).unwrap();
+        reopened.write_all(b"second").unwrap();
+        promote(&mut lease, &stage, &destination, Some(&reopened)).unwrap();
+        drop(reopened);
+        lease.finish().unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), b"second");
+        assert!(!stage.exists());
+
+        // A name that is taken.
+        let destination = root.join("taken");
+        fs::write(&destination, b"someone else's").unwrap();
+        let stage = crate::staging::staging_path_for(&destination, "pass").unwrap();
+        let mut lease = records.begin("source", &destination, &stage, None).unwrap();
+        let mut written = lease.take_staged_file().unwrap();
+        written.write_all(b"new").unwrap();
+        let error = promote(&mut lease, &stage, &destination, Some(&written)).unwrap_err();
+        drop(written);
+        assert!(error.is_conflict(), "{error}");
+        assert_eq!(fs::read(&destination).unwrap(), b"someone else's");
+        assert_eq!(fs::read(&stage).unwrap(), b"new");
+        lease.abort().unwrap();
+        drop(records);
         fs::remove_dir_all(root).unwrap();
     }
 

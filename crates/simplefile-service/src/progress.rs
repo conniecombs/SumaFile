@@ -741,6 +741,8 @@ fn transfer_with_policy_blocking(
                 merge_root: None,
                 delete_source: is_move,
                 retry,
+                // The selected destination folder was there before.
+                in_new_folder: false,
             });
         }
     }

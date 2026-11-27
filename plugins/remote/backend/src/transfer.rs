@@ -1033,6 +1033,7 @@ fn transfer_file(
                     progress.cancel,
                     &policy_snapshot,
                     &mut lease,
+                    None,
                     |delay, reason| {
                         progress.limiter.retrying(delay, reason);
                         progress.send("running");

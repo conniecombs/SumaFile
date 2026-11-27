@@ -288,6 +288,30 @@ pub fn capture_source_version_from_open_file(
     }
 }
 
+/// The version of a source that is copied, not moved: its size and times, but
+/// not its file ID, which only the deletion of a moved source compares.
+pub fn source_version_from_metadata(
+    meta: &fs::Metadata,
+    content_hash: Option<[u8; 32]>,
+) -> SourceVersion {
+    #[cfg(windows)]
+    use std::os::windows::fs::MetadataExt;
+
+    SourceVersion {
+        is_symlink: meta.file_type().is_symlink(),
+        is_dir: meta.is_dir(),
+        len: meta.len(),
+        modified: modified_timestamp(meta),
+        #[cfg(windows)]
+        creation_time: meta.creation_time(),
+        #[cfg(windows)]
+        last_write_time: meta.last_write_time(),
+        #[cfg(windows)]
+        file_id: None,
+        content_hash,
+    }
+}
+
 pub fn capture_source_version_for_path(path: &Path) -> Result<SourceVersion, String> {
     crate::ops::record(crate::ops::Op::Stat, path);
     let meta = fs::symlink_metadata(path)
@@ -962,6 +986,15 @@ fn promote_attempt(
     promote_attempt_leased(staged_path, final_path, replace_existing, None)
 }
 
+/// Gives a fully written partial file its final name.
+///
+/// `handle` is the partial file's own open handle, when the caller still has
+/// it. A new name is then given through it: the file renamed is the one that
+/// was written, which the rename by path proves only by opening the partial
+/// file again to compare its ID first. Where the handle cannot be renamed (no
+/// delete access, a file system or a version of Windows that refuses it), the
+/// rename by path is used.
+#[allow(clippy::too_many_arguments)]
 pub fn promote_leased_with_policy(
     staged: &Path,
     destination: &Path,
@@ -969,14 +1002,39 @@ pub fn promote_leased_with_policy(
     cancel: &std::sync::atomic::AtomicBool,
     policy: &crate::policy::Policy,
     lease: &mut crate::journal::StagingLease,
+    handle: Option<&fs::File>,
     mut waiting: impl FnMut(std::time::Duration, &str),
 ) -> Result<(), Failure> {
     // Every byte is already written: a file held open by a scanner for a
     // while is waited out with the whole retry budget, not three attempts.
     let mut retry = Retry::from_policy(policy).patient_with_busy();
+    // A Replace moves the existing file aside by path first; only a new name
+    // is given through the handle.
+    let mut by_handle = handle.filter(|_| !replace);
     loop {
         crate::reliability::wait(std::time::Duration::ZERO, cancel)
             .map_err(|_| Failure::cancelled())?;
+        if let Some(file) = by_handle {
+            match rename_handle_exclusive(file, destination) {
+                Ok(()) => return Ok(()),
+                Err(error) if is_already_exists_error(&error) => {
+                    return Err(conflict_for_existing_destination(destination).into());
+                }
+                Err(error) => {
+                    let failure = Failure::io("Finalize destination", destination, error);
+                    if failure.kind == crate::reliability::FailureKind::Busy {
+                        let reason = failure.to_string();
+                        let delay = retry.failed_with(failure)?;
+                        waiting(delay, &reason);
+                        crate::reliability::wait(delay, cancel)
+                            .map_err(|_| Failure::cancelled())?;
+                        continue;
+                    }
+                    log::debug!("Renaming by path instead: {failure}");
+                    by_handle = None;
+                }
+            }
+        }
         if !lease.owns_staged() {
             return Err("Transfer staging identity changed; artifact retained".into());
         }
@@ -993,6 +1051,57 @@ pub fn promote_leased_with_policy(
             }
         }
     }
+}
+
+/// Gives the file open as `file` the name `destination`, in the same folder,
+/// through the handle. Refuses a name that exists, as [`rename_exclusive`]
+/// does. The handle must have been opened with delete access.
+#[cfg(windows)]
+pub fn rename_handle_exclusive(file: &fs::File, destination: &Path) -> std::io::Result<()> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FileRenameInfo, SetFileInformationByHandle, FILE_RENAME_INFO,
+    };
+
+    crate::ops::record(crate::ops::Op::Rename, destination);
+    let absolute = std::path::absolute(destination)?;
+    // Nul-terminated, and verbatim when long, as for `MoveFileExW`.
+    let name = crate::path_conflict::wide_path(&absolute);
+    let name_units = name.len() - 1;
+    let header = std::mem::offset_of!(FILE_RENAME_INFO, FileName);
+    let size = (header + name.len() * 2).max(std::mem::size_of::<FILE_RENAME_INFO>());
+    let mut buffer = vec![0u64; size.div_ceil(8)];
+    let info = buffer.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+    // SAFETY: `buffer` is zeroed, aligned for the structure and large enough
+    // for its header and the name; a zero `Flags` leaves an existing name
+    // alone, and a null `RootDirectory` makes the name a full path.
+    unsafe {
+        (*info).FileNameLength = (name_units * 2) as u32;
+        std::ptr::copy_nonoverlapping(
+            name.as_ptr(),
+            std::ptr::addr_of_mut!((*info).FileName).cast::<u16>(),
+            name_units,
+        );
+    }
+    let ok = unsafe {
+        SetFileInformationByHandle(
+            file.as_raw_handle() as _,
+            FileRenameInfo,
+            info.cast(),
+            size as u32,
+        )
+    };
+    if ok != 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+/// Elsewhere a file is renamed by path.
+#[cfg(not(windows))]
+pub fn rename_handle_exclusive(_file: &fs::File, _destination: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
 }
 
 fn promote_attempt_leased(

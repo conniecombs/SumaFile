@@ -8,8 +8,8 @@ use crate::transfer_reliability::{Failure, FailureKind, Retry};
 use crate::transfer_staging::{
     capture_source_version_for_path, capture_source_version_from_open_file, cleanup_owned_path,
     conflict_for_existing_destination, hash_file_contents, preallocate_file,
-    promote_leased_with_policy, staging_path_for, verify_source_unchanged, ContentHasher,
-    SourceVersion,
+    promote_leased_with_policy, source_version_from_metadata, staging_path_for,
+    verify_source_unchanged, ContentHasher, SourceVersion,
 };
 use simplefile_core::path_conflict::path_exists_no_follow;
 use simplefile_core::utils::recreate_symlink;
@@ -108,6 +108,7 @@ pub(crate) fn copy_file_attempt(
         src,
         dst,
         None,
+        None,
         partial,
         ctx,
         completed_bytes,
@@ -115,7 +116,7 @@ pub(crate) fn copy_file_attempt(
         file_len,
         true,
     )
-    .map(|(copied, _)| copied)
+    .map(|(copied, _, _)| copied)
 }
 
 /// Faults a test can plant in a copy attempt.
@@ -162,28 +163,38 @@ pub(crate) mod test_faults {
 /// `staged_file` is the destination handle the ownership lease created for this
 /// operation (first attempt). Retries pass `None` and say with `partial` what
 /// to do with the bytes the earlier attempt left.
+/// `source` is the source already opened for the first attempt, with its
+/// metadata; later attempts open it again. On success, returns the bytes
+/// copied, the source's version and the destination still open.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn copy_file_attempt_versioned(
     src: &Path,
     dst: &Path,
     staged_file: Option<fs::File>,
+    source: Option<(fs::File, fs::Metadata)>,
     partial: Partial,
     ctx: &CopyContext,
     completed_bytes: u64,
     buffer_size: usize,
     file_len: u64,
     must_sync: bool,
-) -> Result<(u64, SourceVersion), Failure> {
+) -> Result<(u64, SourceVersion, fs::File), Failure> {
     #[cfg(windows)]
     use std::os::windows::fs::MetadataExt;
 
     let buffer_size = buffer_size.min(usize::try_from(file_len.max(1)).unwrap_or(usize::MAX));
-    let mut src_file =
-        open_source_sequential(src).map_err(|e| Failure::io("Open source", src, e))?;
-    count(Op::Query, src);
-    let source_initial = src_file
-        .metadata()
-        .map_err(|e| Failure::io("Inspect opened source", src, e))?;
+    let (mut src_file, source_initial) = match source {
+        Some(opened) => opened,
+        None => {
+            let file =
+                open_source_sequential(src).map_err(|e| Failure::io("Open source", src, e))?;
+            count(Op::Query, src);
+            let meta = file
+                .metadata()
+                .map_err(|e| Failure::io("Inspect opened source", src, e))?;
+            (file, meta)
+        }
+    };
     let source_modified = source_initial.modified().ok();
     #[cfg(windows)]
     let source_times = (
@@ -392,9 +403,13 @@ pub(crate) fn copy_file_attempt_versioned(
                 Failure::new(format!("Hash source [{}]: {e}", src.display()), false)
             })?)
         };
-    // The source's file ID, read through the handle.
-    count(Op::Query, src);
-    let version = capture_source_version_from_open_file(&src_file, &source_after, content_hash);
+    // Only the deletion of a moved source compares the file ID.
+    let version = if ctx.progress.operation_type == "move" {
+        count(Op::Query, src);
+        capture_source_version_from_open_file(&src_file, &source_after, content_hash)
+    } else {
+        source_version_from_metadata(&source_after, content_hash)
+    };
     ctx.progress.check_cancelled()?;
     // The checksum is of what the file holds once every write has reached
     // the drive, so Checksum flushes whatever the flush setting says: a
@@ -452,9 +467,8 @@ pub(crate) fn copy_file_attempt_versioned(
             dst.display()
         );
     }
-    drop(dst_file);
     ctx.progress.check_cancelled()?;
-    Ok((copied, version))
+    Ok((copied, version, dst_file))
 }
 
 /// Overlapped ring-buffered pipeline (`rclone` `AsyncReader` style): a dedicated
@@ -1037,6 +1051,7 @@ pub(crate) fn copy_file_with_progress(
         } else {
             ConflictAction::Error
         },
+        false,
     )
     .map(|_| ())
     .map_err(|error| error.message)
@@ -1093,30 +1108,79 @@ fn resolve_file_conflict(
     }
 }
 
+/// Waits before the next attempt at a file, or returns the failure to report.
+fn wait_to_retry(ctx: &CopyContext, retry: &mut Retry, error: Failure) -> Result<(), Failure> {
+    let reason = error.to_string();
+    let transport_retry = error.kind == FailureKind::Retryable;
+    let delay = retry.failed_with(error)?;
+    // A file held open elsewhere says nothing about the transport; only
+    // transient I/O feeds the tuner.
+    if transport_retry {
+        if let Some(retries) = ctx.progress.retry_count {
+            retries.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    if let Some(limiter) = ctx.progress.rate_limit {
+        limiter.retrying(delay, &reason);
+    }
+    crate::transfer_reliability::wait(delay, ctx.progress.cancel).map_err(|_| Failure::cancelled())
+}
+
+/// Opens the source and reads its size and times, trying again as an attempt
+/// at copying it would. The first attempt copies through this handle.
+fn open_source(
+    src: &Path,
+    ctx: &CopyContext,
+    retry: &mut Retry,
+) -> Result<(fs::File, fs::Metadata), Failure> {
+    loop {
+        if ctx.progress.check_cancelled().is_err() {
+            return Err(Failure::cancelled());
+        }
+        let opened = open_source_sequential(src)
+            .map_err(|e| Failure::io("Open source", src, e))
+            .and_then(|file| {
+                count(Op::Query, src);
+                let meta = file
+                    .metadata()
+                    .map_err(|e| Failure::io("Inspect opened source", src, e))?;
+                Ok((file, meta))
+            });
+        match opened {
+            Ok(opened) => return Ok(opened),
+            Err(error) if error.is_cancelled() => return Err(error),
+            Err(error) => wait_to_retry(ctx, retry, error)?,
+        }
+    }
+}
+
+/// `in_new_folder` says that this transfer created the destination's folder,
+/// so that nothing else can have the destination's name yet.
 pub(crate) fn copy_file_with_progress_versioned(
     src: &Path,
     planned_dst: &Path,
     ctx: &CopyContext,
     completed_bytes: &mut u64,
     conflict: ConflictAction,
+    in_new_folder: bool,
 ) -> Result<FileOutcome, Failure> {
-    count(Op::Stat, src);
-    let source_metadata =
-        fs::symlink_metadata(src).map_err(|error| Failure::io("Inspect source", src, error))?;
-    let file_len = source_metadata.len();
-    let source_modified = source_metadata.modified().ok();
-    let known = ctx.progress.total_bytes.load(Ordering::Relaxed);
-    let needed = (*completed_bytes).saturating_add(file_len);
-    if needed > known {
-        ctx.progress.total_bytes.store(needed, Ordering::Relaxed);
-    }
-
+    // Settled first: a skipped file costs its source nothing.
     let Some((dst, replace_existing)) = resolve_file_conflict(planned_dst, conflict)? else {
         return Ok(FileOutcome::Skipped);
     };
     let dst = dst.as_path();
 
-    let exists = path_exists_no_follow(dst);
+    // In a folder this transfer created, no other item has the name. The
+    // rename that gives the file its name refuses one that appeared since
+    // all the same. Writing directly has no such rename, so it asks.
+    let exists = if in_new_folder
+        && !ctx.policy.inplace
+        && matches!(conflict, ConflictAction::Error | ConflictAction::CreateOnly)
+    {
+        false
+    } else {
+        path_exists_no_follow(dst)
+    };
     // Writing directly is for new files. A file that replaces an existing one
     // is always copied under a temporary name first: written directly, the
     // existing file would be emptied before the first byte was copied, and a
@@ -1136,6 +1200,19 @@ pub(crate) fn copy_file_with_progress_versioned(
     } else {
         staging_path_for(dst, ctx.operation_id)?
     };
+    // The length and times the copy must reproduce come from the handle the
+    // first attempt reads through, not from asking the path beforehand.
+    let mut retry = Retry::from_policy(&ctx.policy);
+    let (source_file, source_metadata) = open_source(src, ctx, &mut retry)?;
+    let file_len = source_metadata.len();
+    let source_modified = source_metadata.modified().ok();
+    let known = ctx.progress.total_bytes.load(Ordering::Relaxed);
+    let needed = (*completed_bytes).saturating_add(file_len);
+    if needed > known {
+        ctx.progress.total_bytes.store(needed, Ordering::Relaxed);
+    }
+    let mut opened_source = Some((source_file, source_metadata));
+
     // A move deletes this file's source once the file has its final name. Its
     // record line says so, with the length of the complete file, so recovery
     // never deletes what may by then be the only copy; and its bytes are
@@ -1160,7 +1237,6 @@ pub(crate) fn copy_file_with_progress_versioned(
         )?
     });
     let must_sync = ctx.policy.flush_on_close || moving;
-    let mut retry = Retry::from_policy(&ctx.policy);
     // Set by a failure that leaves the partial file's bytes in doubt, and
     // kept for the rest of this file's attempts: each of them writes the
     // file again from its first byte. An attempt can fail before it has
@@ -1197,6 +1273,7 @@ pub(crate) fn copy_file_with_progress_versioned(
             src,
             &staged_path,
             staged_file,
+            opened_source.take(),
             partial,
             ctx,
             *completed_bytes,
@@ -1204,41 +1281,28 @@ pub(crate) fn copy_file_with_progress_versioned(
             file_len,
             must_sync,
         ) {
-            Ok((written, version)) => break Ok((written, version)),
+            Ok(copied) => break Ok(copied),
             Err(error) if error.is_cancelled() => break Err(error),
             Err(error) => {
-                let reason = error.to_string();
-                let transport_retry = error.kind == FailureKind::Retryable;
                 distrusted |= error.restart;
-                match retry.failed_with(error) {
-                    Err(error) => break Err(error),
-                    Ok(delay) => {
-                        // A file held open elsewhere says nothing about the
-                        // transport; only transient I/O feeds the tuner.
-                        if transport_retry {
-                            if let Some(retries) = ctx.progress.retry_count {
-                                retries.fetch_add(1, Ordering::Relaxed);
-                            }
-                        }
-                        if let Some(limiter) = ctx.progress.rate_limit {
-                            limiter.retrying(delay, &reason);
-                        }
-                        if crate::transfer_reliability::wait(delay, ctx.progress.cancel).is_err() {
-                            break Err(Failure::cancelled());
-                        }
-                    }
+                if let Err(error) = wait_to_retry(ctx, &mut retry, error) {
+                    break Err(error);
                 }
             }
         }
     };
 
     match copy_result {
-        Ok((written, version)) => {
+        Ok((written, version, written_file)) => {
+            // Kept open until the file has its name: it is renamed through
+            // this handle. Closed before anything removes the partial file.
+            let mut written_file = Some(written_file);
             ctx.progress.finalizing(
                 completed_bytes.saturating_add(written),
                 dst.to_string_lossy().to_string(),
             );
             if ctx.progress.check_cancelled().is_err() {
+                drop(written_file.take());
                 let cleanup = lease.take().map_or(Ok(()), |owner| owner.abort());
                 return Err(Failure::cancelled().after_cleanup(cleanup));
             }
@@ -1250,12 +1314,14 @@ pub(crate) fn copy_file_with_progress_versioned(
                     ctx.progress.cancel,
                     &ctx.policy,
                     lease.as_mut().expect("staged copy has an ownership lease"),
+                    written_file.as_ref(),
                     |delay, reason| {
                         if let Some(limiter) = ctx.progress.rate_limit {
                             limiter.retrying(delay, reason);
                         }
                     },
                 ) {
+                    drop(written_file.take());
                     // The clean-up's own failure used to be dropped here, so
                     // the report did not say a partial file was left behind.
                     let cleanup = lease.take().map_or(Ok(()), |owner| owner.abort());
@@ -1271,6 +1337,7 @@ pub(crate) fn copy_file_with_progress_versioned(
                     .after_cleanup(cleanup));
                 }
             }
+            drop(written_file);
             if let Some(owner) = lease.take() {
                 // `finish` fails only for a file written under its final name
                 // whose record could be neither removed nor marked complete.
@@ -1364,6 +1431,7 @@ pub(crate) fn copy_symlink_with_progress(
         ctx.progress.cancel,
         &ctx.policy,
         &mut lease,
+        None,
         |delay, reason| {
             if let Some(limiter) = ctx.progress.rate_limit {
                 limiter.retrying(delay, reason);
