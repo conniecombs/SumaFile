@@ -372,8 +372,11 @@ pub fn unique_backup_path(final_path: &Path) -> Result<PathBuf, String> {
         .to_string_lossy();
     let process_id = std::process::id();
     for index in 0..10_000u32 {
-        let candidate = parent.join(format!(
-            ".{file_name}.{process_id}.{index}.sumafile-replace-backup"
+        let candidate = parent.join(fitted_name(
+            ".",
+            &file_name,
+            &format!(".{process_id}.{index}.sumafile-replace-backup"),
+            0,
         ));
         if !path_exists_no_follow(&candidate) {
             return Ok(candidate);
@@ -1030,7 +1033,49 @@ fn staging_path_with_salt(final_path: &Path, salt: Option<&str>) -> Result<PathB
         None => fnv1a_64(&[path_str.as_bytes()]),
     };
 
-    Ok(parent.join(format!(".{file_name}.{key:016x}.sumafile-partial")))
+    // Room is kept for the `.state` that a file's own record adds.
+    Ok(parent.join(fitted_name(
+        ".",
+        &file_name,
+        &format!(".{key:016x}.sumafile-partial"),
+        ".state".len(),
+    )))
+}
+
+/// The longest file name NTFS, FAT, exFAT and the usual Linux file systems
+/// take: 255 UTF-16 units on Windows, 255 bytes elsewhere.
+const NAME_LIMIT: usize = 255;
+
+/// The length of a file name in the units its file system counts.
+pub(crate) fn name_units(name: &str) -> usize {
+    if cfg!(windows) {
+        name.encode_utf16().count()
+    } else {
+        name.len()
+    }
+}
+
+/// A temporary name for the file named `name`: `before`, the name and `after`.
+/// When that would leave fewer than `spare` units of a file name, the name is
+/// cut at its end and marked with `~`. What makes the temporary name unique
+/// is in `after`, which is never cut.
+fn fitted_name(before: &str, name: &str, after: &str, spare: usize) -> String {
+    let room = NAME_LIMIT.saturating_sub(spare + name_units(before) + name_units(after));
+    if name_units(name) <= room {
+        return format!("{before}{name}{after}");
+    }
+    let limit = room.saturating_sub(1);
+    let mut cut = String::new();
+    let mut used = 0;
+    for character in name.chars() {
+        let width = name_units(character.encode_utf8(&mut [0; 4]));
+        if used + width > limit {
+            break;
+        }
+        cut.push(character);
+        used += width;
+    }
+    format!("{before}{cut}~{after}")
 }
 
 #[cfg(test)]
@@ -1265,8 +1310,11 @@ fn move_existing_to_backup_leased(
     }
     let process_id = std::process::id();
     for index in 0..10_000u32 {
-        let candidate = parent.join(format!(
-            ".{file_name}.{process_id}.{index}.sumafile-replace-backup"
+        let candidate = parent.join(fitted_name(
+            ".",
+            &file_name,
+            &format!(".{process_id}.{index}.sumafile-replace-backup"),
+            0,
         ));
         if path_exists_no_follow(&candidate) {
             continue;
@@ -1416,10 +1464,11 @@ mod tests {
     use super::{
         capture_source_version_for_path, capture_source_version_for_path_hashed,
         delete_verified_source, delete_verified_source_tree, existing_file_matches_source,
-        promote_staged_path, remove_file_or_link, resumable_staging_path_for, TreeCopyManifest,
+        promote_staged_path, remove_file_or_link, resumable_staging_path_for, staging_path_for,
+        unique_backup_path, TreeCopyManifest,
     };
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -1759,6 +1808,73 @@ mod tests {
                 root.join("a").join("other").as_path(),
             ]
         );
+    }
+
+    /// The length of a path's file name in the units its file system counts.
+    fn name_length(path: &Path) -> usize {
+        super::name_units(&path.file_name().unwrap().to_string_lossy())
+    }
+
+    /// A partial file's name is the file's own with 35 characters around it,
+    /// and its own record's 41: a name of more than about 214 characters
+    /// could not be copied, nor replaced, nor written directly.
+    #[test]
+    fn the_temporary_names_of_a_file_with_a_long_name_fit_in_a_name() {
+        let root = unique_temp_dir("long_name");
+        // 255 units on Windows; on Linux, 255 bytes in the second name.
+        for name in ["n".repeat(251) + ".txt", "é".repeat(125) + ".txt"] {
+            let destination = root.join(&name);
+            let partial = staging_path_for(&destination, "op").unwrap();
+            let mut record = partial.clone().into_os_string();
+            record.push(".state");
+            let record = PathBuf::from(record);
+            let backup = unique_backup_path(&destination).unwrap();
+
+            assert!(name_length(&record) <= 255, "{}", record.display());
+            assert!(name_length(&backup) <= 255, "{}", backup.display());
+            let partial_name = partial.file_name().unwrap().to_string_lossy().into_owned();
+            assert!(partial_name.starts_with('.') && partial_name.ends_with(".sumafile-partial"));
+            assert!(backup
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .ends_with(".sumafile-replace-backup"));
+            for path in [&destination, &partial, &record, &backup] {
+                fs::write(path, b"x").unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            }
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn two_long_names_that_begin_alike_get_partial_files_of_their_own() {
+        let root = unique_temp_dir("long_alike");
+        let one = staging_path_for(&root.join("b".repeat(240) + "-one.txt"), "op").unwrap();
+        let two = staging_path_for(&root.join("b".repeat(240) + "-two.txt"), "op").unwrap();
+        assert_ne!(one, two);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_short_name_keeps_the_temporary_names_it_had() {
+        let root = unique_temp_dir("short_name");
+        let partial = staging_path_for(&root.join("photo.jpg"), "op").unwrap();
+        let name = partial.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(name.starts_with(".photo.jpg."), "{name}");
+        assert_eq!(
+            name.len(),
+            ".photo.jpg.".len() + 16 + ".sumafile-partial".len()
+        );
+        let backup = unique_backup_path(&root.join("photo.jpg")).unwrap();
+        let name = backup.file_name().unwrap().to_string_lossy().into_owned();
+        assert_eq!(
+            name,
+            format!(
+                ".photo.jpg.{}.0.sumafile-replace-backup",
+                std::process::id()
+            )
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

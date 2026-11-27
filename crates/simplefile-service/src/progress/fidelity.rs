@@ -131,3 +131,40 @@ fn a_copied_or_moved_download_keeps_its_mark_and_its_other_streams() {
         let _ = fs::remove_dir_all(&root);
     }
 }
+
+/// A file whose name is as long as a name can be is copied, and replaced.
+/// The partial file's name added 35 characters to the file's own, more than
+/// a name can hold, so any name longer than about 220 characters failed.
+#[test]
+fn a_file_with_a_name_as_long_as_a_name_can_be_is_copied_and_replaced() {
+    let root = unique_root("long_name");
+    let name = "n".repeat(251) + ".txt";
+    let source = root.join("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join(&name), b"first").unwrap();
+    let destination = root.join("destination");
+    fs::create_dir_all(&destination).unwrap();
+
+    copy("copy", &source.join(&name), &destination);
+    assert_eq!(fs::read(destination.join(&name)).unwrap(), b"first");
+
+    fs::write(source.join(&name), b"second").unwrap();
+    transfer_with_progress_blocking(
+        "copy",
+        vec![source.join(&name).to_string_lossy().into_owned()],
+        destination.to_string_lossy().into_owned(),
+        super::generate_transfer_operation_id(),
+        "replace".to_string(),
+        Arc::new(AtomicBool::new(false)),
+        &|_| {},
+    )
+    .unwrap_or_else(|error| panic!("the Replace succeeds: {}", error.message));
+
+    assert_eq!(fs::read(destination.join(&name)).unwrap(), b"second");
+    let left: Vec<String> = fs::read_dir(&destination)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(left, vec![name], "only the file is left");
+    let _ = fs::remove_dir_all(&root);
+}
