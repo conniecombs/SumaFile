@@ -664,6 +664,13 @@ pub struct Controller {
     /// Separate bouts of I/O retries so far; each doubles the hold after the
     /// next, so a provider that throttles is not pushed again right away.
     retry_bouts: u32,
+    /// The previous window had I/O retries: the next one with retries is the
+    /// same bout.
+    retrying: bool,
+    /// The lane's setting before the first retry of the task lowered it. A
+    /// setting learned below it was forced by the retries, not chosen for
+    /// the route, and is not offered to be remembered.
+    before_retries: Option<usize>,
 }
 
 impl Controller {
@@ -812,6 +819,8 @@ impl Controller {
             grew: false,
             profile,
             retry_bouts: 0,
+            retrying: false,
+            before_retries: None,
         }
     }
 
@@ -889,8 +898,17 @@ impl Controller {
             self.explanation = "Custom limits (memory and provider limits still apply)";
             return;
         }
+        let same_bout = std::mem::replace(&mut self.retrying, retries > 0);
         if retries > 0 {
-            self.concurrency = (self.concurrency / 2).max(1);
+            // A bout halves the lane once. A later window of the same bout
+            // halves it again only when more than one retry happened in it:
+            // then several files are failing and the transport is struggling.
+            // One file retried again and again is a problem of that file, and
+            // it used to take a lane of 32 down to 2 in four seconds.
+            if !same_bout || retries > 1 {
+                self.before_retries.get_or_insert(self.concurrency);
+                self.concurrency = (self.concurrency / 2).max(1);
+            }
             self.best_concurrency = self.concurrency;
             self.best_rate = 0.0;
             self.estimator.reset();
@@ -1127,8 +1145,16 @@ impl Controller {
         }
     }
 
+    /// The setting worth remembering for the route, if this lane learned
+    /// one. A setting below the one retries pulled the lane down from is not:
+    /// remembered, it started every later transfer on the route that low.
     pub fn learned_concurrency(&self) -> Option<usize> {
-        (self.learned && self.policy.mode != Mode::Manual).then_some(self.best_concurrency)
+        (self.learned
+            && self.policy.mode != Mode::Manual
+            && self
+                .before_retries
+                .is_none_or(|before| self.best_concurrency >= before))
+        .then_some(self.best_concurrency)
     }
 
     /// Trusted readings acted on so far.

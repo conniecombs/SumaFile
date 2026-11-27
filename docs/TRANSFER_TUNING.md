@@ -719,9 +719,11 @@ removable drive or optical disc at either end) the small-file lane keeps the
 starting points in the table above and tests fewer files after any
 unsuccessful step up.
 
-**An I/O retry halves the lane at once**, in every window that sees one, so a
-provider that starts throttling brings it down within seconds. The setting is
-then held for four readings; each later bout of retries in the same transfer
+**An I/O retry halves the lane at once.** Retries in consecutive windows are
+one bout. A later window of the bout halves the lane again only when it saw
+more than one retry, so a provider that starts throttling many files brings it
+down within seconds, while one file retried again and again halves it once.
+The setting is then held for four readings; each later bout of retries in the same transfer
 doubles that hold (8, 16, up to 64 readings), so a throttling provider is not
 pushed again straight away. This applies to both lanes. A busy file (a sharing
 or lock violation) is not counted as a retry here.
@@ -745,8 +747,10 @@ speed it measures is the speed of the mount.
 
 ## Learned settings
 
-When a task ends without a cancel and with no failed or conflicting item, each
-lane saves the number of files that measured best. The record is keyed by a
+When a task ends without a cancel, each lane saves the number of files that
+measured best, also when some of its items failed or met a conflict: they say
+nothing about the route. A number below the one the lane had before its first
+I/O retry is not saved, because the retries forced it, not the route. The record is keyed by a
 hash of: copy or move; the identity of the source volumes and of the
 destination volume, in that direction (a share's server and share name, a
 mapped drive's remote path, or a local volume's letter, label and serial
@@ -805,7 +809,7 @@ installation; [Architecture](ARCHITECTURE.md) has the full rule).
 | --- | --- | --- |
 | `transfer.policy` | The defaults, as one JSON object | By Apply in Transfer defaults |
 | `transfer.overrides.v1` | The settings of single tasks, by pass ID, each with the time it was saved; at most 32 | When a task with its own settings starts a pass and by Apply in Task transfer options; an entry is removed when its pass ends, by Use defaults, and 24 hours after it was saved |
-| `transfer.learning.v1` | Learned numbers of files per route | By the service when a task ends cleanly; emptied by Forget learned settings |
+| `transfer.learning.v1` | Learned numbers of files per route | By the service when a task ends without a cancel; emptied by Forget learned settings |
 
 The fields of `transfer.policy`, in the order of the settings table: `mode`
 (`automatic`, `conservative`, `maximum`, or `manual` for Custom),

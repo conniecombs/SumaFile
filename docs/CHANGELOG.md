@@ -125,6 +125,15 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
   without limit.
 - When a file cannot be given its final name and its partial file cannot be
   removed either, the failure says both. The clean-up's error was discarded.
+- One file that fails again and again no longer empties the lane. Every
+  window with a retry halved the number of files copied at once, so one
+  file retried for four seconds took 32 files at once down to 2. A bout of
+  retries now halves the lane once, and again only in a window where
+  several files were retried.
+- A number of files at once that retries forced down is no longer
+  remembered for the route; every later transfer on it started that low. In
+  exchange, what a task learned is now saved also when some of its files
+  failed or met a conflict, which say nothing about the route.
 - Checksum mode flushes each file to disk before it reads the file back, and
   verifies it before the file gets the source's read-only attribute. A
   read-only file whose checksum did not match could not be tried again.

@@ -891,7 +891,10 @@ fn transfer_with_policy_blocking(
 
     let final_total = total_bytes.load(Ordering::Relaxed);
     session.display(Vec::new(), true);
-    if !cancelled && failed.is_empty() {
+    // A file that failed or met a conflict says nothing about the route, and
+    // a setting retries forced down is not offered to be saved; see
+    // `Controller::learned_concurrency`.
+    if !cancelled {
         session.save();
     }
 

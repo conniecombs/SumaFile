@@ -112,10 +112,6 @@ on-demand column values have shipped. What remains:
   ownership cannot be recorded there, and the file fails.
 - Whether two paths are on the same volume is decided from the first path
   component, which is wrong for mount points and substituted drives.
-- Learned transfer settings are not saved when any file in the task failed.
-- One bout of retries can take a lane from 32 files at once to 2, and when
-  the task then ends without a failed file that low value is saved for the
-  route.
 - Bytes of skipped files count toward the speed shown.
 - A folder's ownership record is created while a lock that all copy threads
   share is held. Trees of many small folders may copy more slowly for it;

@@ -1593,6 +1593,50 @@ fn a_retry_storm_brings_the_small_lane_down_fast_and_each_bout_holds_longer() {
     assert_eq!(c.cooldown(), 4 * COOLDOWN_SAMPLES);
 }
 
+/// One file retried in window after window used to halve the lane each
+/// time: 32 files at once became 2 within four seconds, for one file's sake.
+#[test]
+fn one_file_retried_again_and_again_halves_the_lane_once() {
+    let mut c = small_lane(Policy::default(), DriveKind::Unknown);
+    observe(&mut c, 32);
+    observe(&mut c, 48);
+    observe(&mut c, 48);
+    observe(&mut c, 64);
+    assert_eq!(c.concurrency, 32);
+    for _ in 0..4 {
+        c.sample(10, SECOND, true, 1);
+        assert_eq!(c.concurrency, 16, "one bout of one file's retries");
+        assert_eq!(c.explanation, "Reduced concurrency after an I/O retry");
+    }
+    // Several files retried in one window: the transport is struggling.
+    c.sample(10, SECOND, true, 3);
+    assert_eq!(c.concurrency, 8);
+}
+
+/// A lane that retries pulled down learned its next setting at that lower
+/// level, and the lower level was saved for the route: every later transfer
+/// on it started there.
+#[test]
+fn a_setting_retries_forced_down_is_not_remembered() {
+    let mut c = small_lane(Policy::default(), DriveKind::Unknown);
+    observe(&mut c, 32);
+    observe(&mut c, 48);
+    observe(&mut c, 48);
+    observe(&mut c, 64);
+    assert_eq!(c.concurrency, 32);
+    c.sample(10, SECOND, true, 5);
+    assert_eq!(c.concurrency, 16);
+    for _ in 0..3 * COOLDOWN_SAMPLES {
+        observe(&mut c, 8);
+    }
+    assert!(c.concurrency < 32, "the lane is still below where it was");
+    assert_eq!(
+        c.learned_concurrency(),
+        None,
+        "a setting below the one before the retries is not remembered"
+    );
+}
+
 #[test]
 fn write_latency_does_not_overrule_files_per_second_on_a_latency_bound_route() {
     let mut eager = small_lane(Policy::default(), DriveKind::Network);
