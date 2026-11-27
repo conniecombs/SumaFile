@@ -181,6 +181,20 @@ checks rars's output independently. The cost is that the C++ code stays.
   `data: { "archivePassword": "required" | "wrong", "archivePath": "<key archive path>" }`. The app acts on that data,
   never on message text. In RAR 4 archives, which carry no password check, a CRC failure on an encrypted entry while a
   password is set counts as `"wrong"`.
+- **Passwords in any language.** A password with any characters works, for example `contraseña`, `пароль` or `密码`.
+  rars stores a RAR5 password as UTF-8 and a RAR 4 password as UTF-16, as WinRAR does. The `unrar` crate, though,
+  passes the password to RARLAB's code as narrow text (`RARSetPassword` after `CString::new(pw).unwrap()`,
+  `unrar-0.5.8/src/open_archive.rs`). RARLAB's code converts that with the system ANSI code page on Windows and
+  the C locale on Linux, so today only ASCII passwords would open. The fix is the builder's choice, proven by a
+  non-ASCII round-trip test on Windows CI and on Linux:
+  - **Preferred:** give the service process a UTF-8 active code page (an application manifest with
+    `<activeCodePage>UTF-8</activeCodePage>`, embedded at build time; a new Rust build crate is allowed). Check that
+    nothing else in the service relies on the ANSI code page. The Linux tests set a UTF-8 locale.
+  - **Fallback:** patch the `unrar` crate through `[patch.crates-io]` so it answers RARLAB's wide-password callback
+    (`UCM_NEEDPASSWORDW`, exposed by `unrar_sys`) instead of calling `RARSetPassword`.
+
+  A password may not contain NUL or other control characters. The dialog and the prompt refuse them, and the service
+  answers an error instead of panicking.
 - **Listing says what is protected.** Archive listing entries gain `encrypted: bool` in the core model and the IPC
   schema. RAR fills it from unrar's `is_encrypted`, and other formats report `false` for now. The app uses it to ask
   before an extract starts (see 5).
@@ -220,7 +234,11 @@ checks rars's output independently. The cost is that the C++ code stays.
   says nothing more.
 - **When it asks**: only on something the user did. That means browsing into the archive, opening or previewing a
   file from it on request, extracting it, copying or moving out of it, and Properties on an entry. After a correct
-  password, the action runs again. Extraction asks **before** it starts. The app uses the listing's `encrypted` flag
+  password, the action runs again.
+  - Browsing into an archive with hidden names fails to list with `"required"`, so the prompt comes from that error.
+    An archive with visible names lists without a password. There, the app prompts when the listing has any
+    `encrypted` entry, so browsing in asks as the user approved.
+  - Cancel at the browse prompt leaves you where you were. You don't enter the archive. Extraction asks **before** it starts. The app uses the listing's `encrypted` flag
   to see whether any entry is protected, so a RAR5 extract never stops halfway for a password. Background work (thumbnails, the preview pane's automatic load, lazy columns, search, folder sizes) never
   prompts. It shows nothing for those entries until a password is set.
 - **When it forgets**: when no pane or tab shows a path inside that archive and no running operation reads from it,
