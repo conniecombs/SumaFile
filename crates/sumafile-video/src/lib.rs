@@ -9,6 +9,8 @@
 //! start, and the picture formats are not lost with it.
 
 pub mod attempt;
+#[cfg(windows)]
+mod mf;
 pub mod pixels;
 pub mod rules;
 
@@ -40,6 +42,17 @@ pub fn handle(request: &Request) -> Result<Answered, RenderError> {
     )
 }
 
+#[cfg(windows)]
+fn thumbnail(
+    path: &Path,
+    box_side: u32,
+    position_percent: u8,
+    hardware: bool,
+) -> Result<Answered, RenderError> {
+    mf::thumbnail(path, box_side, position_percent, hardware)
+}
+
+#[cfg(not(windows))]
 fn thumbnail(
     _path: &Path,
     _box_side: u32,

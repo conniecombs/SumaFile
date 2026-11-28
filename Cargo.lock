@@ -3437,6 +3437,7 @@ dependencies = [
  "sumafile-imaging",
  "sumafile-media",
  "sumafile-media-client",
+ "windows 0.62.2",
 ]
 
 [[package]]
