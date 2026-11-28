@@ -3,6 +3,8 @@
 mod dds;
 mod exr;
 mod jxl;
+mod kra;
+mod psd;
 mod simple;
 mod svg;
 mod tiff;
@@ -27,6 +29,8 @@ pub fn decode(path: &Path, extension: &str, purpose: Purpose) -> Result<Decoded,
         "jxl" => jxl::decode(path),
         "svg" => svg::decode(path, purpose),
         "dds" => dds::decode(path),
+        "psd" | "psb" => psd::decode(path, purpose),
+        "kra" | "ora" => kra::decode(path),
         _ => Err(RenderError::Unsupported(format!(
             "SumaFile has no decoder for .{extension} files."
         ))),

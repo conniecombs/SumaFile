@@ -3338,6 +3338,7 @@ dependencies = [
  "sumafile-imaging",
  "sumafile-media-client",
  "tiff",
+ "zip",
  "zune-core",
  "zune-jpegxl",
 ]

@@ -6,6 +6,7 @@ use crate::limits::{check_budget, PIXEL_BUDGET_BYTES};
 use crate::render::RenderError;
 use crate::tonemap::{tonemap_rgb32f, tonemap_rgba32f};
 use image::{DynamicImage, ImageDecoder, ImageError, ImageFormat};
+use std::io::{BufRead, Seek};
 use std::path::Path;
 
 pub(super) fn decode(path: &Path, extension: &str) -> Result<Decoded, RenderError> {
@@ -15,7 +16,15 @@ pub(super) fn decode(path: &Path, extension: &str) -> Result<Decoded, RenderErro
         "hdr" => ImageFormat::Hdr,
         _ => ImageFormat::Pnm,
     };
-    let mut reader = image::ImageReader::with_format(open(path)?, format);
+    decode_reader(open(path)?, format)
+}
+
+/// Decode a picture in one of the `image` library's formats from `reader`.
+pub(crate) fn decode_reader<R: BufRead + Seek>(
+    reader: R,
+    format: ImageFormat,
+) -> Result<Decoded, RenderError> {
+    let mut reader = image::ImageReader::with_format(reader, format);
     reader.limits(library_limits());
     let decoder = reader.into_decoder().map_err(image_error)?;
 

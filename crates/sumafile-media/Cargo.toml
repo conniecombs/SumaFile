@@ -25,6 +25,7 @@ tiff = "0.11"
 jxl-oxide = { version = "0.12", default-features = false, features = ["image", "rayon"] }
 resvg = { version = "0.50", default-features = false, features = ["text", "system-fonts", "memmap-fonts", "raster-images"] }
 image_dds = { version = "0.7", default-features = false, features = ["ddsfile", "image"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 zune-jpegxl = "0.5"
