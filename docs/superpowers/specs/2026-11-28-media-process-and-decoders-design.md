@@ -139,7 +139,9 @@ for, and is never enlarged. A preview for the preview pane needs a long side of 
 smaller, or a file with no embedded JPEG, fails, and Windows' thumbnail takes over.
 
 What is verified: the reader is tested with synthetic containers built in the tests, because the repository has no
-real camera files. By the layout of the formats it should serve DNG, NEF, CR2, CR3, ARW, RW2, RAF and PEF. Formats
+real camera files. It was also run once, by hand, over six real files from ExifTool's test set (CR2, CR3, DNG, NEF,
+RAF, RW2): it found the preview's place in each layout. Those samples have their picture data removed, so no real
+preview has been decoded yet. By the layout of the formats it should serve DNG, NEF, CR2, CR3, ARW, RW2, RAF and PEF. Formats
 that keep their only large preview in a maker note (ORF, and some ERF and SRW files) or as uncompressed pixels (MOS,
 some DCR, KDC and 3FR files) fail here and fall back to Windows. Real files of each maker are for the user to check
 on Windows.

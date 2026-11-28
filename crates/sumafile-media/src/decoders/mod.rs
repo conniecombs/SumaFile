@@ -5,6 +5,7 @@ mod exr;
 mod jxl;
 mod kra;
 mod psd;
+mod raw;
 mod simple;
 mod svg;
 mod tiff;
@@ -31,6 +32,8 @@ pub fn decode(path: &Path, extension: &str, purpose: Purpose) -> Result<Decoded,
         "dds" => dds::decode(path),
         "psd" | "psb" => psd::decode(path, purpose),
         "kra" | "ora" => kra::decode(path),
+        "dng" | "nef" | "nrw" | "cr2" | "cr3" | "arw" | "srf" | "sr2" | "pef" | "srw" | "orf"
+        | "rw2" | "raf" | "erf" | "3fr" | "mos" | "dcr" | "kdc" => raw::decode(path, purpose),
         _ => Err(RenderError::Unsupported(format!(
             "SumaFile has no decoder for .{extension} files."
         ))),
@@ -48,5 +51,21 @@ pub(crate) fn whole(image: image::DynamicImage) -> Decoded {
     Decoded {
         full_size: (image.width(), image.height()),
         image,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The app and the file service send a file here because its extension
+    /// is on the generated list. Every extension on it must have a decoder.
+    #[test]
+    fn every_listed_format_has_a_decoder() {
+        let missing = Path::new("this-file-does-not-exist");
+        for extension in sumafile_imaging::formats::MEDIA_PROCESS_EXTENSIONS {
+            let error = decode(missing, extension, Purpose::Thumbnail { size: 64 }).err();
+            assert!(matches!(error, Some(RenderError::Io(_))), ".{extension}: {error:?}");
+        }
     }
 }
