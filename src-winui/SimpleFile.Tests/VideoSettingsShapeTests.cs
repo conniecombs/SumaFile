@@ -36,7 +36,8 @@ public class VideoSettingsShapeTests
     public void TheLinesAreFilledFromTheFileServiceWhenThePageIsShown()
     {
         var window = Read("SettingsWindow.xaml.cs");
-        var state = Read("SettingsWindow.SettingsState.cs");
+        // A Windows checkout has CRLF line endings: the method's end is looked for in either.
+        var state = Read("SettingsWindow.SettingsState.cs").ReplaceLineEndings("\n");
         var refresh = Slice(state, "private async Task RefreshVideoThumbnailStatusAsync()", "\n    }\n");
 
         Assert.Contains("case \"Storage & Cache\":", window);
