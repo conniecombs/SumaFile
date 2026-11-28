@@ -473,6 +473,9 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
             request,
             simplefile_core::archive::get_archive_capabilities(),
         ),
+        // Answered here, from the service's own counts: it must not wait on
+        // a media process that is starting, busy or hung.
+        METHOD_GET_MEDIA_STATUS => reply_ok(request, crate::media_provider::video_status().reply()),
         METHOD_EXTRACT_ARCHIVE => match parse_params::<ExtractArchiveParams>(request) {
             Ok(ExtractArchiveParams {
                 archive_path,

@@ -120,6 +120,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `generate_thumbnail` | Single thumb | Preview image fallback + automatic path-backed image preview | IPC wrapper + preview path support tests | Image without inline preview | `PASS` |
 | `generate_thumbnails` | Batch thumbs | `GenerateThumbnailsAsync` + preview thumbs | FileOps wrapper | Preview image folder | `PASS` |
 | `render_image_preview` | Picture for the preview pane, from the media process (added after the migration; PSD, EXR, camera RAW and others) | `RenderImagePreviewAsync` + preview pane, before Windows' own thumbnail | `ImagePreviewIpcTests`, `ThumbnailRoutingTests`, service session test | Preview a `.psd` file | `MANUAL` |
+| `get_media_status` | Video thumbnails decoded since the service started, by the graphics card and by the processor (added after the migration, with hardware-decoded video thumbnails) | `GetMediaStatusAsync` + Settings, Storage & Cache, under "Use the graphics card for video thumbnails" | `VideoThumbnailIpcTests`, `MediaStatusTextTests`, service session test | Open Settings after browsing a folder of videos | `MANUAL` |
 | `open_file` | Default app / archive materialize | Double-click file | `ExplorerWorkspace` + FileOps | Double-click `.txt` | `PASS` |
 | `reveal_in_folder` | Explorer select | Preview Reveal | IPC | Reveal selected | `MANUAL` |
 | `open_external_url` | http(s) only | About / GitHub | IPC | About link | `MANUAL` |

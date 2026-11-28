@@ -726,20 +726,31 @@ enum ThumbnailLane {
     /// Made by the media process: its own lane, so a slow file there never
     /// holds a permit the built-in formats need.
     Media,
+    /// A video's, made by the video process: a lane of its own again.
+    Video,
 }
 
-/// The media lane when every path is of a format the media process decodes.
-/// A batch that mixes both kinds stays on the background lane.
+/// The media lane when every path is of a format the media process decodes,
+/// the video lane when every path is a video. A batch that mixes kinds stays
+/// on the background lane.
 fn thumbnail_lane(paths: &[String]) -> ThumbnailLane {
-    let all_media = !paths.is_empty()
-        && paths
-            .iter()
-            .all(|path| simplefile_core::media::thumbnail_uses_media_process(path));
-    if all_media {
+    let all =
+        |is_kind: fn(&str) -> bool| !paths.is_empty() && paths.iter().all(|path| is_kind(path));
+    if all(simplefile_core::media::thumbnail_is_video) {
+        ThumbnailLane::Video
+    } else if all(simplefile_core::media::thumbnail_uses_media_process) {
         ThumbnailLane::Media
     } else {
         ThumbnailLane::Background
     }
+}
+
+/// What one `generate_thumbnail` request asks for.
+pub(super) struct ThumbnailRequest {
+    pub(super) path: String,
+    pub(super) size: Option<u32>,
+    /// For a video: how far into it the frame is, in percent.
+    pub(super) position_percent: Option<u8>,
 }
 
 pub(super) async fn generate_thumbnail_and_reply(
@@ -748,27 +759,39 @@ pub(super) async fn generate_thumbnail_and_reply(
     binary_hot_frames: Arc<AtomicBool>,
     cache: SessionCache,
     id: Option<Value>,
-    path: String,
-    size: Option<u32>,
+    request: ThumbnailRequest,
 ) -> Result<(), String> {
+    let ThumbnailRequest {
+        path,
+        size,
+        position_percent,
+    } = request;
     let start = std::time::Instant::now();
-    let result: Result<Result<Vec<u8>, String>, String> = if let Some(cached) =
-        cache.get_thumbnail(&path, size)
-    {
-        Ok(Ok(cached))
-    } else {
-        let path_for_task = path.clone();
-        let cache_for_task = cache.clone();
-        let render = move || {
-            let bytes = simplefile_core::preview::generate_thumbnail(path_for_task.clone(), size)?;
-            cache_for_task.put_thumbnail(&path_for_task, size, bytes.clone());
-            Ok(bytes)
+    let lane = thumbnail_lane(std::slice::from_ref(&path));
+    // Only a video has a frame to choose: a picture is one thumbnail
+    // whatever position the request names.
+    let position = position_percent.filter(|_| lane == ThumbnailLane::Video);
+    let result: Result<Result<Vec<u8>, String>, String> =
+        if let Some(cached) = cache.get_thumbnail_at(&path, size, position) {
+            Ok(Ok(cached))
+        } else {
+            let path_for_task = path.clone();
+            let cache_for_task = cache.clone();
+            let render = move || {
+                let bytes = simplefile_core::preview::generate_thumbnail_at(
+                    path_for_task.clone(),
+                    size,
+                    position,
+                )?;
+                cache_for_task.put_thumbnail_at(&path_for_task, size, position, bytes.clone());
+                Ok(bytes)
+            };
+            match lane {
+                ThumbnailLane::Video => scheduler.run_media(MediaLane::Video, render).await,
+                ThumbnailLane::Media => scheduler.run_media(MediaLane::Thumbnail, render).await,
+                ThumbnailLane::Background => scheduler.run_background(render).await,
+            }
         };
-        match thumbnail_lane(std::slice::from_ref(&path)) {
-            ThumbnailLane::Media => scheduler.run_media(MediaLane::Thumbnail, render).await,
-            ThumbnailLane::Background => scheduler.run_background(render).await,
-        }
-    };
     let run_ms = start.elapsed().as_secs_f64() * 1000.0;
 
     match result {
@@ -811,21 +834,13 @@ pub(super) fn spawn_generate_thumbnail(
     binary_hot_frames: Arc<AtomicBool>,
     cache: SessionCache,
     id: Option<Value>,
-    path: String,
-    size: Option<u32>,
+    request: ThumbnailRequest,
 ) {
     tokio::spawn(async move {
         let response_id = id.clone();
-        let result = generate_thumbnail_and_reply(
-            &writer,
-            scheduler,
-            binary_hot_frames,
-            cache,
-            id,
-            path,
-            size,
-        )
-        .await;
+        let result =
+            generate_thumbnail_and_reply(&writer, scheduler, binary_hot_frames, cache, id, request)
+                .await;
 
         if let Err(message) = result {
             let _ = write_json(
@@ -943,6 +958,7 @@ pub(super) async fn generate_thumbnails_and_reply(
         results
     };
     let result = match lane {
+        ThumbnailLane::Video => scheduler.run_media(MediaLane::Video, render).await,
         ThumbnailLane::Media => scheduler.run_media(MediaLane::Thumbnail, render).await,
         ThumbnailLane::Background => scheduler.run_background(render).await,
     };
@@ -1364,6 +1380,27 @@ mod tests {
         assert_eq!(
             lane(&[r"C:\Raw\a.CR2", r"C:\Raw\b.nef"]),
             ThumbnailLane::Media
+        );
+    }
+
+    #[test]
+    fn a_video_waits_in_the_video_lane() {
+        assert_eq!(lane(&[r"C:\Films\a.mp4"]), ThumbnailLane::Video);
+        assert_eq!(
+            lane(&[r"C:\Films\a.MKV", r"C:\Films\b.webm"]),
+            ThumbnailLane::Video
+        );
+    }
+
+    #[test]
+    fn a_batch_of_videos_and_pictures_stays_in_the_background_lane() {
+        assert_eq!(
+            lane(&[r"C:\Films\a.mp4", r"C:\Photos\a.jpg"]),
+            ThumbnailLane::Background
+        );
+        assert_eq!(
+            lane(&[r"C:\Films\a.mp4", r"C:\Art\cover.psd"]),
+            ThumbnailLane::Background
         );
     }
 

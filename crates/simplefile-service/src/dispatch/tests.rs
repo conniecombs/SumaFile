@@ -685,6 +685,7 @@ fn leftover_domain_methods_are_wired() {
         (21, "get_all_file_tags"),
         (22, "load_smart_folders"),
         (23, "get_archive_capabilities"),
+        (123, "get_media_status"),
         (24, "get_app_version"),
         (25, "get_app_about_info"),
         (26, "cancel_disk_cleanup"),

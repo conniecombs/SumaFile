@@ -72,8 +72,8 @@ try {
 } catch (error) {
   fail(error.message);
 }
-if (commands.length !== 85) {
-  fail(`expected 85 domain commands, found ${commands.length}.`);
+if (commands.length !== 86) {
+  fail(`expected 86 domain commands, found ${commands.length}.`);
 }
 
 for (const command of commands) {

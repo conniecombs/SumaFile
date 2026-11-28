@@ -244,9 +244,13 @@ pub(super) struct PreviewParams {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(super) struct ThumbnailParams {
     pub(super) path: String,
     pub(super) size: Option<u32>,
+    /// For a video: how far into it the frame is, in percent.
+    #[serde(default)]
+    pub(super) position_percent: Option<u8>,
 }
 
 #[derive(Debug, Deserialize)]

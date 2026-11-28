@@ -218,6 +218,7 @@ pub(crate) enum Dispatch {
         id: Option<Value>,
         path: String,
         size: Option<u32>,
+        position_percent: Option<u8>,
     },
     GenerateThumbnails {
         id: Option<Value>,

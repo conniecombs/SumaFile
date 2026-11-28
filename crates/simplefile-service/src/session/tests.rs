@@ -1103,6 +1103,94 @@ async fn cancel_entry_facts_replies_and_a_cancelled_request_still_settles() {
     assert!(replies[&2]["result"]["settled"].as_u64().unwrap() <= 40);
 }
 
+/// A video's thumbnail is asked of the provider with the position the app
+/// sent, and the counts of what was decoded can be read back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn generate_thumbnail_passes_the_position_to_the_provider() {
+    use simplefile_core::media::{
+        EncodedImage, MediaProvider, SoftwareReason, VideoDecoder, VideoThumbnail,
+    };
+
+    #[derive(Default)]
+    struct Fake(std::sync::Mutex<Vec<(u32, u8)>>);
+    impl MediaProvider for Fake {
+        fn thumbnail(&self, _path: &std::path::Path, _size: u32) -> Result<Vec<u8>, String> {
+            Err("not asked for".to_string())
+        }
+
+        fn preview(
+            &self,
+            _path: &std::path::Path,
+            _max_dimension: u32,
+        ) -> Result<EncodedImage, String> {
+            Err("not asked for".to_string())
+        }
+
+        fn video_thumbnail(
+            &self,
+            _path: &std::path::Path,
+            size: u32,
+            position_percent: u8,
+            _hardware: bool,
+        ) -> Result<VideoThumbnail, String> {
+            self.0.lock().unwrap().push((size, position_percent));
+            Ok(VideoThumbnail {
+                jpeg: b"frame".to_vec(),
+                decoder: VideoDecoder::Software,
+                reason: Some(SoftwareReason::NoHardwareDecoder),
+            })
+        }
+    }
+
+    let _turn = crate::media_provider::PROVIDER_TURN.lock().await;
+    let fake = std::sync::Arc::new(Fake::default());
+    simplefile_core::media::register_media_provider(fake.clone());
+    let (mut client, _server) = serve_test_session().await;
+    let dir = scratch_dir("video-thumbnail");
+    let clip = dir.join("clip.mp4");
+    let other = dir.join("other.mkv");
+    std::fs::write(&clip, b"not really a video").unwrap();
+    std::fs::write(&other, b"not really a video").unwrap();
+
+    let picked = call(
+        &mut client,
+        "generate_thumbnail",
+        2,
+        json!({ "path": clip.to_string_lossy(), "size": 96, "positionPercent": 40 }),
+    )
+    .await;
+    let default = call(
+        &mut client,
+        "generate_thumbnail",
+        3,
+        json!({ "path": other.to_string_lossy(), "size": 96 }),
+    )
+    .await;
+    simplefile_core::media::unregister_media_provider();
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(picked["result"], json!("ZnJhbWU="), "{picked}");
+    assert_eq!(default["result"], json!("ZnJhbWU="), "{default}");
+    assert_eq!(*fake.0.lock().unwrap(), [(96, 40), (96, 25)]);
+}
+
+/// Settings reads the counts of what the video process decoded. The answer
+/// has the three fields, whatever has or has not been decoded yet.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_media_status_answers_the_counts() {
+    let (mut client, _server) = serve_test_session().await;
+
+    let status = call(&mut client, "get_media_status", 2, json!({})).await;
+
+    let result = &status["result"];
+    assert!(result["videoHardware"].is_u64(), "{status}");
+    assert!(result["videoSoftware"].is_u64(), "{status}");
+    assert!(
+        result["lastSoftwareReason"].is_null() || result["lastSoftwareReason"].is_string(),
+        "{status}"
+    );
+}
+
 /// A picture for the preview pane comes from the registered media provider,
 /// and its bytes cross as base64 for a client that did not ask for binary
 /// frames.

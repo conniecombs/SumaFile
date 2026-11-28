@@ -98,6 +98,19 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task CreateArchiveAsync(string[] paths, string archivePath, string format, string? operationId = null, CancellationToken ct = default);
     Task<FilePreview> ReadFilePreviewAsync(string path, ulong? maxSize = null, CancellationToken ct = default);
     Task<byte[]> GenerateThumbnailAsync(string path, uint size, CancellationToken ct = default);
+
+    /// <summary>
+    /// A JPEG of one frame of the video at <paramref name="path"/>: the frame
+    /// <paramref name="positionPercent"/> of the way through (1 to 99). It is <c>generate_thumbnail</c> with the
+    /// position; the file service's video process decodes the frame.
+    /// </summary>
+    Task<byte[]> GenerateVideoThumbnailAsync(string path, uint size, int positionPercent, CancellationToken ct = default);
+
+    /// <summary>
+    /// The video thumbnails decoded since the file service started, by the graphics card and by the processor.
+    /// Thumbnails that came from the disk cache were not decoded and are not counted.
+    /// </summary>
+    Task<MediaStatus> GetMediaStatusAsync(CancellationToken ct = default);
     Task<ThumbnailResult[]> GenerateThumbnailsAsync(string[] paths, uint size, CancellationToken ct = default);
 
     /// <summary>

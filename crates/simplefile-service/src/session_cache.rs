@@ -657,8 +657,14 @@ impl SessionCache {
         );
     }
 
-    fn thumbnail_key(path: &str, size: Option<u32>) -> String {
-        format!("{}\u{1f}{}", Self::normalize_key(path), size.unwrap_or(0))
+    /// `position`: the frame of a video thumbnail, in percent. A picture
+    /// has none, and its key is the path and the size.
+    fn thumbnail_key(path: &str, size: Option<u32>, position: Option<u8>) -> String {
+        let key = format!("{}\u{1f}{}", Self::normalize_key(path), size.unwrap_or(0));
+        match position {
+            Some(position) => format!("{key}@{position}"),
+            None => key,
+        }
     }
 
     fn extract_thumbnail_path(cache_key: &str) -> &str {
@@ -669,12 +675,22 @@ impl SessionCache {
     }
 
     pub fn get_thumbnail(&self, path: &str, size: Option<u32>) -> Option<Vec<u8>> {
+        self.get_thumbnail_at(path, size, None)
+    }
+
+    /// As [`Self::get_thumbnail`], for a video's frame at `position` percent.
+    pub fn get_thumbnail_at(
+        &self,
+        path: &str,
+        size: Option<u32>,
+        position: Option<u8>,
+    ) -> Option<Vec<u8>> {
         let norm_path = Self::normalize_key(path);
         if norm_path.is_empty() {
             return None;
         }
         let current_stamp = PathStamp::for_path(Path::new(path))?;
-        let key = Self::thumbnail_key(path, size);
+        let key = Self::thumbnail_key(path, size, position);
         let cached = self.thumbnails.get(&key)?;
         if cached.stamp == current_stamp {
             Some(cached.value)
@@ -685,6 +701,17 @@ impl SessionCache {
     }
 
     pub fn put_thumbnail(&self, path: &str, size: Option<u32>, bytes: Vec<u8>) {
+        self.put_thumbnail_at(path, size, None, bytes);
+    }
+
+    /// As [`Self::put_thumbnail`], for a video's frame at `position` percent.
+    pub fn put_thumbnail_at(
+        &self,
+        path: &str,
+        size: Option<u32>,
+        position: Option<u8>,
+        bytes: Vec<u8>,
+    ) {
         let norm_path = Self::normalize_key(path);
         if norm_path.is_empty() {
             return;
@@ -692,7 +719,7 @@ impl SessionCache {
         let Some(stamp) = PathStamp::for_path(Path::new(path)) else {
             return;
         };
-        let key = Self::thumbnail_key(path, size);
+        let key = Self::thumbnail_key(path, size, position);
         let estimated = bytes.len().saturating_add(key.len()).saturating_add(64);
         self.thumbnails.put(
             key,

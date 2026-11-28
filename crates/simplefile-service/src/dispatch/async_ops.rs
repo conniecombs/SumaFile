@@ -80,6 +80,7 @@ pub(super) fn generate_thumbnail(request: &JsonRpcRequest) -> Dispatch {
             id: request.id.clone(),
             path: p.path,
             size: p.size,
+            position_percent: p.position_percent,
         },
         Err(r) => Dispatch::Reply(r),
     }

@@ -21,7 +21,7 @@ use jobs::{
     spawn_folder_item_count, spawn_folder_metrics, spawn_folder_size, spawn_generate_thumbnail,
     spawn_generate_thumbnails, spawn_install_update, spawn_list_directory,
     spawn_render_image_preview, spawn_search_files, CopyMoveJob, DiskCleanupJob, DuplicateCheckJob,
-    EventSink, SearchJob,
+    EventSink, SearchJob, ThumbnailRequest,
 };
 use serde_json::{json, Value};
 use simplefile_ipc::frame::FrameError;
@@ -324,15 +324,23 @@ where
                 Dispatch::InstallUpdate { id } => {
                     spawn_install_update(writer.clone(), scheduler.clone(), events.clone(), id);
                 }
-                Dispatch::GenerateThumbnail { id, path, size } => {
+                Dispatch::GenerateThumbnail {
+                    id,
+                    path,
+                    size,
+                    position_percent,
+                } => {
                     spawn_generate_thumbnail(
                         writer.clone(),
                         scheduler.clone(),
                         binary_hot_frames.clone(),
                         cache.clone(),
                         id,
-                        path,
-                        size,
+                        ThumbnailRequest {
+                            path,
+                            size,
+                            position_percent,
+                        },
                     );
                 }
                 Dispatch::GenerateThumbnails { id, paths, size } => {

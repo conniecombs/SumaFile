@@ -801,6 +801,21 @@ public sealed class FileOperationService : ISettingsBackend
         return _ipc.GenerateThumbnailAsync(path, size, ct);
     }
 
+    /// <summary>
+    /// A JPEG of the frame <paramref name="positionPercent"/> of the way through the video at
+    /// <paramref name="path"/>, from the file service's video process.
+    /// </summary>
+    public Task<byte[]> GenerateVideoThumbnailAsync(string path, uint size, int positionPercent, CancellationToken ct = default)
+    {
+        return _ipc.GenerateVideoThumbnailAsync(path, size, positionPercent, ct);
+    }
+
+    /// <summary>The video thumbnails decoded since the file service started, and by whom.</summary>
+    public Task<MediaStatus> GetMediaStatusAsync(CancellationToken ct = default)
+    {
+        return _ipc.GetMediaStatusAsync(ct);
+    }
+
     public Task<ThumbnailResult[]> GenerateThumbnailsAsync(string[] paths, uint size = 128, CancellationToken ct = default)
     {
         return _ipc.GenerateThumbnailsAsync(paths, size, ct);

@@ -712,6 +712,28 @@ public sealed class EncodedImage
     public byte[] Data { get; set; } = [];
 }
 
+/// <summary>
+/// The video thumbnails the file service's video process has decoded since the service started. A thumbnail
+/// that came from the disk cache was not decoded and is not counted.
+/// </summary>
+public sealed class MediaStatus
+{
+    /// <summary>Thumbnails whose frame the graphics card decoded.</summary>
+    [JsonPropertyName("videoHardware")]
+    public ulong VideoHardware { get; set; }
+
+    /// <summary>Thumbnails whose frame the processor decoded.</summary>
+    [JsonPropertyName("videoSoftware")]
+    public ulong VideoSoftware { get; set; }
+
+    /// <summary>
+    /// Why the processor last decoded one: <c>turned_off</c>, <c>no_device</c>, <c>no_hardware_decoder</c> or
+    /// <c>hardware_failed</c>. Null when it never has.
+    /// </summary>
+    [JsonPropertyName("lastSoftwareReason")]
+    public string? LastSoftwareReason { get; set; }
+}
+
 public sealed class Checksums
 {
     [JsonPropertyName("md5")]

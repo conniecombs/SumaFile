@@ -1,6 +1,6 @@
 {
   "protocolVersion": 1,
-  "domainMethodCount": 85,
+  "domainMethodCount": 86,
   "methods": {
     "ipc.handshake": {
       "kind": "handshake",
@@ -157,7 +157,12 @@
     "watch_directory": { "params": { "path": "string" }, "result": "null" },
     "unwatch_directory": { "params": null, "result": "null" },
     "read_file_preview": { "params": { "path": "string", "maxSize": "number?" }, "result": "FilePreview" },
-    "generate_thumbnail": { "params": { "path": "string", "size": "number" }, "result": "string", "binaryFrameTag": 7 },
+    "generate_thumbnail": {
+      "params": { "path": "string", "size": "number", "positionPercent": "number?" },
+      "result": "string",
+      "binaryFrameTag": 7,
+      "notes": "positionPercent is for a video: how far into it the thumbnail's frame is, 1 to 99, and 25 when absent. A picture ignores it. A video's thumbnail is made by the video process (sumafile-video)."
+    },
     "generate_thumbnails": { "params": { "paths": "string[]", "size": "number" }, "result": "ThumbnailResult[]", "binaryFrameTag": 8 },
     "render_image_preview": {
       "params": { "path": "string", "maxDimension": "number?" },
@@ -186,6 +191,11 @@
     "open_external_url": { "params": { "url": "string" }, "result": "null" },
     "list_archive": { "params": { "path": "string" }, "result": "ArchiveInfo" },
     "get_archive_capabilities": { "params": null, "result": "ArchiveCapabilities" },
+    "get_media_status": {
+      "params": null,
+      "result": "MediaStatus",
+      "notes": "The video thumbnails decoded since the service started, by who decoded them. Answered from the service's own counts, without asking the video process. A thumbnail that came from the disk cache was not decoded and is not counted."
+    },
     "extract_archive": {
       "params": { "archivePath": "string", "destination": "string", "operationId": "string?" },
       "result": "null",

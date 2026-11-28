@@ -9,6 +9,11 @@ const DEFAULT_TRANSFER_PERMITS: usize = 2;
 /// numbers its client lets through.
 const MEDIA_THUMBNAIL_PERMITS: usize = 4;
 const MEDIA_PREVIEW_PERMITS: usize = 2;
+/// How many video thumbnails wait on the video process at a time: two from
+/// local drives and one from a network drive for the file list, and one for
+/// the preview pane's frame picker. The app keeps to those numbers, so the
+/// picker always finds one free.
+const MEDIA_VIDEO_PERMITS: usize = 4;
 const FOREGROUND_YIELD_POLL: Duration = Duration::from_millis(25);
 /// Longest a queued background job waits for foreground work to drain.
 const BACKGROUND_WAIT_CAP: Duration = Duration::from_millis(500);
@@ -22,17 +27,21 @@ pub(crate) struct BlockingScheduler {
     transfer: Arc<Semaphore>,
     media_thumbnails: Arc<Semaphore>,
     media_previews: Arc<Semaphore>,
+    media_videos: Arc<Semaphore>,
     foreground_in_flight: Arc<AtomicUsize>,
     foreground_notify: Arc<Notify>,
 }
 
-/// Work that waits on the media process (`sumafile-media`).
+/// Work that waits on the media process (`sumafile-media`) or the video
+/// process (`sumafile-video`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MediaLane {
     /// A thumbnail of a format the media process decodes.
     Thumbnail,
     /// A picture for the preview pane.
     Preview,
+    /// A thumbnail of a video, from the video process.
+    Video,
 }
 
 struct BlockingPermits {
@@ -78,6 +87,7 @@ impl BlockingScheduler {
             transfer: Arc::new(Semaphore::new(transfer_permits.max(1))),
             media_thumbnails: Arc::new(Semaphore::new(MEDIA_THUMBNAIL_PERMITS)),
             media_previews: Arc::new(Semaphore::new(MEDIA_PREVIEW_PERMITS)),
+            media_videos: Arc::new(Semaphore::new(MEDIA_VIDEO_PERMITS)),
             foreground_in_flight: Arc::new(AtomicUsize::new(0)),
             foreground_notify: Arc::new(Notify::new()),
         }
@@ -165,7 +175,9 @@ impl BlockingScheduler {
     /// background permit: the work is another process's, and a slow file
     /// there must not hold up thumbnails and folder sizes made here. A
     /// thumbnail waits while foreground work runs, as background work does;
-    /// a preview is what the user is looking at and does not.
+    /// a preview is what the user is looking at and does not. Nor does a
+    /// video thumbnail: one of its permits serves the preview pane's frame
+    /// picker, and the decoding runs in another process at a low priority.
     pub(crate) async fn run_media<F, R>(&self, lane: MediaLane, task: F) -> Result<R, String>
     where
         F: FnOnce() -> R + Send + 'static,
@@ -174,6 +186,7 @@ impl BlockingScheduler {
         let permits = match lane {
             MediaLane::Thumbnail => &self.media_thumbnails,
             MediaLane::Preview => &self.media_previews,
+            MediaLane::Video => &self.media_videos,
         };
         let permit = permits
             .clone()
@@ -259,7 +272,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{BlockingScheduler, MediaLane, DEFAULT_TRANSFER_PERMITS, MEDIA_THUMBNAIL_PERMITS};
+    use super::{
+        BlockingScheduler, MediaLane, DEFAULT_TRANSFER_PERMITS, MEDIA_PREVIEW_PERMITS,
+        MEDIA_THUMBNAIL_PERMITS, MEDIA_VIDEO_PERMITS,
+    };
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{mpsc, Arc};
     use std::time::Duration;
@@ -322,6 +338,95 @@ mod tests {
         assert_eq!(preview, Ok(Ok(8)));
         release_tx.send(()).unwrap();
         background.await.unwrap().unwrap();
+    }
+
+    /// Video thumbnails come from another program than pictures do, so they
+    /// have permits of their own: a folder of slow pictures, with previews
+    /// on top, does not hold a video back.
+    #[tokio::test]
+    async fn videos_do_not_wait_for_thumbnails_or_previews() {
+        let scheduler = BlockingScheduler::new(2, 1);
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let release_rx = Arc::new(std::sync::Mutex::new(release_rx));
+        let entered = Arc::new(AtomicUsize::new(0));
+        let mut held = Vec::new();
+        let lanes = std::iter::repeat_n(MediaLane::Thumbnail, MEDIA_THUMBNAIL_PERMITS).chain(
+            std::iter::repeat_n(MediaLane::Preview, MEDIA_PREVIEW_PERMITS),
+        );
+        for lane in lanes {
+            let (scheduler, entered, release_rx) =
+                (scheduler.clone(), entered.clone(), release_rx.clone());
+            held.push(tokio::spawn(async move {
+                scheduler
+                    .run_media(lane, move || {
+                        entered.fetch_add(1, Ordering::SeqCst);
+                        let _ = release_rx.lock().unwrap().recv();
+                    })
+                    .await
+            }));
+        }
+        let all = MEDIA_THUMBNAIL_PERMITS + MEDIA_PREVIEW_PERMITS;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        while entered.load(Ordering::SeqCst) < all {
+            assert!(tokio::time::Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+
+        let video = tokio::time::timeout(
+            Duration::from_secs(2),
+            scheduler.run_media(MediaLane::Video, || 7),
+        )
+        .await;
+
+        assert_eq!(video, Ok(Ok(7)));
+        for _ in 0..all {
+            release_tx.send(()).unwrap();
+        }
+        for task in held {
+            task.await.unwrap().unwrap();
+        }
+    }
+
+    /// Two local list thumbnails, one from a network drive, and one for the
+    /// preview pane: four, and a fifth waits.
+    #[tokio::test]
+    async fn at_most_four_videos_run_at_a_time() {
+        assert_eq!(MEDIA_VIDEO_PERMITS, 4);
+        let scheduler = BlockingScheduler::new(2, 1);
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let release_rx = Arc::new(std::sync::Mutex::new(release_rx));
+        let entered = Arc::new(AtomicUsize::new(0));
+        let mut videos = Vec::new();
+        for _ in 0..MEDIA_VIDEO_PERMITS + 1 {
+            let (scheduler, entered, release_rx) =
+                (scheduler.clone(), entered.clone(), release_rx.clone());
+            videos.push(tokio::spawn(async move {
+                scheduler
+                    .run_media(MediaLane::Video, move || {
+                        entered.fetch_add(1, Ordering::SeqCst);
+                        let _ = release_rx.lock().unwrap().recv();
+                    })
+                    .await
+            }));
+        }
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        while entered.load(Ordering::SeqCst) < MEDIA_VIDEO_PERMITS {
+            assert!(tokio::time::Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        assert_eq!(
+            entered.load(Ordering::SeqCst),
+            MEDIA_VIDEO_PERMITS,
+            "the fifth waits"
+        );
+        for _ in 0..MEDIA_VIDEO_PERMITS + 1 {
+            release_tx.send(()).unwrap();
+        }
+        for video in videos {
+            video.await.unwrap().unwrap();
+        }
     }
 
     /// The preview pane must not queue behind a folder's thumbnails.

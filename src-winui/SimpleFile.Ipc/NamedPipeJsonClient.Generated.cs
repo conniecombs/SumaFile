@@ -113,6 +113,9 @@ public sealed partial class NamedPipeJsonClient
     public Task<ArchiveCapabilities> GetArchiveCapabilitiesAsync(CancellationToken ct = default)
         => InvokeAsync<ArchiveCapabilities>(Protocol.GetArchiveCapabilitiesMethod, new { }, ct);
 
+    public Task<MediaStatus> GetMediaStatusAsync(CancellationToken ct = default)
+        => InvokeAsync<MediaStatus>(Protocol.GetMediaStatusMethod, new { }, ct);
+
     public Task ExtractArchiveAsync(string archivePath, string destination, string? operationId = null, CancellationToken ct = default)
         => InvokeAsync<object?>(Protocol.ExtractArchiveMethod, new { archivePath, destination, operationId }, ct);
 
@@ -124,6 +127,9 @@ public sealed partial class NamedPipeJsonClient
 
     public Task<byte[]> GenerateThumbnailAsync(string path, uint size, CancellationToken ct = default)
         => InvokeAsync<byte[]>(Protocol.GenerateThumbnailMethod, new { path, size }, ct);
+
+    public Task<byte[]> GenerateVideoThumbnailAsync(string path, uint size, int positionPercent, CancellationToken ct = default)
+        => InvokeAsync<byte[]>(Protocol.GenerateThumbnailMethod, new { path, size, positionPercent }, ct);
 
     public Task<ThumbnailResult[]> GenerateThumbnailsAsync(string[] paths, uint size, CancellationToken ct = default)
         => InvokeAsync<ThumbnailResult[]>(Protocol.GenerateThumbnailsMethod, new { paths, size }, ct);
