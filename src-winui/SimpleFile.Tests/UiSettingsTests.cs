@@ -55,6 +55,8 @@ public class UiSettingsTests
         var defaults = UiSettings.CreateDefault();
         Assert.False(defaults.PreviewRenderHtml);
         Assert.False(defaults.PreviewVideoPlaybackEnabled);
+        Assert.True(defaults.VideoThumbnailsUseGpu, "the graphics card decodes video thumbnails unless turned off");
+        Assert.True(new UiSettings().VideoThumbnailsUseGpu);
     }
     [Fact]
     public void ResolveStartPath_UsesHomeLastAndCustom()

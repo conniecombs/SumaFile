@@ -178,6 +178,7 @@ public class WorkspaceSettingsStoreTests
             PreviewAutoCollapse = false,
             PreviewRenderHtml = true,
             PreviewVideoPlaybackEnabled = true,
+            VideoThumbnailsUseGpu = false,
             PreviewWidth = 2000,
             DualPanePrimaryPercent = 5,
             DualPanePrimaryWidth = 40,
@@ -264,6 +265,7 @@ public class WorkspaceSettingsStoreTests
         Assert.False(state.Settings.PreviewAutoCollapse);
         Assert.True(state.Settings.PreviewRenderHtml);
         Assert.True(state.Settings.PreviewVideoPlaybackEnabled);
+        Assert.False(state.Settings.VideoThumbnailsUseGpu);
         Assert.Equal(UiSettings.PreviewMaxWidth, state.Settings.PreviewWidth);
         Assert.Equal(UiSettings.DualPaneMinPercent, state.Settings.DualPanePrimaryPercent);
         Assert.Equal(UiSettings.FilePaneMinWidth, state.Settings.DualPanePrimaryWidth);
@@ -298,6 +300,8 @@ public class WorkspaceSettingsStoreTests
         Assert.Equal("true", ipc.Settings["progressQueue.visible"]);
         Assert.Equal("true", ipc.Settings["preview.renderHtml"]);
         Assert.Equal("true", ipc.Settings["preview.videoPlayback"]);
+        // The file service reads this key itself, for every video thumbnail it makes.
+        Assert.Equal("false", ipc.Settings["videoThumbnailsUseGpu"]);
         Assert.Equal("light", ipc.Settings["theme"]);
         Assert.Equal(1, ipc.GetDbSettingsCalls);
         Assert.Equal(0, ipc.GetDbSettingCalls);
@@ -310,6 +314,17 @@ public class WorkspaceSettingsStoreTests
         Assert.DoesNotContain("\"previewVisible\"", ipc.Settings[FolderViewSettingsDocument.SettingsKey], StringComparison.Ordinal);
         Assert.Equal(bookmarks.Single().Path, state.Bookmarks.Single().Path);
         Assert.Equal(recentPaths, state.RecentPaths);
+    }
+
+    /// <summary>A profile saved before the switch existed has no value for it: the graphics card stays on.</summary>
+    [Fact]
+    public async Task LoadAsync_WithoutTheVideoSwitchLeavesTheGraphicsCardOn()
+    {
+        var fileOps = new FileOperationService(new ConfigurableIpc());
+
+        var state = await WorkspaceSettingsStore.LoadAsync(fileOps, CancellationToken.None);
+
+        Assert.True(state.Settings.VideoThumbnailsUseGpu);
     }
 
     [Fact]

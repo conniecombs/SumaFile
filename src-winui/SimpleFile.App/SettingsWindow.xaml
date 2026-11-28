@@ -275,6 +275,23 @@
                             Content="Reset to default location"
                             Click="OnResetCachePathClicked" />
                     </StackPanel>
+
+                    <TextBlock
+                        Margin="0,12,0,0"
+                        FontWeight="SemiBold"
+                        Text="Video thumbnails" />
+                    <ToggleSwitch
+                        x:Name="VideoThumbnailsGpuSwitch"
+                        Header="Use the graphics card for video thumbnails" />
+                    <TextBlock
+                        x:Name="VideoThumbnailsCountsText"
+                        Foreground="{ThemeResource SfTextMutedBrush}"
+                        TextWrapping="Wrap" />
+                    <TextBlock
+                        x:Name="VideoThumbnailsReasonText"
+                        Foreground="{ThemeResource SfTextMutedBrush}"
+                        TextWrapping="Wrap"
+                        Visibility="Collapsed" />
                 </StackPanel>
 
                 <StackPanel x:Name="ShortcutsPanel" Spacing="12" Visibility="Collapsed">

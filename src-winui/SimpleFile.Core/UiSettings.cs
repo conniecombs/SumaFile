@@ -49,6 +49,12 @@ public sealed class UiSettings
     public double PreviewWidth { get; set; } = PreviewDefaultWidth;
     public bool PreviewRenderHtml { get; set; }
     public bool PreviewVideoPlaybackEnabled { get; set; }
+
+    /// <summary>
+    /// Whether the graphics card may decode video thumbnails. Off, the file service's video process decodes on
+    /// the processor. Stored under <c>videoThumbnailsUseGpu</c>, which the file service reads itself.
+    /// </summary>
+    public bool VideoThumbnailsUseGpu { get; set; } = true;
     public double DualPanePrimaryPercent { get; set; } = DualPaneDefaultPercent;
     public double DualPanePrimaryWidth { get; set; }
     public bool QuickAccessCollapsed { get; set; }

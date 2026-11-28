@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using System.Text.Json;
 using SimpleFile.Core;
+using SimpleFile.Ipc;
 using SimpleFile.PluginHost;
 using Windows.Storage.Pickers;
 
@@ -74,6 +75,33 @@ public sealed partial class SettingsWindow
         settings.CommandSurface = surface;
         settings.ThumbnailCacheMaxMb = EnableThumbnailCacheSwitch.IsOn ? (uint)Math.Round(CacheSizeSlider.Value) : 0;
         settings.ThumbnailCachePath = ThumbnailCachePathBox.Text.Trim();
+        settings.VideoThumbnailsUseGpu = VideoThumbnailsGpuSwitch.IsOn;
+    }
+
+    /// <summary>
+    /// Fills the two lines under the video switch from the file service's counts: how many video thumbnails
+    /// the graphics card and the processor decoded since SumaFile started, and why the processor was last
+    /// used. They are how the user sees whether the graphics card is really in use.
+    /// </summary>
+    private async Task RefreshVideoThumbnailStatusAsync()
+    {
+        MediaStatus? status = null;
+        try
+        {
+            if (_fileOps is { } fileOps)
+            {
+                status = await fileOps.GetMediaStatusAsync(CancellationToken.None);
+            }
+        }
+        catch
+        {
+            // The file service could not be asked: the line below then claims nothing.
+        }
+
+        VideoThumbnailsCountsText.Text = MediaStatusText.Counts(status);
+        var reason = MediaStatusText.LastProcessorDecode(status);
+        VideoThumbnailsReasonText.Text = reason ?? "";
+        VideoThumbnailsReasonText.Visibility = reason is null ? Visibility.Collapsed : Visibility.Visible;
     }
 
     public async Task LoadSettingsAsync(
@@ -156,6 +184,8 @@ public sealed partial class SettingsWindow
         UpdateCacheSizeValueText((int)CacheSizeSlider.Value);
         CacheOptionsPanel.Visibility = EnableThumbnailCacheSwitch.IsOn ? Visibility.Visible : Visibility.Collapsed;
         ThumbnailCachePathBox.Text = settings.ThumbnailCachePath ?? "";
+        VideoThumbnailsGpuSwitch.IsOn = settings.VideoThumbnailsUseGpu;
+        VideoThumbnailsCountsText.Text = MediaStatusText.Counts(null);
     }
 
     private static CommandSurfaceLayout CloneCommandSurfaceLayout(CommandSurfaceLayout layout)

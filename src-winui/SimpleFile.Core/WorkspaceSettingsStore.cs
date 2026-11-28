@@ -41,6 +41,7 @@ internal static class WorkspaceSettingsStore
         "preview.width",
         "preview.renderHtml",
         "preview.videoPlayback",
+        "videoThumbnailsUseGpu",
         "dualPane.primaryPercent",
         "dualPane.primaryWidth",
         "columnPreset",
@@ -100,6 +101,7 @@ internal static class WorkspaceSettingsStore
             ReadDoubleSetting(values, "preview.width", UiSettings.PreviewDefaultWidth));
         settings.PreviewRenderHtml = ReadBoolSetting(values, "preview.renderHtml", false);
         settings.PreviewVideoPlaybackEnabled = ReadBoolSetting(values, "preview.videoPlayback", false);
+        settings.VideoThumbnailsUseGpu = ReadBoolSetting(values, "videoThumbnailsUseGpu", true);
         settings.DualPanePrimaryPercent = UiSettings.NormalizeDualPanePrimaryPercent(
             ReadDoubleSetting(values, "dualPane.primaryPercent", UiSettings.DualPaneDefaultPercent));
         settings.DualPanePrimaryWidth = UiSettings.NormalizeDualPanePrimaryWidth(
@@ -210,6 +212,7 @@ internal static class WorkspaceSettingsStore
             ("preview.width", settings.PreviewWidth.ToString(CultureInfo.InvariantCulture)),
             ("preview.renderHtml", settings.PreviewRenderHtml ? "true" : "false"),
             ("preview.videoPlayback", settings.PreviewVideoPlaybackEnabled ? "true" : "false"),
+            ("videoThumbnailsUseGpu", settings.VideoThumbnailsUseGpu ? "true" : "false"),
             ("dualPane.primaryPercent", settings.DualPanePrimaryPercent.ToString(CultureInfo.InvariantCulture)),
             ("dualPane.primaryWidth", settings.DualPanePrimaryWidth.ToString(CultureInfo.InvariantCulture)),
             ("columnPreset", settings.ColumnPreset),

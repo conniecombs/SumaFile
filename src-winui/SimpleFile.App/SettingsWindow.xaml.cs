@@ -191,7 +191,10 @@ public sealed partial class SettingsWindow : Window
             case "Appearance": AppearancePanel.Visibility = Visibility.Visible; break;
             case "Navigation": NavigationPanel.Visibility = Visibility.Visible; break;
             case "Behavior": BehaviorPanel.Visibility = Visibility.Visible; break;
-            case "Storage & Cache": StoragePanel.Visibility = Visibility.Visible; break;
+            case "Storage & Cache":
+                StoragePanel.Visibility = Visibility.Visible;
+                _ = RefreshVideoThumbnailStatusAsync();
+                break;
             case "Shortcuts": ShortcutsPanel.Visibility = Visibility.Visible; break;
             case "Toolbar": ToolbarPanel.Visibility = Visibility.Visible; break;
             case "Tools": ToolsPanel.Visibility = Visibility.Visible; break;
