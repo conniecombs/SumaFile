@@ -49,7 +49,7 @@
   - `pub fn fit(width: u32, height: u32, size: u32) -> (u32, u32)`
   - `pub fn scale(image: &DynamicImage, width: u32, height: u32) -> DynamicImage`
   - `pub fn render_decoded(decoded: &Decoded, size: u32) -> Result<Vec<u8>, String>`: fit, scale, encode JPEG, exactly as `render` did (transparency is dropped, so built-in thumbnails do not change). `render` calls it.
-  - `pub fn flatten_onto_white(image: &DynamicImage) -> DynamicImage`: blends each pixel with white by its alpha. The media process calls it before `render_decoded`.
+  - `pub fn flatten_onto_white(image: DynamicImage) -> DynamicImage`: blends each pixel with white by its alpha; an opaque picture is returned as it is. The media process calls it before `render_decoded`.
 
 - [ ] **Step 1:** Create the crate with the moved file and `pub` visibility; core depends on it and calls `sumafile_imaging::thumbnail::render`. Remove from core's `Cargo.toml` the dependencies only `thumbnail.rs` used.
 - [ ] **Step 2:** Run `cargo test -p sumafile-imaging`. Expected: the moved tests pass.

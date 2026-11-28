@@ -6,7 +6,9 @@ use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 use image::{DynamicImage, ImageEncoder};
 use std::path::Path;
-use sumafile_imaging::thumbnail::{fit, flatten_onto_white, render_decoded, scale};
+use sumafile_imaging::thumbnail::{
+    fit, flatten_onto_white, render_decoded, scale, scale_with_alpha,
+};
 use sumafile_media_client::protocol::{ImageKind, Method, Request};
 
 pub use sumafile_media_client::Rendered;
@@ -57,7 +59,7 @@ pub fn thumbnail(path: &Path, size: u32) -> Result<Rendered, RenderError> {
     let (width, height) = fit(full_width, full_height, size);
 
     let flat = Decoded {
-        image: flatten_onto_white(&eight_bits(decoded.image)),
+        image: flatten_onto_white(eight_bits(decoded.image)),
         full_size: decoded.full_size,
     };
     let bytes = render_decoded(&flat, size).map_err(RenderError::Decode)?;
@@ -77,7 +79,14 @@ pub fn preview(path: &Path, max_dimension: u32) -> Result<Rendered, RenderError>
     let image = eight_bits(decode(path, Purpose::Preview { max_dimension })?.image);
     let image = if image.width().max(image.height()) > max_dimension {
         let (width, height) = fit(image.width(), image.height(), max_dimension);
-        scale(&image, width, height)
+        if shows_through(&image) {
+            // The preview keeps its transparency, so each colour is weighed
+            // by its alpha. That takes a copy of the picture, which one with
+            // nothing to show through is spared.
+            scale_with_alpha(&image, width, height)
+        } else {
+            scale(&image, width, height)
+        }
     } else {
         image
     };
@@ -112,6 +121,14 @@ fn eight_bits(image: DynamicImage) -> DynamicImage {
     }
 }
 
+/// Whether any pixel of `image` lets what is behind it show.
+fn shows_through(image: &DynamicImage) -> bool {
+    match image {
+        DynamicImage::ImageRgba8(pixels) => pixels.pixels().any(|pixel| pixel.0[3] != u8::MAX),
+        _ => false,
+    }
+}
+
 fn encode_preview(image: DynamicImage) -> Result<Rendered, RenderError> {
     let (width, height) = (image.width(), image.height());
     let failed = |error: image::ImageError| {
@@ -119,11 +136,7 @@ fn encode_preview(image: DynamicImage) -> Result<Rendered, RenderError> {
     };
     let mut bytes = Vec::new();
 
-    let shows_through = match &image {
-        DynamicImage::ImageRgba8(pixels) => pixels.pixels().any(|pixel| pixel.0[3] != u8::MAX),
-        _ => false,
-    };
-    let kind = if shows_through {
+    let kind = if shows_through(&image) {
         PngEncoder::new_with_quality(&mut bytes, CompressionType::Fast, FilterType::Adaptive)
             .write_image(image.as_bytes(), width, height, image.color().into())
             .map_err(failed)?;
@@ -259,6 +272,42 @@ mod tests {
         assert_eq!(rendered.kind, ImageKind::Png);
         let decoded = image::load_from_memory(&rendered.bytes).unwrap().to_rgba8();
         assert_eq!(decoded.get_pixel(3, 3).0, [200, 10, 10, 64]);
+    }
+
+    /// White beside nothing. Scaled down, the pixels on the edge are partly
+    /// see-through, and must still be white: the colour of a pixel that does
+    /// not show (black here) has no part in them. Averaged in, it leaves a
+    /// dark fringe around every cut-out.
+    #[test]
+    fn a_scaled_preview_has_no_fringe_at_a_transparent_edge() {
+        let folder = Folder::new("preview-fringe");
+        let path = folder.path("cutout.tga");
+        RgbaImage::from_fn(256, 256, |x, _| {
+            if x < 130 {
+                Rgba([255, 255, 255, 255])
+            } else {
+                Rgba([0, 0, 0, 0])
+            }
+        })
+        .save(&path)
+        .unwrap();
+
+        let rendered = preview(&path, 64).unwrap();
+
+        assert_eq!(rendered.kind, ImageKind::Png);
+        let decoded = image::load_from_memory(&rendered.bytes).unwrap().to_rgba8();
+        assert_eq!(decoded.dimensions(), (64, 64));
+        let edge: Vec<_> = (0..64)
+            .map(|x| decoded.get_pixel(x, 32).0)
+            .filter(|pixel| (1..255).contains(&pixel[3]))
+            .collect();
+        assert!(!edge.is_empty(), "the edge has no partly see-through pixel");
+        for pixel in edge {
+            assert!(
+                pixel[..3].iter().all(|&channel| channel >= 250),
+                "a dark fringe: {pixel:?}"
+            );
+        }
     }
 
     /// An alpha channel that hides nothing is not worth a PNG several times

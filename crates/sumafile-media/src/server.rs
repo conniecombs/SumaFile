@@ -9,7 +9,7 @@ use std::io::{Read, Write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Mutex, PoisonError};
 use sumafile_media_client::protocol::{
-    read_message, write_message, FailureKind, Request, ResponseHeader,
+    read_message, write_message, FailureKind, Request, ResponseHeader, MAX_BODY_BYTES,
 };
 use sumafile_media_client::Rendered;
 
@@ -57,6 +57,11 @@ where
         ))
     });
     match result {
+        // The wire takes no longer body. With no answer at all, the file
+        // service would wait out its timeout and then end the process.
+        Ok(rendered) if rendered.bytes.len() > MAX_BODY_BYTES => {
+            (failure(request.id, &RenderError::TooLarge), Vec::new())
+        }
         Ok(rendered) => (
             ResponseHeader::success(request.id, rendered.kind, rendered.width, rendered.height),
             rendered.bytes,
@@ -96,6 +101,7 @@ mod tests {
     use std::time::Duration;
     use sumafile_media_client::protocol::{
         read_message, write_message, FailureKind, ImageKind, Method, Request, ResponseHeader,
+        MAX_BODY_BYTES,
     };
     use sumafile_media_client::Rendered;
 
@@ -204,6 +210,22 @@ mod tests {
         assert!(replies
             .iter()
             .all(|(header, body)| !header.ok && body.is_empty()));
+    }
+
+    /// The wire takes no body over its limit. A reply that is simply not
+    /// sent leaves the file service waiting until its timeout, which ends
+    /// the process and blames the file.
+    #[test]
+    fn a_picture_too_long_for_the_wire_is_answered_as_too_large() {
+        let replies = replies(requests(&["vast.tga"]), 1, |request| {
+            let mut rendered = picture(request)?;
+            rendered.bytes = vec![0; MAX_BODY_BYTES + 1];
+            Ok(rendered)
+        });
+
+        assert_eq!(replies[0].0.id, 1);
+        assert_eq!(replies[0].0.kind, Some(FailureKind::TooLarge));
+        assert!(!replies[0].0.ok && replies[0].1.is_empty());
     }
 
     /// A decoder that panics on one file must not take the process, or the

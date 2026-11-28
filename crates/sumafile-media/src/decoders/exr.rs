@@ -3,7 +3,7 @@
 //! OpenEXR: the first layer with colour channels, tone-mapped to 8 bits.
 
 use super::{open, whole, Decoded};
-use crate::limits::check_budget;
+use crate::limits::{check_budget, PIXEL_BUDGET_BYTES};
 use crate::render::RenderError;
 use crate::tonemap::tonemap_f32;
 use exr::prelude as exrs;
@@ -58,7 +58,18 @@ pub(super) fn decode(path: &Path) -> std::result::Result<Decoded, RenderError> {
             image.layer_data.channel_data.pixels,
         ))),
         // No red, green and blue channels: show the first channel as grey.
-        Err(colour_error) => first_channel(path).ok_or_else(|| exr_error(colour_error)),
+        Err(colour_error) => {
+            // That reader loads every channel of a layer before the first
+            // can be taken, however many the layer has.
+            for header in &meta.headers {
+                let bytes = (header.layer_size.area() as u64)
+                    .saturating_mul(header.channels.bytes_per_pixel as u64);
+                if bytes > PIXEL_BUDGET_BYTES {
+                    return Err(RenderError::TooLarge);
+                }
+            }
+            first_channel(path).ok_or_else(|| exr_error(colour_error))
+        }
     }
 }
 
@@ -120,6 +131,42 @@ mod tests {
             bright[0] == 255 && bright[1] == 255 && near(bright[2], 186),
             "{bright:?}"
         );
+    }
+
+    /// The head of an OpenEXR file whose one layer has `channels` float
+    /// channels, none of them a colour. No pixel data follows.
+    fn head_without_colour(width: usize, height: usize, channels: usize) -> Vec<u8> {
+        use exr::meta::attribute::{ChannelDescription, SampleType};
+        use exr::meta::header::Header;
+        use exr::meta::{magic_number, MetaData};
+
+        let channels = (0..channels)
+            .map(|index| {
+                ChannelDescription::named(format!("data{index:03}").as_str(), SampleType::F32)
+            })
+            .collect();
+        let headers = [Header::new("layer".into(), (width, height), channels)];
+        let mut file = Vec::new();
+        magic_number::write(&mut file).unwrap();
+        MetaData::validate(&headers, false)
+            .unwrap()
+            .write(&mut file)
+            .unwrap();
+        Header::write_all(&headers, &mut file, false).unwrap();
+        file
+    }
+
+    /// A layer without colour is shown by its first channel, but the reader
+    /// loads all of them first. Twenty float channels of 4,096 by 4,096 are
+    /// 1.25 GiB: the answer comes from the header, before they are asked for.
+    #[test]
+    fn a_layer_whose_channels_are_over_budget_answers_too_large() {
+        let folder = Folder::new("exr-channels");
+        let path = folder.write("data.exr", &head_without_colour(4096, 4096, 20));
+
+        let error = decode(&path, "exr", PREVIEW).err();
+
+        assert!(matches!(error, Some(RenderError::TooLarge)), "{error:?}");
     }
 
     #[test]

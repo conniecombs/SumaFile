@@ -374,9 +374,39 @@ read by SumaFile's own readers:
   Fujifilm's RAF header and Canon's CR3 boxes; it does not read maker notes. A thumbnail takes a
   preview of at least half its size; the preview pane needs at least 1,000 pixels.
 
-Every decoder checks, from the file's header, that the decoded picture fits 1 GiB
-(`limits::PIXEL_BUDGET_BYTES`) before it reads or allocates pixels. No decoder is a C or C++
-library, and none is LGPL or GPL.
+No decoder is a C or C++ library, and none is LGPL or GPL.
+
+**The pixel budget.** A decoded picture may take at most 1 GiB (`limits::PIXEL_BUDGET_BYTES`):
+its width times its height times its channels times the bytes of a sample. A decoder works this
+out from the file's header and answers `too_large` before it reads or allocates the pixels. What
+is counted, format by format:
+
+- Targa, QOI, the anymap family, Radiance HDR, and the PNG inside a Krita or OpenRaster file: the
+  picture as the `image` library returns it. The library's own allocation limit is set to the
+  same 1 GiB. The PNG may be at most 512 MiB long.
+- TIFF: the picture with its samples at 8, 16 or 32 bits. The `tiff` library's limits on its two
+  buffers are set to 1 GiB each.
+- JPEG XL: the picture as the decoder returns it. The decoder works in buffers several times that
+  size. It counts them itself, against a second 1 GiB; by its own account the count is not strict.
+- OpenEXR: every layer, as four float channels. A file with no colour channels is shown by its
+  first channel, and the library loads every channel to get it. Before that, every layer is
+  counted with all of its channels.
+- DDS: the first picture at full size, as RGBA. The headers are read alone first. Then at most 16
+  bytes a pixel are read from the file, and never more than 1 GiB. The other faces of a cube map,
+  the other layers of an array, the other slices of a volume and the smaller mipmaps are not read.
+- Photoshop: the flattened image at 8 bits a channel.
+- SVG: the size the drawing is drawn at. A file longer than 16 MiB is refused unread. A
+  gzip-compressed SVG is refused too: `usvg` is built without its `svgz` feature.
+- Camera RAW: an embedded JPEG, by the size in the JPEG's own header. A preview over the budget,
+  or longer than 64 MiB, is passed over for the next one.
+
+The budget counts the decoded picture and nothing more. It does not count the bytes of the file a
+decoder holds while it works. It does not count a library's working buffers, except where said
+above: OpenEXR, for one, unpacks every channel of a block at once. It does not count the parsed
+form of an SVG (`usvg` stops at one million elements) or the pictures embedded in one. It does
+not count the copies made to convert, scale and encode a picture: scaling a preview that has
+transparency copies the picture once. The job object's limit, below, is the guard for all of
+these.
 
 **The process.** The service finds `sumafile-media.exe` beside its own executable
 (`SUMAFILE_MEDIA_HELPER` names another, for tests and development). `media_provider::install`
@@ -391,8 +421,12 @@ u32 LE header length | header (UTF-8 JSON) | u32 LE body length | body
 `{ id, method: "thumbnail", path, size }` and `{ id, method: "preview", path, maxDimension }` are
 answered with `{ id, ok: true, format, width, height }` and the encoded picture as the body, or
 with `{ id, ok: false, kind, error }` where `kind` is `unsupported`, `too_large`, `decode` or
-`io`. Each request runs on its own thread, and a decoder that panics fails only its own request.
-The process leaves when its input closes.
+`io`. A picture whose encoded bytes are over the wire's 256 MiB is answered with `too_large`.
+Each request runs on its own thread, and a decoder that panics fails only its own request. The
+process leaves when its input closes.
+
+Before it reads its first request, the process sends one message with the id 0 and no body: it is
+running. No request has that id.
 
 **The client** (`sumafile-media-client`) keeps one bad file from costing more than itself:
 
@@ -403,8 +437,12 @@ The process leaves when its input closes.
   each is sent again with nothing else in flight, and a file that fails alone is recorded as bad.
 - A bad file answers at once, without starting the process, until its size or modified time
   changes. At most 1,024 are remembered, for the life of the service.
+- A process that ends, or stays silent for 15 s, before it says it is running never started. No
+  request was sent to it, so no file is recorded as bad, and starting is tried again after 30 s.
+  Until then these formats fall back to Windows, as they do when the process is not installed.
 - The client ends the process after 120 s with nothing to do. On Windows the process runs at
-  below-normal priority in a job object that limits it to 3 GiB and ends it with the service.
+  below-normal priority in a job object that limits it to 3 GiB and ends it with the service. If
+  Windows refuses the job object, the process runs without the limit and the service logs it.
 
 **In the service.** `simplefile_core::media` holds the provider registry, shaped like the archive
 engine registry. `preview::generate_thumbnail` asks the provider for a media-process format and

@@ -61,12 +61,13 @@ pub fn render_decoded(decoded: &Decoded, size: u32) -> Result<Vec<u8>, String> {
 }
 
 /// `image` as it looks on a white page: each pixel blended with white by its
-/// alpha. A picture without an alpha channel is returned as it is.
-pub fn flatten_onto_white(image: &DynamicImage) -> DynamicImage {
+/// alpha. A picture without an alpha channel is returned as it is. The
+/// picture is taken, not borrowed, so that this costs no copy of it.
+pub fn flatten_onto_white(image: DynamicImage) -> DynamicImage {
     if !image.color().has_alpha() {
-        return image.clone();
+        return image;
     }
-    let mut flat = image.to_rgba8();
+    let mut flat = image.into_rgba8();
     for pixel in flat.pixels_mut() {
         let alpha = u32::from(pixel.0[3]);
         for channel in &mut pixel.0[..3] {
@@ -247,11 +248,26 @@ pub fn fit(width: u32, height: u32, size: u32) -> (u32, u32) {
     )
 }
 
-/// `image` scaled to exactly `width` by `height`.
+/// `image` scaled to exactly `width` by `height`, for a result whose alpha
+/// channel is dropped afterwards, as a JPEG thumbnail's is. Alpha is averaged
+/// like a colour channel, which spares the copy [`scale_with_alpha`] makes.
 pub fn scale(image: &DynamicImage, width: u32, height: u32) -> DynamicImage {
+    scale_by(image, width, height, false)
+}
+
+/// `image` scaled to exactly `width` by `height`, for a result that keeps its
+/// alpha channel: each pixel's colour counts by its alpha. A pixel that does
+/// not show then gives none of its colour to the pixels beside it, which
+/// would ring every cut-out with a fringe. A picture that is enlarged, or is
+/// not 8-bit, is scaled as [`scale`] does.
+pub fn scale_with_alpha(image: &DynamicImage, width: u32, height: u32) -> DynamicImage {
+    scale_by(image, width, height, true)
+}
+
+fn scale_by(image: &DynamicImage, width: u32, height: u32, weigh_by_alpha: bool) -> DynamicImage {
     let reduces = width <= image.width() && height <= image.height();
     reduces
-        .then(|| resample(image, width, height))
+        .then(|| resample(image, width, height, weigh_by_alpha))
         .flatten()
         // Enlarging, and pixel formats other than 8-bit, as the image library does it.
         .unwrap_or_else(|| image.thumbnail_exact(width, height))
@@ -259,7 +275,12 @@ pub fn scale(image: &DynamicImage, width: u32, height: u32) -> DynamicImage {
 
 /// `image` reduced to `width` by `height` with SIMD, or `None` for a pixel
 /// format this path does not handle.
-fn resample(image: &DynamicImage, width: u32, height: u32) -> Option<DynamicImage> {
+fn resample(
+    image: &DynamicImage,
+    width: u32,
+    height: u32,
+    weigh_by_alpha: bool,
+) -> Option<DynamicImage> {
     let (pixel_type, source): (fir::PixelType, &[u8]) = match image {
         DynamicImage::ImageLuma8(pixels) => (fir::PixelType::U8, pixels.as_raw()),
         DynamicImage::ImageLumaA8(pixels) => (fir::PixelType::U8x2, pixels.as_raw()),
@@ -277,11 +298,11 @@ fn resample(image: &DynamicImage, width: u32, height: u32) -> Option<DynamicImag
     } else {
         fir::FilterType::Box
     };
-    // The alpha channel is averaged like a colour channel, not used as a
-    // weight: the thumbnail is a JPEG, which drops it afterwards.
+    // Weighing by alpha multiplies each colour by its alpha before the
+    // averaging and divides it out afterwards, in a copy of the picture.
     let options = fir::ResizeOptions::new()
         .resize_alg(fir::ResizeAlg::Convolution(filter))
-        .use_alpha(false);
+        .use_alpha(weigh_by_alpha);
     fir::Resizer::new()
         .resize(&source, &mut target, &options)
         .ok()?;
@@ -572,6 +593,39 @@ mod tests {
 
         assert_eq!([200, 40, 40, 255], scaled.get_pixel(20, 64).0);
         assert_eq!([40, 40, 200, 0], scaled.get_pixel(108, 64).0);
+    }
+
+    /// A pixel that does not show still has a colour (blue here). Where the
+    /// result keeps its alpha channel, none of that colour may reach the
+    /// pixels beside it: it would ring every cut-out with a fringe.
+    #[test]
+    fn scaling_with_alpha_takes_no_colour_from_transparent_pixels() {
+        let source = DynamicImage::ImageRgba8(RgbaImage::from_fn(512, 512, |x, _| {
+            if x < 258 {
+                Rgba([200, 40, 40, 255])
+            } else {
+                Rgba([40, 40, 200, 0])
+            }
+        }));
+
+        let scaled = scale_with_alpha(&source, 128, 128).to_rgba8();
+
+        assert_eq!([200, 40, 40, 255], scaled.get_pixel(20, 64).0);
+        assert_eq!(0, scaled.get_pixel(108, 64).0[3]);
+        // Colour held in 8 bits under a faint alpha is coarse, so the pixels
+        // that show at least a quarter are the ones compared.
+        let edge: Vec<_> = (0..128)
+            .map(|x| scaled.get_pixel(x, 64).0)
+            .filter(|pixel| (64..255).contains(&pixel[3]))
+            .collect();
+        assert!(!edge.is_empty(), "the edge has no partly transparent pixel");
+        for pixel in edge {
+            let near = |channel: u8, expected: u8| channel.abs_diff(expected) <= 4;
+            assert!(
+                near(pixel[0], 200) && near(pixel[1], 40) && near(pixel[2], 40),
+                "colour from a transparent pixel: {pixel:?}"
+            );
+        }
     }
 
     #[test]
@@ -976,8 +1030,8 @@ mod tests {
         let clear = DynamicImage::ImageRgba8(RgbaImage::from_pixel(8, 8, Rgba([10, 20, 30, 0])));
         let half = DynamicImage::ImageRgba8(RgbaImage::from_pixel(8, 8, Rgba([0, 0, 0, 128])));
 
-        let flat = flatten_onto_white(&clear).to_rgb8();
-        let blended = flatten_onto_white(&half).to_rgb8();
+        let flat = flatten_onto_white(clear).to_rgb8();
+        let blended = flatten_onto_white(half).to_rgb8();
 
         assert!(flat.pixels().all(|pixel| pixel.0 == [255, 255, 255]));
         assert!(blended.pixels().all(|pixel| pixel
@@ -986,10 +1040,16 @@ mod tests {
             .all(|&channel| (126..=128).contains(&channel))));
     }
 
+    /// A picture can be a gigabyte. One with nothing to blend comes back as
+    /// it went in: the same pixels in the same memory, not a copy of them.
     #[test]
     fn flatten_onto_white_keeps_an_opaque_picture() {
         let opaque = DynamicImage::ImageRgb8(picture(8, 8));
+        let pixels = opaque.as_bytes().as_ptr();
 
-        assert_eq!(flatten_onto_white(&opaque).to_rgb8(), opaque.to_rgb8());
+        let flat = flatten_onto_white(opaque);
+
+        assert_eq!(flat.to_rgb8(), picture(8, 8));
+        assert_eq!(flat.as_bytes().as_ptr(), pixels, "the picture was copied");
     }
 }

@@ -135,7 +135,10 @@ pub(super) fn decode(path: &Path, purpose: Purpose) -> Result<Decoded, RenderErr
     go_to(&mut input, resources_end)?;
 
     let layer_bytes = long_of(&mut input, header.psb)?;
-    let layers_end = position(&mut input)? + layer_bytes;
+    // A PSB's length is 8 bytes of the file's own choosing.
+    let layers_end = position(&mut input)?
+        .checked_add(layer_bytes)
+        .ok_or_else(|| damaged("its layers are longer than a file can be"))?;
     let transparency = has_merged_transparency(&mut input, &header, layer_bytes);
     go_to(&mut input, layers_end)?;
 
@@ -778,6 +781,27 @@ mod tests {
         let error = decode(&path, "psb", PREVIEW).err();
 
         assert!(matches!(error, Some(RenderError::TooLarge)), "{error:?}");
+    }
+
+    /// A PSB gives the length of its layers in 8 bytes. One that reaches
+    /// past any file is damage like any other, not a reason to stop.
+    #[test]
+    fn a_layer_section_longer_than_any_file_answers_decode() {
+        let folder = Folder::new("psb-length");
+        let document = Document {
+            psb: true,
+            ..rgb_document()
+        };
+        let mut bytes = document.bytes();
+        // The section is empty: its length is the 8 bytes before the image
+        // data, which is a compression mark and three planes of 12 samples.
+        let length = bytes.len() - (2 + 3 * 12) - 8;
+        bytes[length..length + 8].fill(0xFF);
+        let path = folder.write("endless.psb", &bytes);
+
+        let error = decode(&path, "psb", PREVIEW).err();
+
+        assert!(matches!(error, Some(RenderError::Decode(_))), "{error:?}");
     }
 
     #[test]

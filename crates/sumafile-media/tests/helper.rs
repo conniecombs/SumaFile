@@ -81,6 +81,53 @@ fn preview_end_to_end() {
     );
 }
 
+/// A second kind of decoder: an SVG is drawn at the size asked for, where
+/// the anymap above is decoded and scaled.
+const HALVES: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200">
+    <rect x="0" y="0" width="200" height="200" fill="#ff0000"/>
+    <rect x="200" y="0" width="200" height="200" fill="#0000ff"/>
+</svg>"##;
+
+fn is_red(pixel: [u8; 4]) -> bool {
+    pixel[0] > 200 && pixel[1] < 60 && pixel[2] < 60
+}
+
+fn is_blue(pixel: [u8; 4]) -> bool {
+    pixel[0] < 60 && pixel[1] < 60 && pixel[2] > 200
+}
+
+#[test]
+fn svg_thumbnail_end_to_end() {
+    let folder = Folder::new("svg-thumbnail");
+    let path = folder.0.join("halves.svg");
+    std::fs::write(&path, HALVES).unwrap();
+
+    let rendered = client().thumbnail(&path, 64).unwrap();
+
+    assert_eq!(rendered.kind, ImageKind::Jpeg);
+    assert_eq!((rendered.width, rendered.height), (64, 32));
+    let decoded = image::load_from_memory(&rendered.bytes).unwrap();
+    assert_eq!(decoded.dimensions(), (64, 32));
+    // Red on the left, blue on the right: the drawing, not a blank.
+    let (left, right) = (decoded.get_pixel(8, 16).0, decoded.get_pixel(56, 16).0);
+    assert!(is_red(left) && is_blue(right), "{left:?} {right:?}");
+}
+
+#[test]
+fn svg_preview_end_to_end() {
+    let folder = Folder::new("svg-preview");
+    let path = folder.0.join("halves.svg");
+    std::fs::write(&path, HALVES).unwrap();
+
+    let rendered = client().preview(&path, 100).unwrap();
+
+    assert_eq!((rendered.width, rendered.height), (100, 50));
+    let decoded = image::load_from_memory(&rendered.bytes).unwrap();
+    assert_eq!(decoded.dimensions(), (100, 50));
+    let (left, right) = (decoded.get_pixel(12, 25).0, decoded.get_pixel(88, 25).0);
+    assert!(is_red(left) && is_blue(right), "{left:?} {right:?}");
+}
+
 #[test]
 fn a_unicode_path_round_trips() {
     let folder = Folder::new("unicode");

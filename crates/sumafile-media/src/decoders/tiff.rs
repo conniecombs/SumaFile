@@ -35,6 +35,13 @@ pub(super) fn decode(path: &Path) -> Result<Decoded, RenderError> {
             )))
         }
     };
+    // Samples of 1, 2 or 4 bits come packed several to a byte, and are not
+    // unpacked here. Read as bytes they would be too few for the picture.
+    if bits < 8 {
+        return Err(RenderError::Decode(format!(
+            "TIFF files with {bits}-bit samples are not supported."
+        )));
+    }
     // Samples that are not 8 or 16 bits pass through 32-bit floats.
     let sample_bytes = if bits <= 16 {
         bits.div_ceil(8).max(1)
@@ -222,6 +229,55 @@ mod tests {
         let pixels = decoded.image.to_rgb8();
         assert_eq!(pixels.get_pixel(0, 0).0, [255, 0, 0]);
         assert_eq!(pixels.get_pixel(0, 1).0, [0, 0, 255]);
+    }
+
+    /// A grey TIFF of `bits` bits a sample, its rows packed into bytes, as
+    /// scans and faxes are stored. The encoder writes whole bytes only.
+    fn packed_grey(width: u16, height: u16, bits: u16) -> Vec<u8> {
+        let row_bytes = (usize::from(width) * usize::from(bits)).div_ceil(8);
+        let data = vec![0xAA; row_bytes * usize::from(height)];
+        let entries: [(u16, u16, u32); 9] = [
+            (256, 3, u32::from(width)),
+            (257, 3, u32::from(height)),
+            (258, 3, u32::from(bits)),
+            (259, 3, 1),   // not compressed
+            (262, 3, 1),   // zero is black
+            (273, 4, 122), // the data follows this directory
+            (277, 3, 1),   // one sample a pixel
+            (278, 3, u32::from(height)),
+            (279, 4, data.len() as u32),
+        ];
+        let mut file = b"II\x2a\x00\x08\x00\x00\x00".to_vec();
+        file.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+        for (tag, kind, value) in entries {
+            file.extend_from_slice(&tag.to_le_bytes());
+            file.extend_from_slice(&kind.to_le_bytes());
+            file.extend_from_slice(&1u32.to_le_bytes());
+            file.extend_from_slice(&value.to_le_bytes());
+        }
+        file.extend_from_slice(&0u32.to_le_bytes());
+        assert_eq!(file.len(), 122);
+        file.extend_from_slice(&data);
+        file
+    }
+
+    /// Such a file is sound. This decoder does not unpack it, and says so.
+    #[test]
+    fn a_tiff_of_less_than_8_bits_a_sample_says_what_is_unsupported() {
+        let folder = Folder::new("tiff-bits");
+        for bits in [1, 2, 4] {
+            let path = folder.write("scan.tif", &packed_grey(16, 2, bits));
+
+            let error = decode(&path, "tif", PREVIEW).err();
+
+            let Some(RenderError::Decode(message)) = &error else {
+                panic!("{bits} bits: {error:?}");
+            };
+            assert!(
+                message.contains(&format!("{bits}-bit samples")),
+                "{bits} bits: {message}"
+            );
+        }
     }
 
     #[test]

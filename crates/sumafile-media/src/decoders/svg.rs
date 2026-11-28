@@ -2,16 +2,22 @@
 
 //! SVG, drawn by `resvg` at the size that was asked for.
 
-use super::{whole, Decoded};
+use super::{open, whole, Decoded};
 use crate::limits::check_budget;
 use crate::render::{Purpose, RenderError};
 use image::{DynamicImage, RgbaImage};
 use resvg::{tiny_skia, usvg};
+use std::io::Read;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
 /// A preview is drawn at up to this many times the SVG's own size.
 const PREVIEW_SCALE: f32 = 4.0;
+
+/// The longest SVG file that is read. A drawing takes far more memory once
+/// it is parsed than its file is long (16 to 150 times, as measured), so the
+/// file's length is the guard on that memory.
+const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
 
 /// The system's fonts, found once: the search takes a few hundred
 /// milliseconds, and most SVGs with text need it.
@@ -25,8 +31,16 @@ fn fonts() -> Arc<usvg::fontdb::Database> {
 }
 
 pub(super) fn decode(path: &Path, purpose: Purpose) -> Result<Decoded, RenderError> {
-    let data = std::fs::read(path)
-        .map_err(|error| RenderError::Io(format!("Cannot open {}: {error}", path.display())))?;
+    let unreadable = |error| RenderError::Io(format!("Cannot read {}: {error}", path.display()));
+    let file = open(path)?;
+    if file.get_ref().metadata().map_err(unreadable)?.len() > MAX_FILE_BYTES {
+        return Err(RenderError::TooLarge);
+    }
+    let mut data = Vec::new();
+    // The file may have grown since it was measured.
+    file.take(MAX_FILE_BYTES)
+        .read_to_end(&mut data)
+        .map_err(unreadable)?;
     let options = usvg::Options {
         fontdb: fonts(),
         // Pictures inside the SVG (data URLs) are drawn. A name of another
@@ -169,6 +183,54 @@ mod tests {
             pixels.pixels().all(|pixel| pixel.0[3] == 0),
             "the other file was drawn"
         );
+    }
+
+    /// The drawing here is small and sound; only the file is too long.
+    #[test]
+    fn an_svg_file_over_the_length_limit_answers_too_large() {
+        let folder = Folder::new("svg-long");
+        let mut svg = HALVES.as_bytes().to_vec();
+        svg.resize(super::MAX_FILE_BYTES as usize + 1, b' ');
+        let path = folder.write("long.svg", &svg);
+
+        let error = decode(&path, "svg", Purpose::Thumbnail { size: 64 }).err();
+
+        assert!(matches!(error, Some(RenderError::TooLarge)), "{error:?}");
+    }
+
+    /// `data` as a gzip file, its one block stored as it is.
+    fn gzip(data: &[u8]) -> Vec<u8> {
+        let mut checksum = u32::MAX;
+        for byte in data {
+            checksum ^= u32::from(*byte);
+            for _ in 0..8 {
+                let carry = checksum & 1;
+                checksum = (checksum >> 1) ^ (carry * 0xEDB8_8320);
+            }
+        }
+        let length = data.len() as u16;
+        // Magic number, deflate, no flags, no time, no hints, unknown system.
+        let mut file = vec![0x1F, 0x8B, 8, 0, 0, 0, 0, 0, 0, 0xFF];
+        file.push(1); // the last block, stored
+        file.extend_from_slice(&length.to_le_bytes());
+        file.extend_from_slice(&(!length).to_le_bytes());
+        file.extend_from_slice(data);
+        file.extend_from_slice(&(!checksum).to_le_bytes());
+        file.extend_from_slice(&u32::from(length).to_le_bytes());
+        file
+    }
+
+    /// `usvg` can inflate a gzip-compressed SVG, to any length the file
+    /// asks for. It is built here without that (its `svgz` feature is off),
+    /// so a sound drawing that is compressed is refused, not inflated.
+    #[test]
+    fn a_gzip_compressed_svg_is_not_inflated() {
+        let folder = Folder::new("svg-gzip");
+        let path = folder.write("packed.svg", &gzip(HALVES.as_bytes()));
+
+        let error = decode(&path, "svg", Purpose::Thumbnail { size: 64 }).err();
+
+        assert!(matches!(error, Some(RenderError::Decode(_))), "{error:?}");
     }
 
     #[test]
