@@ -1,8 +1,9 @@
 //! Pictures decoded outside the core: the formats SumaFile's media process
-//! handles (`sumafile-media`). The core knows a provider, not a process: the
-//! file service registers one that owns the process, as it registers archive
-//! engines. With none registered, these formats are simply unsupported here
-//! and the app's fallbacks apply.
+//! handles (`sumafile-media`), and video thumbnails, which its video process
+//! makes (`sumafile-video`). The core knows a provider, not a process: the
+//! file service registers one that owns the processes, as it registers
+//! archive engines. With none registered, these formats are simply
+//! unsupported here and the app's fallbacks apply.
 
 use crate::utils::resolve_readable_path;
 use std::path::Path;
@@ -22,6 +23,42 @@ pub struct EncodedImage {
     pub data: Vec<u8>,
 }
 
+/// Who decoded a video frame. `Hardware` means the graphics card decoded it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoDecoder {
+    Hardware,
+    Software,
+}
+
+/// Why the processor decoded a video frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SoftwareReason {
+    /// The setting turns the graphics card off.
+    TurnedOff,
+    /// Windows has no graphics device that can decode video.
+    NoDevice,
+    /// There is a device, and Windows decoded this file on the processor.
+    NoHardwareDecoder,
+    /// Decoding with the device failed, and without it worked.
+    HardwareFailed,
+}
+
+/// A video thumbnail, and who decoded its frame.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VideoThumbnail {
+    pub jpeg: Vec<u8>,
+    pub decoder: VideoDecoder,
+    /// Why the processor decoded it. `None` for a hardware decode.
+    pub reason: Option<SoftwareReason>,
+}
+
+/// The setting behind "Use the graphics card for video thumbnails".
+pub const VIDEO_GPU_SETTING_KEY: &str = "videoThumbnailsUseGpu";
+
+/// The frame a video thumbnail shows when the caller names none, in percent
+/// of the video's length.
+const DEFAULT_VIDEO_POSITION_PERCENT: u8 = 25;
+
 /// Decodes the media-process formats. The messages of its errors are shown
 /// to the user as they are.
 pub trait MediaProvider: Send + Sync {
@@ -29,6 +66,23 @@ pub trait MediaProvider: Send + Sync {
     fn thumbnail(&self, path: &Path, size: u32) -> Result<Vec<u8>, String>;
     /// `path` at screen size: at most `max_dimension` on its long side.
     fn preview(&self, path: &Path, max_dimension: u32) -> Result<EncodedImage, String>;
+    /// A JPEG of the frame `position_percent` of the way through the video
+    /// at `path`, that fits a `size` by `size` box. `hardware`: whether the
+    /// graphics card may decode it. A provider that makes no video
+    /// thumbnails keeps this answer.
+    fn video_thumbnail(
+        &self,
+        path: &Path,
+        _size: u32,
+        _position_percent: u8,
+        _hardware: bool,
+    ) -> Result<VideoThumbnail, String> {
+        Err(unsupported(&extension_of(path).unwrap_or_default()))
+    }
+}
+
+pub(crate) fn unsupported(extension: &str) -> String {
+    format!("Unsupported image format: {extension}")
 }
 
 static PROVIDER: RwLock<Option<Arc<dyn MediaProvider>>> = RwLock::new(None);
@@ -56,6 +110,50 @@ pub fn media_provider() -> Option<Arc<dyn MediaProvider>> {
 pub fn thumbnail_uses_media_process(path: &str) -> bool {
     extension_of(Path::new(path))
         .is_some_and(|extension| sumafile_imaging::formats::is_media_process_extension(&extension))
+}
+
+/// Whether a thumbnail of `path` is a video's, judged from the name alone.
+/// Such a thumbnail waits in the file service's video lane.
+pub fn thumbnail_is_video(path: &str) -> bool {
+    extension_of(Path::new(path))
+        .is_some_and(|extension| sumafile_imaging::formats::is_video_extension(&extension))
+}
+
+/// Whether the graphics card may decode video thumbnails, from the stored
+/// value of [`VIDEO_GPU_SETTING_KEY`]. On unless the value is `false`.
+pub(crate) fn video_uses_gpu(stored: Option<&str>) -> bool {
+    !stored.is_some_and(|value| value.trim().eq_ignore_ascii_case("false"))
+}
+
+/// A JPEG of one frame of the video at `path`, from the provider. The
+/// position is kept between 1 and 99; 25 when absent. The setting decides
+/// whether the graphics card may be used; one that cannot be read leaves it
+/// on.
+pub(crate) fn video_thumbnail(
+    provider: &dyn MediaProvider,
+    path: &Path,
+    size: u32,
+    position_percent: u8,
+) -> Result<Vec<u8>, String> {
+    let stored = crate::settings_store::get_db_setting(VIDEO_GPU_SETTING_KEY.to_string())
+        .ok()
+        .flatten();
+    provider
+        .video_thumbnail(
+            path,
+            size,
+            position_percent,
+            video_uses_gpu(stored.as_deref()),
+        )
+        .map(|thumbnail| thumbnail.jpeg)
+}
+
+/// The position of a video thumbnail's frame: the caller's, kept between 1
+/// and 99, or 25.
+pub(crate) fn video_position(position_percent: Option<u8>) -> u8 {
+    position_percent
+        .unwrap_or(DEFAULT_VIDEO_POSITION_PERCENT)
+        .clamp(1, 99)
 }
 
 fn extension_of(path: &Path) -> Option<String> {
@@ -90,7 +188,7 @@ pub fn render_image_preview(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::preview::generate_thumbnail;
+    use crate::preview::{generate_thumbnail, generate_thumbnail_at};
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Mutex, MutexGuard};
@@ -133,6 +231,8 @@ pub(crate) mod tests {
         pub(crate) thumbnails: AtomicUsize,
         pub(crate) previews: AtomicUsize,
         pub(crate) last_dimension: AtomicUsize,
+        /// The size, position and hardware flag of every video request.
+        pub(crate) videos: Mutex<Vec<(u32, u8, bool)>>,
     }
 
     impl MediaProvider for Counting {
@@ -142,6 +242,24 @@ pub(crate) mod tests {
                 return Err("The image could not be decoded.".to_string());
             }
             Ok(format!("thumbnail of {} at {size}", path.display()).into_bytes())
+        }
+
+        fn video_thumbnail(
+            &self,
+            path: &Path,
+            size: u32,
+            position_percent: u8,
+            hardware: bool,
+        ) -> Result<VideoThumbnail, String> {
+            self.videos
+                .lock()
+                .unwrap()
+                .push((size, position_percent, hardware));
+            Ok(VideoThumbnail {
+                jpeg: format!("frame of {} at {position_percent} %", path.display()).into_bytes(),
+                decoder: VideoDecoder::Software,
+                reason: Some(SoftwareReason::NoHardwareDecoder),
+            })
         }
 
         fn preview(&self, path: &Path, max_dimension: u32) -> Result<EncodedImage, String> {
@@ -196,6 +314,136 @@ pub(crate) mod tests {
 
         assert_eq!(bytes, format!("thumbnail of {path} at 96").into_bytes());
         assert_eq!(provider.thumbnails.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_video_goes_to_the_provider_with_its_position() {
+        let folder = Folder::new("video");
+        let provider = Arc::new(Counting::default());
+        let _registered = Registered::new(provider.clone());
+        let path = folder.file("clip.MP4");
+
+        let bytes = generate_thumbnail_at(path.clone(), Some(256), Some(40)).unwrap();
+
+        assert_eq!(bytes, format!("frame of {path} at 40 %").into_bytes());
+        assert_eq!(*provider.videos.lock().unwrap(), [(256, 40, true)]);
+        assert_eq!(provider.thumbnails.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_video_without_a_position_is_asked_for_at_25() {
+        let folder = Folder::new("video-default");
+        let provider = Arc::new(Counting::default());
+        let _registered = Registered::new(provider.clone());
+
+        generate_thumbnail(folder.file("clip.mkv"), Some(96)).unwrap();
+
+        assert_eq!(*provider.videos.lock().unwrap(), [(96, 25, true)]);
+    }
+
+    #[test]
+    fn a_position_is_kept_between_1_and_99() {
+        let folder = Folder::new("video-clamped");
+        let provider = Arc::new(Counting::default());
+        let _registered = Registered::new(provider.clone());
+
+        generate_thumbnail_at(folder.file("a.mov"), Some(96), Some(0)).unwrap();
+        generate_thumbnail_at(folder.file("b.mov"), Some(96), Some(200)).unwrap();
+
+        assert_eq!(
+            *provider.videos.lock().unwrap(),
+            [(96, 1, true), (96, 99, true)]
+        );
+    }
+
+    /// The Settings switch. Only the word `false` turns the graphics card
+    /// off: a setting never saved, or one that cannot be read, leaves it on.
+    #[test]
+    fn the_gpu_is_used_unless_the_setting_says_false() {
+        assert!(video_uses_gpu(None));
+        assert!(video_uses_gpu(Some("true")));
+        assert!(video_uses_gpu(Some("0")));
+        assert!(video_uses_gpu(Some("")));
+        assert!(!video_uses_gpu(Some("false")));
+        assert!(!video_uses_gpu(Some(" False ")));
+    }
+
+    #[test]
+    fn a_video_thumbnail_is_cached_by_position() {
+        let folder = Folder::new("video-cached");
+        let provider = Arc::new(Counting::default());
+        let _registered = Registered::new(provider.clone());
+        let path = folder.file("clip.webm");
+
+        let first = generate_thumbnail_at(path.clone(), Some(96), Some(25)).unwrap();
+        let again = generate_thumbnail_at(path.clone(), Some(96), Some(25)).unwrap();
+        let elsewhere = generate_thumbnail_at(path, Some(96), Some(60)).unwrap();
+
+        assert_eq!(first, again);
+        assert_ne!(first, elsewhere);
+        assert_eq!(
+            *provider.videos.lock().unwrap(),
+            [(96, 25, true), (96, 60, true)],
+            "the second came from the cache; another position did not"
+        );
+    }
+
+    /// Making a thumbnail of a video inside an archive would mean unpacking
+    /// the whole video first. It keeps its icon.
+    #[test]
+    fn a_video_inside_an_archive_is_refused_and_nothing_is_unpacked() {
+        let folder = Folder::new("video-archived");
+        let provider = Arc::new(Counting::default());
+        let _registered = Registered::new(provider.clone());
+        let archive = folder.file("films.zip");
+        let inside = format!("{archive}{}clip.mp4", std::path::MAIN_SEPARATOR);
+        assert!(crate::archive::is_archive_virtual_path(&inside));
+
+        let reply = generate_thumbnail_at(inside, Some(96), Some(25));
+
+        // The archive is not a real one: had it been opened, the error would
+        // be about that.
+        assert_eq!(reply, Err("Unsupported image format: mp4".to_string()));
+        assert!(provider.videos.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_picture_ignores_the_position() {
+        let folder = Folder::new("picture-position");
+        let provider = Arc::new(Counting::default());
+        let _registered = Registered::new(provider.clone());
+        let path = folder.file("art.psd");
+
+        let with_position = generate_thumbnail_at(path.clone(), Some(96), Some(60)).unwrap();
+        let without = generate_thumbnail(path, Some(96)).unwrap();
+
+        assert_eq!(with_position, without);
+        assert_eq!(
+            provider.thumbnails.load(Ordering::SeqCst),
+            1,
+            "one key for both"
+        );
+        assert!(provider.videos.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn without_a_provider_a_video_is_unsupported() {
+        let folder = Folder::new("video-nobody");
+        let _registered = Registered::none();
+
+        let reply = generate_thumbnail_at(folder.file("clip.mp4"), Some(96), Some(25));
+
+        assert_eq!(reply, Err("Unsupported image format: mp4".to_string()));
+    }
+
+    #[test]
+    fn the_video_question_is_answered_from_the_name_alone() {
+        assert!(thumbnail_is_video(r"C:\films\a.MKV"));
+        assert!(thumbnail_is_video("clip.mp4"));
+        assert!(!thumbnail_is_video("art.psd"));
+        assert!(!thumbnail_is_video("photo.jpg"));
+        assert!(!thumbnail_is_video("no-extension"));
+        assert!(!thumbnail_uses_media_process("clip.mp4"));
     }
 
     #[test]

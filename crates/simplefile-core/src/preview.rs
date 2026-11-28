@@ -2,6 +2,7 @@ use crate::models::{FilePreview, ThumbnailResult};
 
 use crate::utils::resolve_readable_path;
 use std::fs;
+use std::path::Path;
 
 pub fn read_file_preview(path: String, max_size: Option<u64>) -> Result<FilePreview, String> {
     let path_buf = resolve_readable_path(&path)?;
@@ -75,25 +76,47 @@ pub fn read_file_preview(path: String, max_size: Option<u64>) -> Result<FilePrev
 }
 
 pub fn generate_thumbnail(path: String, size: Option<u32>) -> Result<Vec<u8>, String> {
-    let path_buf = resolve_readable_path(&path)?;
-    let extension = path_buf
+    generate_thumbnail_at(path, size, None)
+}
+
+/// A JPEG thumbnail of `path`. For a video, `position_percent` says which
+/// frame: how far into the video, 1 to 99, and 25 when absent. A picture
+/// ignores it.
+pub fn generate_thumbnail_at(
+    path: String,
+    size: Option<u32>,
+    position_percent: Option<u8>,
+) -> Result<Vec<u8>, String> {
+    let extension = Path::new(&path)
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default();
+    let is_video = sumafile_imaging::formats::is_video_extension(&extension);
+    // Before the path is resolved: resolving a path inside an archive unpacks
+    // the entry, and a whole video is not unpacked for one thumbnail.
+    if is_video && crate::archive::is_archive_virtual_path(&path) {
+        return Err(crate::media::unsupported(&extension));
+    }
+
+    let path_buf = resolve_readable_path(&path)?;
     let built_in = matches!(
         extension.as_str(),
         "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp"
     );
-    // The other formats are decoded by the media process, through a provider
-    // the file service registers.
+    // The other formats are decoded by the media process, and video frames
+    // by the video process, through a provider the file service registers.
     let provider = if built_in {
         None
+    } else if is_video {
+        crate::media::media_provider()
     } else {
         crate::media::provider_for(&extension)
     };
     if !built_in && provider.is_none() {
-        return Err(format!("Unsupported image format: {extension}"));
+        return Err(crate::media::unsupported(&extension));
     }
+    // Part of a video thumbnail's cache key. A picture has no position.
+    let position = is_video.then(|| crate::media::video_position(position_percent));
 
     let thumb_size = size.unwrap_or(128);
 
@@ -113,20 +136,30 @@ pub fn generate_thumbnail(path: String, size: Option<u32>) -> Result<Vec<u8>, St
 
     if cache_enabled {
         if let Some(cached) =
-            crate::thumbnail_cache::get(&path, file_modified, file_size, thumb_size)
+            crate::thumbnail_cache::get_at(&path, file_modified, file_size, thumb_size, position)
         {
             return Ok(cached);
         }
     }
 
-    let jpeg_bytes = match provider {
-        Some(provider) => provider.thumbnail(&path_buf, thumb_size)?,
-        None => sumafile_imaging::thumbnail::render(&path_buf, &extension, thumb_size)?,
+    let jpeg_bytes = match (provider, position) {
+        (Some(provider), Some(position)) => {
+            crate::media::video_thumbnail(provider.as_ref(), &path_buf, thumb_size, position)?
+        }
+        (Some(provider), None) => provider.thumbnail(&path_buf, thumb_size)?,
+        (None, _) => sumafile_imaging::thumbnail::render(&path_buf, &extension, thumb_size)?,
     };
 
     if cache_enabled {
         // Store in cache (fire-and-forget; errors are silently ignored).
-        crate::thumbnail_cache::put(&path, file_modified, file_size, thumb_size, &jpeg_bytes);
+        crate::thumbnail_cache::put_at(
+            &path,
+            file_modified,
+            file_size,
+            thumb_size,
+            position,
+            &jpeg_bytes,
+        );
 
         // Eviction walks the whole cache, so it is throttled to one pass a
         // minute instead of one thread per thumbnail.

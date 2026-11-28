@@ -73,8 +73,16 @@ fn cache_root() -> PathBuf {
 const THUMBNAIL_FORMAT: u32 = 2;
 
 /// Computes the cache key for a given file path, modification time, file size,
-/// and requested thumbnail size.
-fn cache_key(path: &str, modified: SystemTime, size: u64, thumb_size: u32) -> String {
+/// and requested thumbnail size. A video thumbnail also has the position of
+/// its frame, in percent; a picture has none, and its key is the one it had
+/// before videos were cached.
+fn cache_key(
+    path: &str,
+    modified: SystemTime,
+    size: u64,
+    thumb_size: u32,
+    position_percent: Option<u8>,
+) -> String {
     let modified_epoch = modified
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -91,6 +99,10 @@ fn cache_key(path: &str, modified: SystemTime, size: u64, thumb_size: u32) -> St
     hasher.update(size.to_le_bytes());
     hasher.update(b":");
     hasher.update(thumb_size.to_le_bytes());
+    if let Some(position_percent) = position_percent {
+        hasher.update(b":position:");
+        hasher.update([position_percent]);
+    }
     let hash = hasher.finalize();
     hex::encode(hash)
 }
@@ -109,7 +121,19 @@ fn cache_path_in(root: &Path, key: &str) -> PathBuf {
 
 /// Attempts to read a cached thumbnail. Returns `Some(jpeg_bytes)` on hit.
 pub fn get(path: &str, modified: SystemTime, size: u64, thumb_size: u32) -> Option<Vec<u8>> {
-    let key = cache_key(path, modified, size, thumb_size);
+    get_at(path, modified, size, thumb_size, None)
+}
+
+/// As [`get`], for the thumbnail of a video's frame at `position_percent`.
+/// `None` is a picture.
+pub fn get_at(
+    path: &str,
+    modified: SystemTime,
+    size: u64,
+    thumb_size: u32,
+    position_percent: Option<u8>,
+) -> Option<Vec<u8>> {
+    let key = cache_key(path, modified, size, thumb_size, position_percent);
     let cached = cache_path(&key);
     fs::read(&cached).ok()
 }
@@ -117,7 +141,20 @@ pub fn get(path: &str, modified: SystemTime, size: u64, thumb_size: u32) -> Opti
 /// Stores a thumbnail in the cache. Creates parent directories as needed.
 /// If the cache write fails (e.g. disk full), the error is silently ignored.
 pub fn put(path: &str, modified: SystemTime, size: u64, thumb_size: u32, jpeg_bytes: &[u8]) {
-    let key = cache_key(path, modified, size, thumb_size);
+    put_at(path, modified, size, thumb_size, None, jpeg_bytes);
+}
+
+/// As [`put`], for the thumbnail of a video's frame at `position_percent`.
+/// `None` is a picture.
+pub fn put_at(
+    path: &str,
+    modified: SystemTime,
+    size: u64,
+    thumb_size: u32,
+    position_percent: Option<u8>,
+    jpeg_bytes: &[u8],
+) {
+    let key = cache_key(path, modified, size, thumb_size, position_percent);
     let root = cache_root();
     let cached = cache_path_in(&root, &key);
     if let Some(parent) = cached.parent() {
@@ -340,17 +377,64 @@ mod tests {
     #[test]
     fn cache_key_is_deterministic() {
         let t = SystemTime::UNIX_EPOCH;
-        let k1 = cache_key(r"C:\test.jpg", t, 1234, 128);
-        let k2 = cache_key(r"C:\test.jpg", t, 1234, 128);
+        let k1 = cache_key(r"C:\test.jpg", t, 1234, 128, None);
+        let k2 = cache_key(r"C:\test.jpg", t, 1234, 128, None);
         assert_eq!(k1, k2);
         assert_eq!(k1.len(), 64); // SHA-256 hex = 64 chars
+    }
+
+    /// Video thumbnails brought the frame's position into the key. A
+    /// picture has none, and its key must stay what it was: otherwise every
+    /// cached picture thumbnail would be made again.
+    #[test]
+    fn a_picture_key_is_what_it_was() {
+        let modified = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        let before = "d731d4abd40b961d6909a3772872cd776dd2ed290a4d2bdce212584ac0ba3d4d";
+
+        assert_eq!(
+            cache_key(r"C:\p\a.jpg", modified, 12_345, 256, None),
+            before
+        );
+    }
+
+    #[test]
+    fn each_position_of_a_video_has_a_key_of_its_own() {
+        let t = SystemTime::UNIX_EPOCH;
+        let key = |position| cache_key(r"C:\v\a.mp4", t, 1234, 128, position);
+
+        assert_ne!(key(Some(25)), key(Some(60)));
+        assert_ne!(key(Some(25)), key(None));
+        assert_eq!(key(Some(25)), key(Some(25)));
+    }
+
+    #[test]
+    fn two_positions_of_one_video_are_kept_apart() {
+        let modified = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_001);
+        let path = format!(r"C:\v\kept-apart-{}.mp4", std::process::id());
+
+        put_at(&path, modified, 77, 96, Some(25), b"at a quarter");
+        put_at(&path, modified, 77, 96, Some(60), b"past the middle");
+
+        assert_eq!(
+            get_at(&path, modified, 77, 96, Some(25)).as_deref(),
+            Some(b"at a quarter".as_slice())
+        );
+        assert_eq!(
+            get_at(&path, modified, 77, 96, Some(60)).as_deref(),
+            Some(b"past the middle".as_slice())
+        );
+        assert_eq!(
+            get(&path, modified, 77, 96),
+            None,
+            "a picture's key finds neither"
+        );
     }
 
     #[test]
     fn cache_key_differs_on_size() {
         let t = SystemTime::UNIX_EPOCH;
-        let k1 = cache_key(r"C:\test.jpg", t, 1234, 128);
-        let k2 = cache_key(r"C:\test.jpg", t, 5678, 128);
+        let k1 = cache_key(r"C:\test.jpg", t, 1234, 128, None);
+        let k2 = cache_key(r"C:\test.jpg", t, 5678, 128, None);
         assert_ne!(k1, k2);
     }
 
@@ -368,15 +452,15 @@ mod tests {
         old.update(128u32.to_le_bytes());
         assert_ne!(
             hex::encode(old.finalize()),
-            cache_key(r"C:\test.jpg", t, 1234, 128)
+            cache_key(r"C:\test.jpg", t, 1234, 128, None)
         );
     }
 
     #[test]
     fn cache_key_differs_on_thumb_size() {
         let t = SystemTime::UNIX_EPOCH;
-        let k1 = cache_key(r"C:\test.jpg", t, 1234, 128);
-        let k2 = cache_key(r"C:\test.jpg", t, 1234, 256);
+        let k1 = cache_key(r"C:\test.jpg", t, 1234, 128, None);
+        let k2 = cache_key(r"C:\test.jpg", t, 1234, 256, None);
         assert_ne!(k1, k2);
     }
 
@@ -415,7 +499,7 @@ mod tests {
         assert_eq!(cached.as_deref(), Some(jpeg_data.as_slice()));
 
         // Clean up.
-        let key = cache_key(path, t, 999, 128);
+        let key = cache_key(path, t, 999, 128, None);
         let _ = fs::remove_file(cache_path(&key));
     }
 
