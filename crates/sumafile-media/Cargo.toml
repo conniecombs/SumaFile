@@ -1,0 +1,22 @@
+[package]
+name = "sumafile-media"
+version = "1.2.0"
+description = "SumaFile's media process: decodes image formats Windows may have no codec for, in a process of its own"
+authors = ["SumaFile Team"]
+license = "MIT"
+repository = "https://github.com/conniecombs/SumaFile"
+edition = "2021"
+
+[lib]
+name = "sumafile_media"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sumafile-media"
+path = "src/main.rs"
+
+[dependencies]
+sumafile-imaging = { path = "../sumafile-imaging" }
+sumafile-media-client = { path = "../sumafile-media-client" }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "tga", "qoi", "pnm", "hdr"] }
+serde_json = "1"
