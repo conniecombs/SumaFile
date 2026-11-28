@@ -9,9 +9,26 @@ use std::io::{Read, Write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Mutex, PoisonError};
 use sumafile_media_client::protocol::{
-    read_message, write_message, FailureKind, Request, ResponseHeader, MAX_BODY_BYTES,
+    read_message, write_message, Decoder, FailureKind, Request, ResponseHeader, SoftwareReason,
+    MAX_BODY_BYTES,
 };
 use sumafile_media_client::Rendered;
+
+/// What a handler answers with: the picture, and for a video frame who
+/// decoded it and, for a processor decode, why.
+pub struct Answered {
+    pub rendered: Rendered,
+    pub video: Option<(Decoder, Option<SoftwareReason>)>,
+}
+
+impl From<Rendered> for Answered {
+    fn from(rendered: Rendered) -> Self {
+        Self {
+            rendered,
+            video: None,
+        }
+    }
+}
 
 /// Decoders recurse and keep tables on the stack.
 const WORKER_STACK_BYTES: usize = 8 * 1024 * 1024;
@@ -19,11 +36,12 @@ const WORKER_STACK_BYTES: usize = 8 * 1024 * 1024;
 /// Answer requests from `input` on `output` until `input` ends. Requests
 /// still being answered then keep their threads: the caller decides whether
 /// to wait for them (a test) or to leave (the process).
-pub fn run<R, W, H>(mut input: R, output: W, handler: H)
+pub fn run<R, W, H, A>(mut input: R, output: W, handler: H)
 where
     R: Read,
     W: Write + Send + 'static,
-    H: Fn(&Request) -> Result<Rendered, RenderError> + Send + Sync + 'static,
+    H: Fn(&Request) -> Result<A, RenderError> + Send + Sync + 'static,
+    A: Into<Answered>,
 {
     let output = Arc::new(Mutex::new(output));
     let handler = Arc::new(handler);
@@ -47,25 +65,41 @@ where
     }
 }
 
-fn answer<H>(request: &Request, handler: &H) -> (ResponseHeader, Vec<u8>)
+fn answer<H, A>(request: &Request, handler: &H) -> (ResponseHeader, Vec<u8>)
 where
-    H: Fn(&Request) -> Result<Rendered, RenderError>,
+    H: Fn(&Request) -> Result<A, RenderError>,
+    A: Into<Answered>,
 {
-    let result = catch_unwind(AssertUnwindSafe(|| handler(request))).unwrap_or_else(|_| {
-        Err(RenderError::Decode(
-            "The image could not be decoded.".to_string(),
-        ))
-    });
+    let result = catch_unwind(AssertUnwindSafe(|| handler(request).map(Into::into)))
+        .unwrap_or_else(|_| {
+            Err(RenderError::Decode(
+                "The image could not be decoded.".to_string(),
+            ))
+        });
     match result {
         // The wire takes no longer body. With no answer at all, the file
         // service would wait out its timeout and then end the process.
-        Ok(rendered) if rendered.bytes.len() > MAX_BODY_BYTES => {
+        Ok(Answered { rendered, .. }) if rendered.bytes.len() > MAX_BODY_BYTES => {
             (failure(request.id, &RenderError::TooLarge), Vec::new())
         }
-        Ok(rendered) => (
-            ResponseHeader::success(request.id, rendered.kind, rendered.width, rendered.height),
-            rendered.bytes,
-        ),
+        Ok(Answered { rendered, video }) => {
+            let header = match video {
+                Some((decoder, reason)) => ResponseHeader::video(
+                    request.id,
+                    rendered.width,
+                    rendered.height,
+                    decoder,
+                    reason,
+                ),
+                None => ResponseHeader::success(
+                    request.id,
+                    rendered.kind,
+                    rendered.width,
+                    rendered.height,
+                ),
+            };
+            (header, rendered.bytes)
+        }
         Err(error) => (failure(request.id, &error), Vec::new()),
     }
 }
@@ -100,8 +134,8 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Duration;
     use sumafile_media_client::protocol::{
-        read_message, write_message, FailureKind, ImageKind, Method, Request, ResponseHeader,
-        MAX_BODY_BYTES,
+        read_message, write_message, Decoder, FailureKind, ImageKind, Method, Request,
+        ResponseHeader, SoftwareReason, MAX_BODY_BYTES,
     };
     use sumafile_media_client::Rendered;
 
@@ -137,9 +171,10 @@ mod tests {
     }
 
     /// Runs the loop over `input` and returns every reply, by request id.
-    fn replies<H>(input: Vec<u8>, count: usize, handler: H) -> Vec<(ResponseHeader, Vec<u8>)>
+    fn replies<H, A>(input: Vec<u8>, count: usize, handler: H) -> Vec<(ResponseHeader, Vec<u8>)>
     where
-        H: Fn(&Request) -> Result<Rendered, RenderError> + Send + Sync + 'static,
+        H: Fn(&Request) -> Result<A, RenderError> + Send + Sync + 'static,
+        A: Into<Answered>,
     {
         let (sender, written) = mpsc::channel();
         run(input.as_slice(), Output(sender), handler);
@@ -170,6 +205,42 @@ mod tests {
         })
     }
 
+    /// The video process answers through this loop too, and its reply says
+    /// who decoded the frame. A picture's reply says nothing of the kind.
+    #[test]
+    fn a_video_answer_names_its_decoder() {
+        let replies = replies(requests(&["card.mp4", "processor.mp4"]), 2, |request| {
+            let video = if request.path == "card.mp4" {
+                (Decoder::Hardware, None)
+            } else {
+                (Decoder::Software, Some(SoftwareReason::NoHardwareDecoder))
+            };
+            Ok(Answered {
+                rendered: picture(request)?,
+                video: Some(video),
+            })
+        });
+        let pictures = super::tests::replies(requests(&["a.tga"]), 1, picture);
+
+        assert_eq!(
+            replies[0].0,
+            ResponseHeader::video(1, 64, 48, Decoder::Hardware, None)
+        );
+        assert_eq!(replies[0].1, b"card.mp4");
+        assert_eq!(
+            replies[1].0,
+            ResponseHeader::video(
+                2,
+                64,
+                48,
+                Decoder::Software,
+                Some(SoftwareReason::NoHardwareDecoder)
+            )
+        );
+        assert_eq!(pictures[0].0.decoder, None);
+        assert_eq!(pictures[0].0.reason, None);
+    }
+
     #[test]
     fn every_request_gets_its_own_reply() {
         let replies = replies(requests(&["a.tga", "b.tga"]), 2, picture);
@@ -189,7 +260,7 @@ mod tests {
             requests(&["huge.tga", "bad.tga", "notes.xyz", "gone.tga"]),
             4,
             |request| {
-                Err(match request.path.as_str() {
+                Err::<Rendered, _>(match request.path.as_str() {
                     "huge.tga" => RenderError::TooLarge,
                     "bad.tga" => RenderError::Decode("not a Targa file".to_string()),
                     "notes.xyz" => RenderError::Unsupported("no decoder".to_string()),
