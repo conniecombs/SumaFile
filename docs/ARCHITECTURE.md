@@ -136,6 +136,9 @@ start the real service and the staged plugins, which must be built first.
 | --- | --- | --- |
 | `crates/simplefile-ipc` | Protocol constants (`PROTOCOL_VERSION`, `MAX_FRAME_BYTES`, error codes, prefixes), `frame`, the `rpc` types, generated method and event names | none |
 | `crates/sumafile-transfer` | Transfer primitives: `staging`, `journal`, `reliability`, `policy`, `resources`, `tuning`, `ids`, `paths`, `path_conflict`. A leaf crate: it never depends on `simplefile-core` or `simplefile-service` | none |
+| `crates/sumafile-imaging` | The thumbnail pipeline (`thumbnail`: decode, fit, scale, encode as JPEG) and the generated list of formats the media process decodes (`formats`). A leaf crate | none |
+| `crates/sumafile-media-client` | The file service's side of the media process: the wire format (`protocol`), and the client that starts the process, gates and times its requests and isolates files that crash it. Standard library and `serde` only | none |
+| `crates/sumafile-media` | The media process, `sumafile-media.exe`: the decoders (`decoders/`), the render functions and the request loop. It ships beside the service | `sumafile-imaging`, `sumafile-media-client` |
 | `crates/simplefile-core` | The domain, with no transport: `dir_list`, `listing_view`, `collation`, `file_ops`, `archive`, `preview`, thumbnails, `metadata`, `entry_facts`, `fact_cache`, `drives`, `recycle_bin`, `tags`, `smart_folders`, `settings_store`, `cleanup`, `checksum`, `compare`, `open_with`, `terminal`, `updater`, and the wire types in `models.rs` | `sumafile-transfer` |
 | `crates/simplefile-service` | The process: the pipe (`main.rs`), the session loop (`session/`), `dispatch/`, `scheduler.rs`, `binary.rs`, `listing_views.rs`, `session_cache.rs`, the transfer engine (`progress.rs`, `progress/`), `search.rs`, `watcher.rs`, `shell.rs`, `plugin_archive/` | `simplefile-core`, `simplefile-ipc`, `sumafile-transfer` |
 | `crates/sumafile-plugin` | The helper crate for backends: the pipe server, `plugin.handshake`, request routing, cancel flags, `HostClient` | `simplefile-ipc` |
@@ -344,6 +347,81 @@ Columns that cost a read per entry are **entry facts**: `folder_size`, `item_cou
   Windows property system (`MainWindow.LazyColumns.cs`), two reads at a time, and stores a result
   with `put_entry_facts`.
 
+## The media process
+
+SumaFile decodes some picture formats itself, for thumbnails and for the preview pane, so that
+they show whatever codecs Windows has. Six common formats (JPEG, PNG, GIF, WebP, BMP) are decoded
+inside the file service, by `sumafile-imaging`. The rest are decoded by a second program,
+`sumafile-media.exe`, which the file service starts and owns. A file that crashes a decoder,
+hangs it or exhausts memory then costs the service nothing.
+
+**Formats.** `ipc/schema/v1/media-formats.json` lists them: Photoshop (PSD, PSB), OpenEXR,
+Radiance HDR, JPEG XL, TIFF, SVG, DDS, Targa, QOI, the portable anymap family, Krita, OpenRaster
+and camera RAW. `npm run generate:media-formats` writes the Rust list
+(`sumafile_imaging::formats`) and the C# one (`MediaFormats`); `npm run check` fails when either is
+stale. A test in `sumafile-media` fails when a listed extension has no decoder. HEIC, AVIF and
+JPEG 2000 are not here: they are left to Windows' own codecs.
+
+**Decoders** (`crates/sumafile-media/src/decoders`), one per format, picked by the file's
+extension. EXR, TIFF and SVG are ported from [Oculante](https://github.com/woelper/oculante) (MIT;
+its licence text ships as `LICENSE-oculante.txt`). Photoshop documents and camera RAW files are
+read by SumaFile's own readers:
+
+- A Photoshop document gives the JPEG thumbnail Photoshop saved when that is large enough, else
+  its flattened image. The layers are skipped, never loaded.
+- A camera RAW file gives the largest JPEG preview the camera embedded, turned the way the camera
+  was held. Sensor data is not developed. The reader walks a TIFF file's directories and reads
+  Fujifilm's RAF header and Canon's CR3 boxes; it does not read maker notes. A thumbnail takes a
+  preview of at least half its size; the preview pane needs at least 1,000 pixels.
+
+Every decoder checks, from the file's header, that the decoded picture fits 1 GiB
+(`limits::PIXEL_BUDGET_BYTES`) before it reads or allocates pixels. No decoder is a C or C++
+library, and none is LGPL or GPL.
+
+**The process.** The service finds `sumafile-media.exe` beside its own executable
+(`SUMAFILE_MEDIA_HELPER` names another, for tests and development). `media_provider::install`
+registers a provider with the core at service start and starts nothing; the process starts with
+the first thumbnail or preview that needs it. Requests and replies cross its standard input and
+output:
+
+```text
+u32 LE header length | header (UTF-8 JSON) | u32 LE body length | body
+```
+
+`{ id, method: "thumbnail", path, size }` and `{ id, method: "preview", path, maxDimension }` are
+answered with `{ id, ok: true, format, width, height }` and the encoded picture as the body, or
+with `{ id, ok: false, kind, error }` where `kind` is `unsupported`, `too_large`, `decode` or
+`io`. Each request runs on its own thread, and a decoder that panics fails only its own request.
+The process leaves when its input closes.
+
+**The client** (`sumafile-media-client`) keeps one bad file from costing more than itself:
+
+- At most four thumbnail requests and two preview requests are with the process at a time. A
+  request's timeout (20 s for a thumbnail, 60 s for a preview) therefore measures its decode.
+- A request that outlasts its timeout ends the process, and its file is recorded as bad.
+- When the process stops with one request in flight, that file is recorded as bad. With several,
+  each is sent again with nothing else in flight, and a file that fails alone is recorded as bad.
+- A bad file answers at once, without starting the process, until its size or modified time
+  changes. At most 1,024 are remembered, for the life of the service.
+- The client ends the process after 120 s with nothing to do. On Windows the process runs at
+  below-normal priority in a job object that limits it to 3 GiB and ends it with the service.
+
+**In the service.** `simplefile_core::media` holds the provider registry, shaped like the archive
+engine registry. `preview::generate_thumbnail` asks the provider for a media-process format and
+keeps the disk thumbnail cache for both kinds. Such a thumbnail waits on another process, not on a
+core, so it runs on the scheduler's media lane (`run_media`: four thumbnail permits, two preview
+permits) and never holds a background permit. `render_image_preview` answers the preview pane on
+the preview permits.
+
+**In the app.** `ThumbnailRouting` (`SimpleFile.Core`) says which extensions the service makes
+thumbnails for. Media-process formats load through their own gate in `FileListThumbnailHost`, two
+at a time. Windows' thumbnail stays the fallback for every format. The preview pane asks the
+service first for these formats, except SVG, which WinUI draws as vectors.
+
+To add a format: add it to `media-formats.json`, run the generator, write the decoder with its
+tests in `crates/sumafile-media/src/decoders`, and add its extension to the dispatch in
+`decoders/mod.rs`.
+
 ## Plugins
 
 A plugin is a folder with a `plugin.json` and up to two halves. `SimpleFile.PluginHost` runs in the
@@ -509,6 +587,7 @@ session loop; the data folder keeps its identifier; the startup limits hold. Thr
 | --- | --- | --- |
 | An IPC method, event or wire type | [Adding a method](#adding-a-method) | `npm run check`, `npm run check:rust`, `npm run check:winui` |
 | File-system behaviour: listing, file operations, archives, previews, metadata | `crates/simplefile-core/src` | `npm run check:rust` |
+| A picture format SumaFile decodes itself | [The media process](#the-media-process): `ipc/schema/v1/media-formats.json`, `crates/sumafile-media/src/decoders` | `npm run check`, `npm run check:rust`, `npm run check:winui` |
 | How a request is scheduled, streamed or cancelled | `crates/simplefile-service/src/session`, `dispatch`, `scheduler.rs` | `npm run check:rust` |
 | Transfers | `crates/simplefile-service/src/progress*`, `crates/sumafile-transfer`; in the app `TransferManagerViewModel` (the queue), `TransferPolicy` (options) and `TransferConflictSession` (conflicts); [TRANSFER_TUNING.md](TRANSFER_TUNING.md) | `npm run check:rust`, `npm run check:winui` |
 | Navigation, tabs, selection, sorting | `SimpleFile.Core/WorkspaceControllers`, `ExplorerWorkspace.*.cs` | `npm run check:winui` |

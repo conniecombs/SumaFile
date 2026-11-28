@@ -199,6 +199,13 @@ uninstalling, or remove those entries in Credential Manager. Settings in
   camera's embedded preview when that is large enough; videos show a frame;
   PDFs and Office documents use Windows' own thumbnails. Settings -> Storage &
   cache controls the thumbnail cache
+- More picture formats, whatever codecs Windows has: SumaFile also makes
+  thumbnails and previews for Photoshop (PSD, PSB), OpenEXR, Radiance HDR,
+  JPEG XL, TIFF, SVG, DDS, Targa, QOI, PNM, Krita and OpenRaster files, and
+  shows the preview that cameras embed in RAW files (DNG, NEF, CR2, CR3,
+  ARW, RAF, RW2, PEF and others). These are decoded in a separate process,
+  so a damaged file cannot take SumaFile down. HEIC and AVIF use Windows'
+  own codecs
 - Keep-folders-on-top sorting, and settings-controlled visibility of hidden
   and system files
 

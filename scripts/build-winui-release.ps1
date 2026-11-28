@@ -130,7 +130,7 @@ function Resolve-Tool {
 function Assert-Payload {
     param([Parameter(Mandatory = $true)][string]$Directory)
 
-    foreach ($required in @("SumaFile.exe", "simplefile-service.exe", "resources.pri", "MainWindow.xbf")) {
+    foreach ($required in @("SumaFile.exe", "simplefile-service.exe", "sumafile-media.exe", "LICENSE-oculante.txt", "resources.pri", "MainWindow.xbf")) {
         $path = Join-Path $Directory $required
         if (-not (Test-Path -LiteralPath $path)) {
             throw "WinUI payload is missing $required under $Directory."
@@ -214,7 +214,7 @@ function Get-LikelyWinUILockHolder {
     }
 
     $forward = $resolved.Replace('\', '/')
-    $processNames = @("SumaFile.exe", "SimpleFile.App.exe", "SimpleFile.exe", "simplefile-service.exe", "sumafile-sevenzip-backend.exe", "sumafile-remote-backend.exe", "sumafile-git-backend.exe")
+    $processNames = @("SumaFile.exe", "SimpleFile.App.exe", "SimpleFile.exe", "simplefile-service.exe", "sumafile-media.exe", "sumafile-sevenzip-backend.exe", "sumafile-remote-backend.exe", "sumafile-git-backend.exe")
     $processes = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue
     if (-not $processes) {
         return @()
@@ -301,6 +301,14 @@ function New-WinUIPayload {
     }
 
     Copy-Item -LiteralPath $ServiceExe -Destination (Join-Path $Destination "simplefile-service.exe") -Force
+    # The service's media process is built into the same folder and ships beside it: the service looks for it
+    # next to its own executable. Decoders ported from Oculante carry its MIT licence text.
+    $mediaExe = Join-Path (Split-Path -Parent $ServiceExe) "sumafile-media.exe"
+    if (-not (Test-Path -LiteralPath $mediaExe)) {
+        throw "sumafile-media.exe was not produced beside $ServiceExe."
+    }
+    Copy-Item -LiteralPath $mediaExe -Destination (Join-Path $Destination "sumafile-media.exe") -Force
+    Copy-Item -LiteralPath (Join-Path $root "crates\sumafile-media\LICENSE-oculante.txt") -Destination (Join-Path $Destination "LICENSE-oculante.txt") -Force
     Install-BundledPlugins -Root (Join-Path $Destination "plugins") -Configuration Release
     Assert-Payload $Destination
 }
@@ -338,6 +346,7 @@ if (-not $SkipChecks) {
 
 Write-Step "Build simplefile-service"
 Invoke-Native cargo @("build", "-p", "simplefile-service", "--locked", "--release")
+Invoke-Native cargo @("build", "-p", "sumafile-media", "--bin", "sumafile-media", "--locked", "--release")
 Invoke-Native cargo @("build", "-p", "sumafile-sevenzip-backend", "--locked", "--release")
 Invoke-Native cargo @("build", "-p", "sumafile-remote-backend", "--locked", "--release")
 Invoke-Native cargo @("build", "-p", "sumafile-git-backend", "--locked", "--release")

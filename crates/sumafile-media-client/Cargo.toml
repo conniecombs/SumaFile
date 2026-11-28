@@ -1,11 +1,12 @@
 [package]
 name = "sumafile-media-client"
-version = "1.2.0"
+version = "1.0.0"
 description = "Starts SumaFile's media process and talks to it: the wire format, timeouts and crash isolation"
 authors = ["SumaFile Team"]
 license = "MIT"
 repository = "https://github.com/conniecombs/SumaFile"
 edition = "2021"
+publish = false
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

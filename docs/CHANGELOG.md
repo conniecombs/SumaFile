@@ -8,6 +8,28 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+### Thumbnails and previews
+
+- SumaFile makes its own thumbnails and previews for more picture formats,
+  whatever codecs Windows has: Photoshop (PSD and PSB), OpenEXR, Radiance
+  HDR, JPEG XL, TIFF, SVG, DDS, Targa, QOI, PNM, Krita and OpenRaster. They
+  used to depend on Windows having a codec for them, and most showed a plain
+  icon.
+- Camera RAW files (DNG, NEF, CR2, CR3, ARW, RAF, RW2, PEF and others) show
+  the preview the camera stored in the file, turned the way the camera was
+  held. SumaFile does not develop the raw sensor data.
+- These formats are decoded in a separate program, `sumafile-media.exe`,
+  which starts the first time one is needed and stops when idle. A file that
+  crashes or hangs a decoder now costs only its own thumbnail: Windows'
+  thumbnail or the file's icon is shown for it, and that file is not tried
+  again until it changes.
+- Thumbnails of these formats load in their own queue, so a slow Photoshop
+  file does not hold up the JPEG thumbnails beside it.
+- A Photoshop file in the preview pane shows its picture. It used to show a
+  "design" icon card.
+- Windows' own thumbnail remains the fallback for every format, and the only
+  source for HEIC, AVIF and JPEG 2000.
+
 ### Window
 
 - SumaFile opens where it was closed: on the same screen, at the same size,

@@ -44,6 +44,12 @@ const requiredFiles = [
   'src-winui/SimpleFile.PluginSdk/SimpleFile.PluginSdk.csproj',
   'src-winui/SimpleFile.PluginHost/SimpleFile.PluginHost.csproj',
   'crates/simplefile-service/Cargo.toml',
+  // The media process: decoders for image formats Windows may have no codec for. It ships beside the service.
+  'crates/sumafile-media/Cargo.toml',
+  'crates/sumafile-media-client/Cargo.toml',
+  'crates/sumafile-imaging/Cargo.toml',
+  // Decoders ported from Oculante carry its MIT licence, and the text ships in the payload.
+  'crates/sumafile-media/LICENSE-oculante.txt',
   'crates/sumafile-plugin/Cargo.toml',
   'crates/sumafile-plugin/README.md',
   'crates/simplefile-ipc/README.md',
@@ -103,6 +109,8 @@ try {
 const nsisSnippets = [
   'Name "SumaFile"',
   'simplefile-service.exe',
+  // The service's media process. It ends with the service, but an installer must not find it holding its file.
+  'taskkill /F /IM sumafile-media.exe',
   'SumaFile.exe',
   'InstallDir "$LOCALAPPDATA\\Programs\\SumaFile-WinUI"',
   'RequestExecutionLevel user',
@@ -182,8 +190,20 @@ for (const element of removeFolderExElements) {
   }
 }
 
+// Both installer smokes check that the media process arrived beside the service.
+for (const [name, source] of [
+  ['scripts/smoke-winui-msi.ps1', readText('scripts/smoke-winui-msi.ps1')],
+  ['scripts/smoke-winui-nsis.ps1', readText('scripts/smoke-winui-nsis.ps1')],
+]) {
+  requireSnippet(source, name, 'sumafile-media.exe');
+}
+
 const buildSnippets = [
   'simplefile-service',
+  // Built, copied beside the service, required in the payload, and stopped before files are replaced.
+  '"-p", "sumafile-media"',
+  '"sumafile-media.exe"',
+  'LICENSE-oculante.txt',
   'dotnet publish',
   'SumaFile.exe',
   'x64-winui-portable.zip',

@@ -1,11 +1,12 @@
 [package]
 name = "sumafile-media"
-version = "1.2.0"
+version = "1.0.0"
 description = "SumaFile's media process: decodes image formats Windows may have no codec for, in a process of its own"
 authors = ["SumaFile Team"]
 license = "MIT"
 repository = "https://github.com/conniecombs/SumaFile"
 edition = "2021"
+publish = false
 
 [lib]
 name = "sumafile_media"

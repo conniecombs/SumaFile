@@ -64,6 +64,10 @@ try {
     if (-not $service) {
         throw "WinUI MSI extraction did not contain simplefile-service.exe."
     }
+    # The service's media process ships beside it; without it, formats such as PSD and camera RAW lose their thumbnails.
+    if (-not (Test-Path -LiteralPath (Join-Path $service.DirectoryName "sumafile-media.exe"))) {
+        throw "WinUI MSI extraction did not contain sumafile-media.exe beside simplefile-service.exe."
+    }
 
     Write-Host "Extracted $($msi.Name) to $extractDir."
     Write-Host "Extracted executable version: $($exe.VersionInfo.ProductVersion)."

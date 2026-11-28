@@ -3317,7 +3317,7 @@ dependencies = [
 
 [[package]]
 name = "sumafile-imaging"
-version = "1.2.0"
+version = "1.0.0"
 dependencies = [
  "fast_image_resize",
  "image",
@@ -3328,7 +3328,7 @@ dependencies = [
 
 [[package]]
 name = "sumafile-media"
-version = "1.2.0"
+version = "1.0.0"
 dependencies = [
  "exr",
  "image",
@@ -3348,7 +3348,7 @@ dependencies = [
 
 [[package]]
 name = "sumafile-media-client"
-version = "1.2.0"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",

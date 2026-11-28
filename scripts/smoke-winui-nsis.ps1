@@ -91,6 +91,9 @@ try {
     if (-not (Test-Path -LiteralPath (Join-Path $installDir "simplefile-service.exe"))) {
         throw "Installed simplefile-service.exe was not found next to SumaFile.exe."
     }
+    if (-not (Test-Path -LiteralPath (Join-Path $installDir "sumafile-media.exe"))) {
+        throw "Installed sumafile-media.exe was not found next to simplefile-service.exe."
+    }
     Write-Host "Installed SumaFile $($installed.DisplayVersion) at $exePath."
 
     Assert-BundledPlugins -Root (Join-Path $installDir "plugins")
