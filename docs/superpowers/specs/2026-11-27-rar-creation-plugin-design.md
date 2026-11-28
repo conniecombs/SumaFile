@@ -64,8 +64,8 @@ broken.
 
 ## Constraints
 
-- **No new NuGet packages.** Only packages already in the lock files. New Rust crates are fine: `rars` and its
-  dependencies.
+- **New dependencies are allowed.** This work adds Rust crates (`rars` and its dependencies) and needs no new NuGet
+  package.
 - **The 50 ms startup budget for plugin discovery is not raised** (`docs/ARCHITECTURE.md`, "Startup budget"). A plugin
   with `archiveFormats` starts its backend at startup, after the discovery stages, so it costs a process for the whole
   session. It must use no CPU while idle.
