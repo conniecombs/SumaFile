@@ -19,9 +19,8 @@ base64 = "0.23"
 ed25519-dalek = "3"
 flate2 = "1"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp"] }
+sumafile-imaging = { path = "../sumafile-imaging" }
 # Thumbnails: SIMD scaling, and JPEG decoding at reduced size (no worker threads).
-fast_image_resize = "6.1"
-jpeg-decoder = { version = "0.3.2", default-features = false }
 # Lazy columns: video duration from MP4/MOV (mp4) and MKV/WebM (matroska) containers.
 mp4 = "0.14"
 matroska = "0.30"

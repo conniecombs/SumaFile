@@ -35,16 +35,22 @@ const PREVIEW_SHAPE_TOLERANCE: f64 = 0.02;
 /// An image decoded for a thumbnail, turned the way its orientation says.
 /// `image` may be smaller than the file's picture; `full_size` is always the
 /// picture's size, turned the same way.
-pub(crate) struct Decoded {
-    pub(crate) image: DynamicImage,
-    pub(crate) full_size: (u32, u32),
+pub struct Decoded {
+    pub image: DynamicImage,
+    pub full_size: (u32, u32),
 }
 
 /// The JPEG bytes of a thumbnail of `path` that fits a `size` by `size` box
 /// and keeps the picture's aspect ratio. `extension` is the lowercase file
 /// extension.
-pub(crate) fn render(path: &Path, extension: &str, size: u32) -> Result<Vec<u8>, String> {
-    let decoded = decode(path, extension, size)?;
+pub fn render(path: &Path, extension: &str, size: u32) -> Result<Vec<u8>, String> {
+    render_decoded(&decode(path, extension, size)?, size)
+}
+
+/// The JPEG bytes of a thumbnail of an image that is already decoded: it
+/// fits a `size` by `size` box and has the shape of `decoded.full_size`.
+/// Transparency is dropped, not blended; see `flatten_onto_white`.
+pub fn render_decoded(decoded: &Decoded, size: u32) -> Result<Vec<u8>, String> {
     let (width, height) = fit(decoded.full_size.0, decoded.full_size.1, size);
     let thumbnail = scale(&decoded.image, width, height);
     let mut buffer = std::io::Cursor::new(Vec::new());
@@ -54,8 +60,26 @@ pub(crate) fn render(path: &Path, extension: &str, size: u32) -> Result<Vec<u8>,
     Ok(buffer.into_inner())
 }
 
+/// `image` as it looks on a white page: each pixel blended with white by its
+/// alpha. A picture without an alpha channel is returned as it is.
+pub fn flatten_onto_white(image: &DynamicImage) -> DynamicImage {
+    if !image.color().has_alpha() {
+        return image.clone();
+    }
+    let mut flat = image.to_rgba8();
+    for pixel in flat.pixels_mut() {
+        let alpha = u32::from(pixel.0[3]);
+        for channel in &mut pixel.0[..3] {
+            let blended = (u32::from(*channel) * alpha + 255 * (255 - alpha) + 127) / 255;
+            *channel = blended as u8;
+        }
+        pixel.0[3] = 255;
+    }
+    DynamicImage::ImageRgb8(DynamicImage::ImageRgba8(flat).to_rgb8())
+}
+
 /// Decodes `path` for a thumbnail of `size`.
-pub(crate) fn decode(path: &Path, extension: &str, size: u32) -> Result<Decoded, String> {
+pub fn decode(path: &Path, extension: &str, size: u32) -> Result<Decoded, String> {
     if matches!(extension, "jpg" | "jpeg") {
         if let Some(decoded) = decode_jpeg_fast(path, size) {
             return Ok(decoded);
@@ -210,7 +234,7 @@ fn turned_back(size: (u32, u32), orientation: Orientation) -> (u32, u32) {
 
 /// The largest size with the aspect ratio of `width` by `height` that fits a
 /// `size` by `size` box: the size `DynamicImage::thumbnail` gives.
-pub(crate) fn fit(width: u32, height: u32, size: u32) -> (u32, u32) {
+pub fn fit(width: u32, height: u32, size: u32) -> (u32, u32) {
     let ratio = f64::min(
         f64::from(size) / f64::from(width),
         f64::from(size) / f64::from(height),
@@ -224,7 +248,7 @@ pub(crate) fn fit(width: u32, height: u32, size: u32) -> (u32, u32) {
 }
 
 /// `image` scaled to exactly `width` by `height`.
-pub(crate) fn scale(image: &DynamicImage, width: u32, height: u32) -> DynamicImage {
+pub fn scale(image: &DynamicImage, width: u32, height: u32) -> DynamicImage {
     let reduces = width <= image.width() && height <= image.height();
     reduces
         .then(|| resample(image, width, height))
@@ -915,5 +939,53 @@ mod tests {
         );
         let left = thumbnail.get_pixel(32, 48).0;
         assert!(left[2] > 200 && left[1] < 40, "left {left:?}");
+    }
+
+    #[test]
+    fn render_decoded_fits_the_box_and_keeps_the_shape() {
+        let decoded = Decoded {
+            image: DynamicImage::ImageRgb8(picture(400, 200)),
+            full_size: (400, 200),
+        };
+
+        let jpeg = render_decoded(&decoded, 100).unwrap();
+
+        let thumbnail = image::load_from_memory(&jpeg).unwrap();
+        assert_eq!(thumbnail.dimensions(), (100, 50));
+    }
+
+    /// A reduced decode is smaller than the picture; the thumbnail still has
+    /// the picture's shape, taken from `full_size`.
+    #[test]
+    fn render_decoded_takes_the_shape_from_the_full_size() {
+        let decoded = Decoded {
+            image: DynamicImage::ImageRgb8(picture(202, 100)),
+            full_size: (4000, 2000),
+        };
+
+        let jpeg = render_decoded(&decoded, 100).unwrap();
+
+        assert_eq!(image::load_from_memory(&jpeg).unwrap().dimensions(), (100, 50));
+    }
+
+    #[test]
+    fn flatten_onto_white_puts_transparent_pixels_on_white() {
+        let clear = DynamicImage::ImageRgba8(RgbaImage::from_pixel(8, 8, Rgba([10, 20, 30, 0])));
+        let half = DynamicImage::ImageRgba8(RgbaImage::from_pixel(8, 8, Rgba([0, 0, 0, 128])));
+
+        let flat = flatten_onto_white(&clear).to_rgb8();
+        let blended = flatten_onto_white(&half).to_rgb8();
+
+        assert!(flat.pixels().all(|pixel| pixel.0 == [255, 255, 255]));
+        assert!(blended
+            .pixels()
+            .all(|pixel| pixel.0.iter().all(|&channel| (126..=128).contains(&channel))));
+    }
+
+    #[test]
+    fn flatten_onto_white_keeps_an_opaque_picture() {
+        let opaque = DynamicImage::ImageRgb8(picture(8, 8));
+
+        assert_eq!(flatten_onto_white(&opaque).to_rgb8(), opaque.to_rgb8());
     }
 }

@@ -48,12 +48,12 @@
   - `pub fn decode(path: &Path, extension: &str, size: u32) -> Result<Decoded, String>`
   - `pub fn fit(width: u32, height: u32, size: u32) -> (u32, u32)`
   - `pub fn scale(image: &DynamicImage, width: u32, height: u32) -> DynamicImage`
-  - `pub fn render_decoded(decoded: &Decoded, size: u32) -> Result<Vec<u8>, String>`: fit, scale, flatten transparency onto white, encode JPEG. `render` calls it.
-  - `pub fn flatten_onto_white(image: &DynamicImage) -> DynamicImage`
+  - `pub fn render_decoded(decoded: &Decoded, size: u32) -> Result<Vec<u8>, String>`: fit, scale, encode JPEG, exactly as `render` did (transparency is dropped, so built-in thumbnails do not change). `render` calls it.
+  - `pub fn flatten_onto_white(image: &DynamicImage) -> DynamicImage`: blends each pixel with white by its alpha. The media process calls it before `render_decoded`.
 
 - [ ] **Step 1:** Create the crate with the moved file and `pub` visibility; core depends on it and calls `sumafile_imaging::thumbnail::render`. Remove from core's `Cargo.toml` the dependencies only `thumbnail.rs` used.
 - [ ] **Step 2:** Run `cargo test -p sumafile-imaging`. Expected: the moved tests pass.
-- [ ] **Step 3:** Write failing tests `render_decoded_fits_the_box_and_keeps_the_shape` (a 400×200 image at size 100 gives a 100×50 JPEG) and `render_decoded_puts_transparent_pixels_on_white` (a fully transparent RGBA image gives near-white pixels, each channel ≥ 250).
+- [ ] **Step 3:** Write failing tests `render_decoded_fits_the_box_and_keeps_the_shape` (a 400×200 image at size 100 gives a 100×50 JPEG), `render_decoded_takes_the_shape_from_the_full_size`, `flatten_onto_white_puts_transparent_pixels_on_white` and `flatten_onto_white_keeps_an_opaque_picture`.
 - [ ] **Step 4:** Run them; expected FAIL (function missing). Implement `render_decoded` and `flatten_onto_white`; make `render` use `render_decoded`.
 - [ ] **Step 5:** Run `cargo test -p sumafile-imaging` and, with the Linux patch applied, `cargo test -p simplefile-core preview thumbnail`. Expected: PASS. Remove the patch.
 - [ ] **Step 6:** `xcheck.sh clippy -p sumafile-imaging -p simplefile-core -- -D warnings`. Commit.

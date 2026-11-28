@@ -1,0 +1,14 @@
+[package]
+name = "sumafile-imaging"
+version = "1.2.0"
+description = "SumaFile's thumbnail pipeline: decode, fit, scale and encode"
+authors = ["SumaFile Team"]
+license = "MIT"
+repository = "https://github.com/conniecombs/SumaFile"
+edition = "2021"
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp"] }
+fast_image_resize = "6.1"
+jpeg-decoder = { version = "0.3.2", default-features = false }
+exif = { package = "kamadak-exif", version = "0.6" }

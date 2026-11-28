@@ -112,7 +112,7 @@ pub fn generate_thumbnail(path: String, size: Option<u32>) -> Result<Vec<u8>, St
         }
     }
 
-    let jpeg_bytes = crate::thumbnail::render(&path_buf, &extension, thumb_size)?;
+    let jpeg_bytes = sumafile_imaging::thumbnail::render(&path_buf, &extension, thumb_size)?;
 
     if cache_enabled {
         // Store in cache (fire-and-forget; errors are silently ignored).

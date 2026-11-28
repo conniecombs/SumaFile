@@ -2530,12 +2530,10 @@ dependencies = [
  "base64",
  "chrono",
  "ed25519-dalek",
- "fast_image_resize",
  "filetime",
  "flate2",
  "getrandom 0.4.3",
  "image",
- "jpeg-decoder",
  "kamadak-exif",
  "lofty",
  "log",
@@ -2548,6 +2546,7 @@ dependencies = [
  "serde_json",
  "sha1",
  "sha2",
+ "sumafile-imaging",
  "sumafile-transfer",
  "tar",
  "trash",
@@ -2726,6 +2725,16 @@ dependencies = [
  "tempfile",
  "tokio",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "sumafile-imaging"
+version = "1.2.0"
+dependencies = [
+ "fast_image_resize",
+ "image",
+ "jpeg-decoder",
+ "kamadak-exif",
 ]
 
 [[package]]
