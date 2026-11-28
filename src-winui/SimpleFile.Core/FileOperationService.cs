@@ -737,6 +737,18 @@ public sealed class FileOperationService : ISettingsBackend
         return _ipc.ReadFilePreviewAsync(path, maxSize, ct);
     }
 
+    /// <summary>
+    /// A picture of <paramref name="path"/> for the preview pane, decoded by the file service's media process.
+    /// Throws when the format is not one it decodes or the file cannot be decoded.
+    /// </summary>
+    public Task<EncodedImage> RenderImagePreviewAsync(
+        string path,
+        uint maxDimension = ThumbnailRouting.PreviewMaxDimension,
+        CancellationToken ct = default)
+    {
+        return _ipc.RenderImagePreviewAsync(path, maxDimension, ct);
+    }
+
     public Task<byte[]> GenerateThumbnailAsync(string path, uint size = 256, CancellationToken ct = default)
     {
         return _ipc.GenerateThumbnailAsync(path, size, ct);

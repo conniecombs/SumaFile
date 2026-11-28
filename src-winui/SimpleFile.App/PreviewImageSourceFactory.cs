@@ -24,7 +24,10 @@ internal static class PreviewImageSourceFactory
         }
 
         stream.Seek(0);
-        if (System.IO.Path.GetExtension(path).Equals(".svg", StringComparison.OrdinalIgnoreCase))
+        // An SVG file's own text is drawn as vectors. Its thumbnail from the file service is a JPEG, though:
+        // what the bytes are decides, not the file's name.
+        if (System.IO.Path.GetExtension(path).Equals(".svg", StringComparison.OrdinalIgnoreCase)
+            && !SimpleFile.Core.ThumbnailRouting.IsEncodedPicture(bytes))
         {
             var svg = new SvgImageSource();
             if (decodePixelSize > 0)

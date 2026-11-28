@@ -24,6 +24,10 @@ internal static class FileListThumbnailHost
     private static readonly SemaphoreSlim LoadGate = new(4, 4);
     private static readonly SemaphoreSlim VideoLoadGate = new(2, 2);
 
+    // Formats the file service's media process decodes. They can be slow (a large Photoshop file, a hung
+    // decoder that is ended after its timeout), and must never hold a slot JPG thumbnails load through.
+    private static readonly SemaphoreSlim MediaLoadGate = new(2, 2);
+
     private static Func<string, uint, CancellationToken, Task<byte[]>>? _loadImageThumbnailAsync;
     private static bool _primaryEnabled;
     private static bool _secondaryEnabled;
@@ -199,7 +203,9 @@ internal static class FileListThumbnailHost
     {
         try
         {
-            var gate = isVideo ? VideoLoadGate : LoadGate;
+            var gate = isVideo
+                ? VideoLoadGate
+                : ThumbnailRouting.UsesMediaProcess(extension) ? MediaLoadGate : LoadGate;
             await gate.WaitAsync();
             try
             {
@@ -326,7 +332,7 @@ internal static class FileListThumbnailHost
     }
 
     private static bool CanUseAppThumbnail(string extension) =>
-        extension is "jpg" or "jpeg" or "png" or "gif" or "webp" or "bmp";
+        ThumbnailRouting.CanUseAppThumbnail(extension);
 
     private static bool IsVideoThumbnail(string extension) =>
         VideoThumbnailExtractor.CanUseVideoThumbnail(extension);
