@@ -66,7 +66,8 @@ export function validateWorkflows(workflows, dependabot) {
   check(String(quality?.['runs-on']).startsWith('windows-'), 'Rust quality gate must run on Windows');
   command('ci.yml', 'quality', /^cargo fmt\b.*--check/, 'format check');
   command('ci.yml', 'quality', /^cargo clippy\b.*--locked.*--all-targets.*--all-features.*-D warnings/, 'strict Clippy');
-  command('ci.yml', 'quality', /^cargo test\b.*--locked.*--all-features/, 'locked Rust tests');
+  // --no-fail-fast: one failing test binary must not hide the binaries after it. A run is started by hand.
+  command('ci.yml', 'quality', /^cargo test\b.*--locked.*--all-features.*--no-fail-fast/, 'locked Rust tests that all run');
   command('ci.yml', 'repo-checks', /^npm run check\s*$/, 'repository checks');
   command('ci.yml', 'repo-checks', /^npm ci\b/, 'locked JavaScript install');
   command('ci.yml', 'security', /^node scripts\/cargo-audit-release\.mjs$/, 'Rust security audit');

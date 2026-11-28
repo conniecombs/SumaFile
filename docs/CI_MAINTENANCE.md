@@ -13,7 +13,7 @@ or `C#`, and on manual dispatch.
 
 | Job | What it runs |
 | --- | --- |
-| Rust quality gate | `cargo fmt --all -- --check`, Clippy with warnings denied, `cargo test --locked --all-features`, and a packaging dry run of the `simplefile-ipc` and `sumafile-plugin` crates. A formatting failure uploads the repair as the `rustfmt-repair` artifact |
+| Rust quality gate | `cargo fmt --all -- --check`, Clippy with warnings denied, `cargo test --locked --all-features --no-fail-fast` (every test binary runs even after one has failed, so one run shows every failure), and a packaging dry run of the `simplefile-ipc` and `sumafile-plugin` crates. A formatting failure uploads the repair as the `rustfmt-repair` artifact |
 | Repo checks | `npm ci --ignore-scripts`, `npm run check`, `npm run test:maintenance` |
 | Security checks | The Rust dependency audit, `node scripts/cargo-audit-release.mjs` |
 | Build (Windows x64) | A locked release build of `simplefile-service` |
@@ -21,6 +21,12 @@ or `C#`, and on manual dispatch.
 | Installer verification | Calls `installer-smoke.yml`. It runs only for a manual dispatch, a Dependabot pull request, or a branch whose name starts with `connie/maintenance/` |
 | CI required | Always runs. It fails unless every job above succeeded; a skipped Installer verification is accepted only on a run that does not require it |
 | Hand the run to the merge gate | Runs only for a dispatched run on a `connie/maintenance/` branch whose `CI required` succeeded; see [Merging](#merging) |
+
+The Windows runners are Windows Server, where Media Foundation is an optional feature that is not installed. The
+video program (`sumafile-video`) cannot start without it, so the jobs that make video thumbnails (the Rust tests and
+the UI smoke, here and in `release.yml` and `installer-smoke.yml`) first run
+`.github/actions/setup-media-foundation`. It installs the feature, which takes about three minutes, and fails when
+`mfplat.dll` is still missing afterwards.
 
 The branch protection baseline in `.github/branch-protection.json` requires
 the `CI required` check on an up-to-date branch.

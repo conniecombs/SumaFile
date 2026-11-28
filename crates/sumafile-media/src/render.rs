@@ -371,7 +371,9 @@ mod tests {
     fn the_extension_is_matched_in_any_case() {
         let folder = Folder::new("case");
         let path = saved(&folder, "photo.ppm", 8, 8);
-        let upper = folder.path("PHOTO.PPM");
+        // Another name, not only another case: on Windows `PHOTO.PPM` is
+        // the file `photo.ppm`, and a file cannot be copied onto itself.
+        let upper = folder.path("UPPER.PPM");
         std::fs::copy(&path, &upper).unwrap();
 
         assert!(thumbnail(&upper, 64).is_ok());

@@ -66,9 +66,10 @@ jobs:
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         uses: ./.github/actions/setup-media-foundation
 
+      # --no-fail-fast: every test binary runs even after one has failed, so one run shows every failure.
       - name: Run tests
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
-        run: cargo test --locked --all-features
+        run: cargo test --locked --all-features --no-fail-fast
 
       # A dry run: both crates are packaged from the clean checkout and built from their packaged sources against a
       # temporary local registry. Nothing is published. `npm run pack:crates` is the local form (with --allow-dirty).
