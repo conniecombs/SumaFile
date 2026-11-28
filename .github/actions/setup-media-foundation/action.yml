@@ -1,0 +1,20 @@
+name: Install Media Foundation
+description: Windows Server keeps Media Foundation as an optional feature. The video program cannot start without it.
+runs:
+  using: composite
+  steps:
+    # Install-WindowsFeature belongs to Windows PowerShell, so this step does not use PowerShell 7.
+    - shell: powershell
+      run: |
+        $ErrorActionPreference = 'Stop'
+        if ((Get-CimInstance Win32_OperatingSystem).ProductType -eq 1) {
+          Write-Host 'This is a desktop Windows: Media Foundation is part of it.'
+          exit 0
+        }
+        $result = Install-WindowsFeature -Name Server-Media-Foundation
+        Write-Host "Media Foundation: success=$($result.Success) exit=$($result.ExitCode) restart=$($result.RestartNeeded)"
+        if (-not $result.Success) { throw 'Media Foundation could not be installed.' }
+        # A feature that waits for a restart would fail the video tests later, with a less clear message.
+        if (-not (Test-Path -LiteralPath (Join-Path $env:SystemRoot 'System32\mfplat.dll'))) {
+          throw 'Media Foundation was installed, and System32\mfplat.dll is still missing.'
+        }

@@ -48,6 +48,11 @@ jobs:
           workspaces: .
           key: installer-smoke-x86_64-pc-windows-msvc
 
+      # This runner is Windows Server, which has no Media Foundation until it is installed. The UI smoke's
+      # video scenario runs the video program (sumafile-video), which cannot start without it.
+      - name: Install Media Foundation
+        uses: ./.github/actions/setup-media-foundation
+
       - name: Install WiX Toolset (MSI)
         shell: pwsh
         run: |

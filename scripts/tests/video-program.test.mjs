@@ -60,3 +60,32 @@ test('the app runs the video thumbnail scenario in the UI smoke', () => {
   assert.match(scenario, /Directory\.EnumerateFiles\(cacheFolder, "\*\.jpg", SearchOption\.AllDirectories\)/u,
     'the thumbnails are looked for on disk: the cache must survive a restart');
 });
+
+// CI runs on Windows Server, where Media Foundation is an optional feature that is not installed. Without it the
+// video program cannot start, so its tests and the UI smoke's video scenario would fail for the machine's sake.
+test('every CI job that makes video thumbnails installs Media Foundation first', async () => {
+  const { parseWorkflow } = await import('../lib/workflow-policy.mjs');
+  const makesThumbnails = step => /cargo test --locked|npm run smoke:winui-ui\b/u.test(step.run ?? '');
+  const found = [];
+  for (const file of ['ci.yml', 'release.yml', 'installer-smoke.yml']) {
+    const workflow = parseWorkflow(readFileSync(path.join(root, '.github/workflows', file), 'utf8'));
+    for (const [id, job] of Object.entries(workflow.jobs)) {
+      const steps = job.steps ?? [];
+      const first = steps.findIndex(makesThumbnails);
+      if (first < 0) continue;
+      found.push(`${file}/${id}`);
+      const installed = steps.findIndex(step => step.uses === './.github/actions/setup-media-foundation');
+      assert.ok(installed >= 0 && installed < first, `${file}/${id} must install Media Foundation before "${steps[first].name}"`);
+    }
+  }
+  assert.deepEqual(found, ['ci.yml/quality', 'ci.yml/winui', 'release.yml/checks', 'installer-smoke.yml/windows-installer-smoke']);
+});
+
+test('the Media Foundation step installs the Windows Server feature and proves the library is there', () => {
+  const action = readFileSync(path.join(root, '.github/actions/setup-media-foundation/action.yml'), 'utf8');
+  assert.match(action, /using: composite/u);
+  assert.match(action, /shell: powershell/u, 'Install-WindowsFeature belongs to Windows PowerShell');
+  assert.match(action, /Install-WindowsFeature -Name Server-Media-Foundation/u);
+  assert.match(action, /System32\\mfplat\.dll/u, 'a feature that needs a restart must fail here, not in the tests');
+  assert.match(action, /ProductType -eq 1/u, 'a desktop Windows has Media Foundation and no Install-WindowsFeature');
+});

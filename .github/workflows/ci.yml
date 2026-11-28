@@ -60,6 +60,12 @@ jobs:
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
+      # This runner is Windows Server, which has no Media Foundation until it is installed. The video program
+      # (sumafile-video) cannot start without it.
+      - name: Install Media Foundation
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
+        uses: ./.github/actions/setup-media-foundation
+
       - name: Run tests
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: cargo test --locked --all-features
@@ -173,6 +179,11 @@ jobs:
         uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
+
+      # This runner is Windows Server, which has no Media Foundation until it is installed. The UI smoke's
+      # video scenario runs the video program (sumafile-video), which cannot start without it.
+      - name: Install Media Foundation
+        uses: ./.github/actions/setup-media-foundation
 
       - name: Build Rust IPC service
         run: cargo build -p simplefile-service --locked --release

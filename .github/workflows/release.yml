@@ -90,6 +90,11 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
+      # This runner is Windows Server, which has no Media Foundation until it is installed. The video program
+      # (sumafile-video) cannot start without it.
+      - name: Install Media Foundation
+        uses: ./.github/actions/setup-media-foundation
+
       - name: Run Rust tests
         run: cargo test --locked --all-features
 
