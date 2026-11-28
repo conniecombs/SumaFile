@@ -33,8 +33,17 @@ mod tests {
     fn the_budget_counts_every_byte_of_every_sample() {
         // 16,384 by 16,384 RGBA at 8 bits is exactly the budget.
         assert!(check_budget(16_384, 16_384, 4, 1).is_ok());
-        assert_eq!(check_budget(16_384, 16_385, 4, 1), Err(RenderError::TooLarge));
-        assert_eq!(check_budget(16_384, 16_384, 4, 2), Err(RenderError::TooLarge));
-        assert_eq!(check_budget(u32::MAX, u32::MAX, 4, 4), Err(RenderError::TooLarge));
+        assert_eq!(
+            check_budget(16_384, 16_385, 4, 1),
+            Err(RenderError::TooLarge)
+        );
+        assert_eq!(
+            check_budget(16_384, 16_384, 4, 2),
+            Err(RenderError::TooLarge)
+        );
+        assert_eq!(
+            check_budget(u32::MAX, u32::MAX, 4, 4),
+            Err(RenderError::TooLarge)
+        );
     }
 }

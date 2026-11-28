@@ -36,7 +36,11 @@ pub(super) fn decode(path: &Path) -> Result<Decoded, RenderError> {
         }
     };
     // Samples that are not 8 or 16 bits pass through 32-bit floats.
-    let sample_bytes = if bits <= 16 { bits.div_ceil(8).max(1) } else { 4 };
+    let sample_bytes = if bits <= 16 {
+        bits.div_ceil(8).max(1)
+    } else {
+        4
+    };
     check_budget(width, height, channels, sample_bytes)?;
     let orientation = decoder
         .get_tag_u32(Tag::Orientation)
@@ -50,13 +54,17 @@ pub(super) fn decode(path: &Path) -> Result<Decoded, RenderError> {
         // The photo as it is: each sample's high byte. Oculante spreads these
         // from the darkest to the brightest sample, which changes the picture.
         DecodingResult::U16(samples) => samples.iter().map(|sample| (sample >> 8) as u8).collect(),
-        DecodingResult::F16(samples) => floats(&mut samples.iter().map(|sample| f32::from(*sample))),
+        DecodingResult::F16(samples) => {
+            floats(&mut samples.iter().map(|sample| f32::from(*sample)))
+        }
         DecodingResult::F32(samples) => autoscale(&samples),
         DecodingResult::F64(samples) => floats(&mut samples.iter().map(|sample| *sample as f32)),
         DecodingResult::U32(samples) => floats(&mut samples.iter().map(|sample| *sample as f32)),
         DecodingResult::U64(samples) => floats(&mut samples.iter().map(|sample| *sample as f32)),
         DecodingResult::I8(samples) => floats(&mut samples.iter().map(|sample| f32::from(*sample))),
-        DecodingResult::I16(samples) => floats(&mut samples.iter().map(|sample| f32::from(*sample))),
+        DecodingResult::I16(samples) => {
+            floats(&mut samples.iter().map(|sample| f32::from(*sample)))
+        }
         DecodingResult::I32(samples) => floats(&mut samples.iter().map(|sample| *sample as f32)),
         DecodingResult::I64(samples) => floats(&mut samples.iter().map(|sample| *sample as f32)),
     };
@@ -68,7 +76,9 @@ pub(super) fn decode(path: &Path) -> Result<Decoded, RenderError> {
         ColorType::GrayA(_) => {
             GrayAlphaImage::from_raw(width, height, samples).map(DynamicImage::ImageLumaA8)
         }
-        ColorType::RGB(_) => RgbImage::from_raw(width, height, samples).map(DynamicImage::ImageRgb8),
+        ColorType::RGB(_) => {
+            RgbImage::from_raw(width, height, samples).map(DynamicImage::ImageRgb8)
+        }
         ColorType::RGBA(_) => {
             RgbaImage::from_raw(width, height, samples).map(DynamicImage::ImageRgba8)
         }
@@ -126,7 +136,9 @@ mod tests {
     use tiff::encoder::{colortype, TiffEncoder};
     use tiff::tags::Tag;
 
-    const PREVIEW: Purpose = Purpose::Preview { max_dimension: 2560 };
+    const PREVIEW: Purpose = Purpose::Preview {
+        max_dimension: 2560,
+    };
 
     #[test]
     fn decodes_8_bit_rgb() {

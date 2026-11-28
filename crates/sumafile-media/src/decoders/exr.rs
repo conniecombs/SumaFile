@@ -88,7 +88,9 @@ mod tests {
     use crate::render::{Purpose, RenderError};
     use crate::testing::Folder;
 
-    const PREVIEW: Purpose = Purpose::Preview { max_dimension: 2560 };
+    const PREVIEW: Purpose = Purpose::Preview {
+        max_dimension: 2560,
+    };
 
     fn light(folder: &Folder) -> std::path::PathBuf {
         let path = folder.path("light.exr");
@@ -109,9 +111,15 @@ mod tests {
         let pixels = decoded.image.to_rgba8();
         let near = |value: u8, expected: u8| value.abs_diff(expected) <= 2;
         let dark = pixels.get_pixel(0, 0).0;
-        assert!(dark[0] == 0 && dark[1] == 0 && near(dark[2], 186) && dark[3] == 255, "{dark:?}");
+        assert!(
+            dark[0] == 0 && dark[1] == 0 && near(dark[2], 186) && dark[3] == 255,
+            "{dark:?}"
+        );
         let bright = pixels.get_pixel(3, 2).0;
-        assert!(bright[0] == 255 && bright[1] == 255 && near(bright[2], 186), "{bright:?}");
+        assert!(
+            bright[0] == 255 && bright[1] == 255 && near(bright[2], 186),
+            "{bright:?}"
+        );
     }
 
     #[test]

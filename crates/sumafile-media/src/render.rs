@@ -42,10 +42,7 @@ pub fn handle(request: &Request) -> Result<Rendered, RenderError> {
     let path = Path::new(&request.path);
     match request.method {
         Method::Thumbnail => thumbnail(path, request.size.unwrap_or(DEFAULT_THUMBNAIL_SIZE)),
-        Method::Preview => preview(
-            path,
-            request.max_dimension.unwrap_or(DEFAULT_PREVIEW_SIZE),
-        ),
+        Method::Preview => preview(path, request.max_dimension.unwrap_or(DEFAULT_PREVIEW_SIZE)),
     }
 }
 
@@ -134,7 +131,12 @@ fn encode_preview(image: DynamicImage) -> Result<Rendered, RenderError> {
     } else {
         let opaque = image.into_rgb8();
         JpegEncoder::new_with_quality(&mut bytes, PREVIEW_JPEG_QUALITY)
-            .write_image(opaque.as_raw(), width, height, image::ExtendedColorType::Rgb8)
+            .write_image(
+                opaque.as_raw(),
+                width,
+                height,
+                image::ExtendedColorType::Rgb8,
+            )
             .map_err(failed)?;
         ImageKind::Jpeg
     };
@@ -194,7 +196,9 @@ mod tests {
 
         assert_eq!((rendered.width, rendered.height), (40, 30));
         assert_eq!(
-            image::load_from_memory(&rendered.bytes).unwrap().dimensions(),
+            image::load_from_memory(&rendered.bytes)
+                .unwrap()
+                .dimensions(),
             (40, 30)
         );
     }
@@ -225,7 +229,9 @@ mod tests {
         assert_eq!(rendered.kind, ImageKind::Jpeg);
         assert_eq!((rendered.width, rendered.height), (40, 30));
         assert_eq!(
-            image::load_from_memory(&rendered.bytes).unwrap().dimensions(),
+            image::load_from_memory(&rendered.bytes)
+                .unwrap()
+                .dimensions(),
             (40, 30)
         );
     }
@@ -277,8 +283,14 @@ mod tests {
         let plain = thumbnail(&plain, 64).err();
         let unknown = preview(&unknown, 64).err();
 
-        assert!(matches!(plain, Some(RenderError::Unsupported(_))), "{plain:?}");
-        assert!(matches!(unknown, Some(RenderError::Unsupported(_))), "{unknown:?}");
+        assert!(
+            matches!(plain, Some(RenderError::Unsupported(_))),
+            "{plain:?}"
+        );
+        assert!(
+            matches!(unknown, Some(RenderError::Unsupported(_))),
+            "{unknown:?}"
+        );
     }
 
     #[test]

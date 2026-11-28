@@ -104,7 +104,10 @@ pub(super) fn walk<R: Read + Seek>(input: &mut R, length: u64) -> Option<Found> 
         if offset == 0 || seen.len() >= MAX_DIRECTORIES || !seen.insert(offset) {
             continue;
         }
-        let Some(count) = tiff.at(offset, 2).map(|count| usize::from(tiff.short(&count))) else {
+        let Some(count) = tiff
+            .at(offset, 2)
+            .map(|count| usize::from(tiff.short(&count)))
+        else {
             continue;
         };
         if count > MAX_ENTRIES {

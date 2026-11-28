@@ -19,7 +19,9 @@ fn boxes<R: Read + Seek>(input: &mut R, span: Range<u64>) -> Vec<([u8; 4], Range
             break;
         }
         let kind = [header[4], header[5], header[6], header[7]];
-        let mut size = u64::from(u32::from_be_bytes([header[0], header[1], header[2], header[3]]));
+        let mut size = u64::from(u32::from_be_bytes([
+            header[0], header[1], header[2], header[3],
+        ]));
         let mut header_bytes = 8;
         if size == 1 {
             // The size did not fit 32 bits and follows the type.
@@ -86,6 +88,8 @@ fn jpeg_in<R: Read + Seek>(input: &mut R, contents: Range<u64>) -> Option<Range<
     let mut head = vec![0u8; searched];
     input.seek(SeekFrom::Start(contents.start)).ok()?;
     input.read_exact(&mut head).ok()?;
-    let mark = head.windows(3).position(|bytes| bytes == [0xFF, 0xD8, 0xFF])?;
+    let mark = head
+        .windows(3)
+        .position(|bytes| bytes == [0xFF, 0xD8, 0xFF])?;
     Some(contents.start + mark as u64..contents.end)
 }

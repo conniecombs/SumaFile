@@ -29,7 +29,9 @@ mod tests {
     use zune_core::options::EncoderOptions;
     use zune_jpegxl::JxlSimpleEncoder;
 
-    const PREVIEW: Purpose = Purpose::Preview { max_dimension: 2560 };
+    const PREVIEW: Purpose = Purpose::Preview {
+        max_dimension: 2560,
+    };
 
     fn pixels() -> Vec<u8> {
         (0..4 * 3 * 3).map(|value| (value * 7) as u8).collect()

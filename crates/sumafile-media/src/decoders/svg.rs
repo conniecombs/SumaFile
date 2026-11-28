@@ -109,7 +109,14 @@ mod tests {
             <circle cx="5" cy="5" r="4" fill="green"/></svg>"#;
         let path = folder.write("icon.svg", icon.as_bytes());
 
-        let small = decode(&path, "svg", Purpose::Preview { max_dimension: 2560 }).unwrap();
+        let small = decode(
+            &path,
+            "svg",
+            Purpose::Preview {
+                max_dimension: 2560,
+            },
+        )
+        .unwrap();
         let capped = decode(
             &folder.write("halves.svg", HALVES.as_bytes()),
             "svg",
@@ -158,7 +165,10 @@ mod tests {
             .image
             .to_rgba8();
 
-        assert!(pixels.pixels().all(|pixel| pixel.0[3] == 0), "the other file was drawn");
+        assert!(
+            pixels.pixels().all(|pixel| pixel.0[3] == 0),
+            "the other file was drawn"
+        );
     }
 
     #[test]

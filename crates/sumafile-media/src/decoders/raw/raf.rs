@@ -13,7 +13,9 @@ pub(super) fn jpeg_range(header: &[u8]) -> Option<Range<u64>> {
     }
     let long = |at: usize| {
         let bytes = header.get(at..at + 4)?;
-        Some(u64::from(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])))
+        Some(u64::from(u32::from_be_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3],
+        ])))
     };
     let (start, length) = (long(84)?, long(88)?);
     Some(start..start + length)

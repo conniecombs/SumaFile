@@ -65,7 +65,10 @@ mod tests {
         let missing = Path::new("this-file-does-not-exist");
         for extension in sumafile_imaging::formats::MEDIA_PROCESS_EXTENSIONS {
             let error = decode(missing, extension, Purpose::Thumbnail { size: 64 }).err();
-            assert!(matches!(error, Some(RenderError::Io(_))), ".{extension}: {error:?}");
+            assert!(
+                matches!(error, Some(RenderError::Io(_))),
+                ".{extension}: {error:?}"
+            );
         }
     }
 }

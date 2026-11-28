@@ -6,7 +6,10 @@ use image::{Rgb, RgbImage};
 pub(crate) fn jpeg(width: u32, height: u32, colour: [u8; 3]) -> Vec<u8> {
     let mut bytes = Vec::new();
     RgbImage::from_pixel(width, height, Rgb(colour))
-        .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Jpeg)
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Jpeg,
+        )
         .unwrap();
     bytes
 }

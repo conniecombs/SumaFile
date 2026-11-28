@@ -149,7 +149,12 @@ pub fn read_message<R: Read>(reader: &mut R) -> io::Result<Option<(Vec<u8>, Vec<
             Err(error) => return Err(error),
         }
     }
-    let header = read_block(reader, u32::from_le_bytes(length), MAX_HEADER_BYTES, "header")?;
+    let header = read_block(
+        reader,
+        u32::from_le_bytes(length),
+        MAX_HEADER_BYTES,
+        "header",
+    )?;
 
     reader.read_exact(&mut length)?;
     let body = read_block(reader, u32::from_le_bytes(length), MAX_BODY_BYTES, "body")?;
@@ -198,7 +203,10 @@ mod tests {
 
         let mut reader = wire.as_slice();
         let (header, body) = read_message(&mut reader).unwrap().unwrap();
-        assert_eq!(serde_json::from_slice::<Request>(&header).unwrap(), request());
+        assert_eq!(
+            serde_json::from_slice::<Request>(&header).unwrap(),
+            request()
+        );
         assert!(body.is_empty());
         let (header, body) = read_message(&mut reader).unwrap().unwrap();
         assert_eq!(

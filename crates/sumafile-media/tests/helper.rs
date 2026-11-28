@@ -74,7 +74,9 @@ fn preview_end_to_end() {
 
     assert_eq!((rendered.width, rendered.height), (100, 50));
     assert_eq!(
-        image::load_from_memory(&rendered.bytes).unwrap().dimensions(),
+        image::load_from_memory(&rendered.bytes)
+            .unwrap()
+            .dimensions(),
         (100, 50)
     );
 }
@@ -108,10 +110,20 @@ fn failures_cross_the_pipe_with_their_kind() {
     let decode = client.thumbnail(&wrong, 64);
     let unsupported = client.preview(&unknown, 640);
 
-    assert!(matches!(too_large, Err(MediaError::TooLarge)), "{too_large:?}");
+    assert!(
+        matches!(too_large, Err(MediaError::TooLarge)),
+        "{too_large:?}"
+    );
     assert!(matches!(decode, Err(MediaError::Decode(_))), "{decode:?}");
-    assert!(matches!(unsupported, Err(MediaError::Unsupported)), "{unsupported:?}");
-    assert_eq!(client.stats().starts, 1, "none of these stopped the process");
+    assert!(
+        matches!(unsupported, Err(MediaError::Unsupported)),
+        "{unsupported:?}"
+    );
+    assert_eq!(
+        client.stats().starts,
+        1,
+        "none of these stopped the process"
+    );
     assert!(client.stats().running);
 }
 

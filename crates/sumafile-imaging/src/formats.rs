@@ -10,7 +10,10 @@ pub use generated::MEDIA_PROCESS_EXTENSIONS;
 /// True for an extension of a format the media process decodes. Any case,
 /// with or without a leading dot.
 pub fn is_media_process_extension(extension: &str) -> bool {
-    let extension = extension.trim().trim_start_matches('.').to_ascii_lowercase();
+    let extension = extension
+        .trim()
+        .trim_start_matches('.')
+        .to_ascii_lowercase();
     MEDIA_PROCESS_EXTENSIONS
         .binary_search(&extension.as_str())
         .is_ok()

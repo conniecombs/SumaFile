@@ -168,7 +168,11 @@ fn decode_jpeg(jpeg: &[u8], purpose: Purpose, size: (u32, u32)) -> Option<Dynami
 /// The JPEG decoded at a half, a quarter or an eighth of its size, when that
 /// still leaves enough for a thumbnail of `thumbnail` pixels. `None` when the
 /// whole picture is needed, or for a JPEG the reduced decoder does not take.
-fn decode_reduced(jpeg: &[u8], thumbnail: u32, (width, height): (u32, u32)) -> Option<DynamicImage> {
+fn decode_reduced(
+    jpeg: &[u8],
+    thumbnail: u32,
+    (width, height): (u32, u32),
+) -> Option<DynamicImage> {
     use jpeg_decoder::PixelFormat;
 
     let long_side = width.max(height);
@@ -193,8 +197,9 @@ fn decode_reduced(jpeg: &[u8], thumbnail: u32, (width, height): (u32, u32)) -> O
         PixelFormat::RGB24 => {
             RgbImage::from_raw(reduced_width, reduced_height, pixels).map(DynamicImage::ImageRgb8)
         }
-        _ => GrayImage::from_raw(reduced_width, reduced_height, pixels)
-            .map(DynamicImage::ImageLuma8),
+        _ => {
+            GrayImage::from_raw(reduced_width, reduced_height, pixels).map(DynamicImage::ImageLuma8)
+        }
     }
 }
 
@@ -209,13 +214,21 @@ mod tests {
     use crate::testing::Folder;
     use image::DynamicImage;
 
-    const PREVIEW: Purpose = Purpose::Preview { max_dimension: 2560 };
+    const PREVIEW: Purpose = Purpose::Preview {
+        max_dimension: 2560,
+    };
     const RED: [u8; 3] = [255, 0, 0];
     const GREEN: [u8; 3] = [0, 255, 0];
 
     fn is(image: &DynamicImage, colour: [u8; 3]) -> bool {
-        let pixel = image.to_rgb8().get_pixel(image.width() / 2, image.height() / 2).0;
-        pixel.iter().zip(colour).all(|(have, want)| have.abs_diff(want) < 12)
+        let pixel = image
+            .to_rgb8()
+            .get_pixel(image.width() / 2, image.height() / 2)
+            .0;
+        pixel
+            .iter()
+            .zip(colour)
+            .all(|(have, want)| have.abs_diff(want) < 12)
     }
 
     fn thumbnail(size: u32) -> Purpose {
@@ -226,7 +239,11 @@ mod tests {
     /// directory, the preview in a sub-directory of the first.
     fn nikon_like(orientation: u16) -> Vec<u8> {
         Tiff::little_endian().build(&[
-            Dir::new(vec![Field::Short(0x0112, orientation), Field::SubDirs(vec![2])]).then(1),
+            Dir::new(vec![
+                Field::Short(0x0112, orientation),
+                Field::SubDirs(vec![2]),
+            ])
+            .then(1),
             Dir::new(vec![Field::Jpeg(jpeg(16, 16, GREEN))]),
             Dir::new(vec![Field::Jpeg(jpeg(64, 48, RED))]),
         ])
@@ -239,7 +256,10 @@ mod tests {
 
         let decoded = decode(&path, "nef", thumbnail(64)).unwrap();
 
-        assert!(is(&decoded.image, RED), "the 64 by 48 preview, not the 16 by 16 thumbnail");
+        assert!(
+            is(&decoded.image, RED),
+            "the 64 by 48 preview, not the 16 by 16 thumbnail"
+        );
         assert_eq!(decoded.full_size, (64, 48));
     }
 
@@ -287,9 +307,9 @@ mod tests {
     #[test]
     fn a_panasonic_jpg_from_raw_is_found() {
         let folder = Folder::new("raw-rw2");
-        let file = Tiff::little_endian().with_magic(0x0055).build(&[Dir::new(vec![
-            Field::Blob(0x002E, jpeg(64, 48, RED)),
-        ])]);
+        let file = Tiff::little_endian()
+            .with_magic(0x0055)
+            .build(&[Dir::new(vec![Field::Blob(0x002E, jpeg(64, 48, RED))])]);
 
         let decoded = decode(&folder.write("photo.rw2", &file), "rw2", thumbnail(64)).unwrap();
 
@@ -359,14 +379,18 @@ mod tests {
         let pane = decode(&path, "nef", PREVIEW).err();
 
         assert!(half.is_ok(), "64 pixels serve a 128-pixel thumbnail");
-        assert!(matches!(too_small, Some(RenderError::Decode(_))), "{too_small:?}");
+        assert!(
+            matches!(too_small, Some(RenderError::Decode(_))),
+            "{too_small:?}"
+        );
         assert!(matches!(pane, Some(RenderError::Decode(_))), "{pane:?}");
     }
 
     #[test]
     fn the_preview_pane_gets_a_large_preview_whole() {
         let folder = Folder::new("raw-pane");
-        let file = Tiff::little_endian().build(&[Dir::new(vec![Field::Jpeg(jpeg(1200, 800, RED))])]);
+        let file =
+            Tiff::little_endian().build(&[Dir::new(vec![Field::Jpeg(jpeg(1200, 800, RED))])]);
 
         let decoded = decode(&folder.write("photo.arw", &file), "arw", PREVIEW).unwrap();
 
@@ -378,11 +402,16 @@ mod tests {
     #[test]
     fn a_thumbnail_decodes_a_large_preview_at_a_reduced_size() {
         let folder = Folder::new("raw-reduced");
-        let file = Tiff::little_endian().build(&[Dir::new(vec![Field::Jpeg(jpeg(1600, 1200, RED))])]);
+        let file =
+            Tiff::little_endian().build(&[Dir::new(vec![Field::Jpeg(jpeg(1600, 1200, RED))])]);
 
         let decoded = decode(&folder.write("photo.dng", &file), "dng", thumbnail(100)).unwrap();
 
-        assert_eq!(decoded.full_size, (1600, 1200), "the preview's own size, for the shape");
+        assert_eq!(
+            decoded.full_size,
+            (1600, 1200),
+            "the preview's own size, for the shape"
+        );
         assert!(decoded.image.width() < 1600 && decoded.image.width() >= 200);
         assert!(is(&decoded.image, RED));
     }
@@ -392,7 +421,11 @@ mod tests {
         let folder = Folder::new("raw-garbage");
         // Lossless sensor data is stored as one "JPEG" strip in some files.
         let file = Tiff::little_endian().build(&[
-            Dir::new(vec![Field::Short(0x0103, 7), Field::Strip(vec![0xAB; 4096])]).then(1),
+            Dir::new(vec![
+                Field::Short(0x0103, 7),
+                Field::Strip(vec![0xAB; 4096]),
+            ])
+            .then(1),
             Dir::new(vec![Field::Jpeg(jpeg(64, 48, RED))]),
         ]);
 
@@ -409,7 +442,8 @@ mod tests {
             Field::Long(0x0201, 0x00FF_FFF0),
             Field::Long(0x0202, 4096),
         ])]);
-        let looping = Tiff::little_endian().build(&[Dir::new(vec![Field::Short(0x0112, 1)]).then(0)]);
+        let looping =
+            Tiff::little_endian().build(&[Dir::new(vec![Field::Short(0x0112, 1)]).then(0)]);
         let cases = [
             ("none.nef", no_preview),
             ("outside.nef", outside),
@@ -422,7 +456,10 @@ mod tests {
         for (name, bytes) in cases {
             let extension = name.rsplit('.').next().unwrap();
             let error = decode(&folder.write(name, &bytes), extension, thumbnail(64)).err();
-            assert!(matches!(error, Some(RenderError::Decode(_))), "{name}: {error:?}");
+            assert!(
+                matches!(error, Some(RenderError::Decode(_))),
+                "{name}: {error:?}"
+            );
         }
     }
 }

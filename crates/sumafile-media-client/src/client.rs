@@ -189,7 +189,9 @@ enum Reply {
     Answer(ResponseHeader, Vec<u8>),
     /// The process stopped. `alone`: this was the only request in flight,
     /// and the process was not ended on purpose.
-    Stopped { alone: bool },
+    Stopped {
+        alone: bool,
+    },
 }
 
 enum Outcome {
@@ -422,7 +424,9 @@ impl Inner {
 
         match replies.recv_timeout(timeout) {
             Ok(Reply::Answer(header, body)) => Outcome::Done(rendered(header, body)),
-            Ok(Reply::Stopped { alone: true }) => Outcome::Done(Err(inner.record_bad(file, STOPPED))),
+            Ok(Reply::Stopped { alone: true }) => {
+                Outcome::Done(Err(inner.record_bad(file, STOPPED)))
+            }
             Ok(Reply::Stopped { alone: false }) | Err(RecvTimeoutError::Disconnected) => {
                 Outcome::Interrupted
             }
@@ -487,7 +491,9 @@ impl Inner {
             .last_spawn_failure
             .is_some_and(|at| at.elapsed() < inner.config.spawn_retry_interval)
         {
-            return Err(failed("The media process could not be started.".to_string()));
+            return Err(failed(
+                "The media process could not be started.".to_string(),
+            ));
         }
 
         let spawned =
@@ -603,8 +609,8 @@ fn watch_idle(client: &Weak<Inner>) {
         let Some(inner) = client.upgrade() else {
             return;
         };
-        let pause = (inner.config.idle_exit / 4)
-            .clamp(Duration::from_millis(25), Duration::from_secs(5));
+        let pause =
+            (inner.config.idle_exit / 4).clamp(Duration::from_millis(25), Duration::from_secs(5));
         {
             let mut state = lock(&inner.state);
             let idle = match state.helper.as_ref() {

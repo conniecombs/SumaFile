@@ -96,7 +96,10 @@ fn replies_are_matched_out_of_order() {
 
     assert_eq!(fast_reply.bytes, body(&fast));
     assert_eq!(slow_reply.unwrap().bytes, body(&slow));
-    assert!(fast_done < slow_done, "the fast reply overtook the slow one");
+    assert!(
+        fast_done < slow_done,
+        "the fast reply overtook the slow one"
+    );
 }
 
 /// The timeout is for the decode. Counted from the call, the third of three
@@ -143,11 +146,18 @@ fn a_timeout_ends_the_helper_and_records_the_file() {
     let after = client.thumbnail(&fine, 64);
     let again = client.thumbnail(&hang, 64);
 
-    assert!(matches!(timed_out, Err(MediaError::Failed(_))), "{timed_out:?}");
+    assert!(
+        matches!(timed_out, Err(MediaError::Failed(_))),
+        "{timed_out:?}"
+    );
     assert!(waited >= Duration::from_millis(400) && waited < Duration::from_millis(1400));
     assert_eq!(after.unwrap().bytes, body(&fine));
     assert!(matches!(again, Err(MediaError::Unsupported)), "{again:?}");
-    assert_eq!(client.stats().starts, 2, "one restart, and none for the bad file");
+    assert_eq!(
+        client.stats().starts,
+        2,
+        "one restart, and none for the bad file"
+    );
 }
 
 /// One file that hangs must not cost the others their thumbnails: a request
@@ -173,7 +183,10 @@ fn a_timeout_retries_the_other_requests_alone() {
     assert!(matches!(hanging, Err(MediaError::Failed(_))), "{hanging:?}");
     assert_eq!(bystander.unwrap().bytes, body(&slow));
     assert_eq!(client.thumbnail(&slow, 64).unwrap().bytes, body(&slow));
-    assert!(matches!(client.thumbnail(&hang, 64), Err(MediaError::Unsupported)));
+    assert!(matches!(
+        client.thumbnail(&hang, 64),
+        Err(MediaError::Unsupported)
+    ));
 }
 
 #[test]
@@ -187,7 +200,11 @@ fn a_crash_with_one_request_records_the_file() {
 
     assert!(matches!(crashed, Err(MediaError::Failed(_))), "{crashed:?}");
     assert!(matches!(again, Err(MediaError::Unsupported)), "{again:?}");
-    assert_eq!(client.stats().starts, 1, "a bad file does not start the helper");
+    assert_eq!(
+        client.stats().starts,
+        1,
+        "a bad file does not start the helper"
+    );
 }
 
 #[test]
@@ -207,7 +224,10 @@ fn a_crash_with_several_requests_retries_each_alone() {
 
     assert_eq!(bystander.unwrap().bytes, body(&slow));
     assert!(matches!(crashed, Err(MediaError::Failed(_))), "{crashed:?}");
-    assert!(matches!(client.thumbnail(&crash, 64), Err(MediaError::Unsupported)));
+    assert!(matches!(
+        client.thumbnail(&crash, 64),
+        Err(MediaError::Unsupported)
+    ));
     assert_eq!(client.thumbnail(&slow, 64).unwrap().bytes, body(&slow));
 }
 
@@ -217,14 +237,21 @@ fn a_bad_file_is_tried_again_after_it_changes() {
     let client = client(config());
     let crash = folder.file("crash-a.x");
     let _ = client.thumbnail(&crash, 64);
-    assert!(matches!(client.thumbnail(&crash, 64), Err(MediaError::Unsupported)));
+    assert!(matches!(
+        client.thumbnail(&crash, 64),
+        Err(MediaError::Unsupported)
+    ));
     let starts = client.stats().starts;
 
     std::fs::write(&crash, b"a different, longer picture").unwrap();
     let retried = client.thumbnail(&crash, 64);
 
     assert!(matches!(retried, Err(MediaError::Failed(_))), "{retried:?}");
-    assert_eq!(client.stats().starts, starts + 1, "the changed file reached the helper");
+    assert_eq!(
+        client.stats().starts,
+        starts + 1,
+        "the changed file reached the helper"
+    );
 }
 
 #[test]
@@ -245,7 +272,10 @@ fn the_list_of_bad_files_is_bounded() {
     let oldest = client.thumbnail(&crashes[0], 64);
 
     assert!(matches!(newest, Err(MediaError::Unsupported)));
-    assert!(matches!(oldest, Err(MediaError::Failed(_))), "forgotten, so tried again");
+    assert!(
+        matches!(oldest, Err(MediaError::Failed(_))),
+        "forgotten, so tried again"
+    );
     assert_eq!(client.stats().starts, starts + 1);
 }
 
@@ -304,7 +334,11 @@ fn a_helper_that_cannot_start_is_not_retried_in_a_loop() {
 
     assert!(matches!(first, Err(MediaError::Failed(_))), "{first:?}");
     assert!(matches!(second, Err(MediaError::Failed(_))), "{second:?}");
-    assert_eq!(client.stats().spawn_failures, 1, "the second call did not try again");
+    assert_eq!(
+        client.stats().spawn_failures,
+        1,
+        "the second call did not try again"
+    );
 }
 
 #[test]
@@ -317,10 +351,22 @@ fn a_failure_kind_maps_to_its_error() {
     let unsupported = client.thumbnail(&folder.file("unsupported.x"), 64);
     let io = client.preview(&folder.file("ioerror.x"), 64);
 
-    assert!(matches!(too_large, Err(MediaError::TooLarge)), "{too_large:?}");
-    assert!(matches!(&decode, Err(MediaError::Decode(message)) if message == "bad data"), "{decode:?}");
-    assert!(matches!(unsupported, Err(MediaError::Unsupported)), "{unsupported:?}");
-    assert!(matches!(&io, Err(MediaError::Io(message)) if message == "cannot read"), "{io:?}");
+    assert!(
+        matches!(too_large, Err(MediaError::TooLarge)),
+        "{too_large:?}"
+    );
+    assert!(
+        matches!(&decode, Err(MediaError::Decode(message)) if message == "bad data"),
+        "{decode:?}"
+    );
+    assert!(
+        matches!(unsupported, Err(MediaError::Unsupported)),
+        "{unsupported:?}"
+    );
+    assert!(
+        matches!(&io, Err(MediaError::Io(message)) if message == "cannot read"),
+        "{io:?}"
+    );
     assert_eq!(client.stats().starts, 1, "a failure answer is not a crash");
 }
 

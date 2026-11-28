@@ -70,9 +70,11 @@ fn failure(id: u64, error: &RenderError) -> ResponseHeader {
         RenderError::Unsupported(message) => {
             ResponseHeader::failure(id, FailureKind::Unsupported, message.as_str())
         }
-        RenderError::TooLarge => {
-            ResponseHeader::failure(id, FailureKind::TooLarge, "The image is too large to decode.")
-        }
+        RenderError::TooLarge => ResponseHeader::failure(
+            id,
+            FailureKind::TooLarge,
+            "The image is too large to decode.",
+        ),
         RenderError::Decode(message) => {
             ResponseHeader::failure(id, FailureKind::Decode, message.as_str())
         }
@@ -141,7 +143,10 @@ mod tests {
             let mut reader = wire.as_slice();
             replies.clear();
             while let Ok(Some((header, body))) = read_message(&mut reader) {
-                replies.push((serde_json::from_slice::<ResponseHeader>(&header).unwrap(), body));
+                replies.push((
+                    serde_json::from_slice::<ResponseHeader>(&header).unwrap(),
+                    body,
+                ));
             }
         }
         replies.sort_by_key(|(header, _)| header.id);
@@ -161,7 +166,10 @@ mod tests {
     fn every_request_gets_its_own_reply() {
         let replies = replies(requests(&["a.tga", "b.tga"]), 2, picture);
 
-        assert_eq!(replies[0].0, ResponseHeader::success(1, ImageKind::Jpeg, 64, 48));
+        assert_eq!(
+            replies[0].0,
+            ResponseHeader::success(1, ImageKind::Jpeg, 64, 48)
+        );
         assert_eq!(replies[0].1, b"a.tga");
         assert_eq!(replies[1].0.id, 2);
         assert_eq!(replies[1].1, b"b.tga");
@@ -169,14 +177,18 @@ mod tests {
 
     #[test]
     fn a_failure_carries_its_kind_and_message() {
-        let replies = replies(requests(&["huge.tga", "bad.tga", "notes.xyz", "gone.tga"]), 4, |request| {
-            Err(match request.path.as_str() {
-                "huge.tga" => RenderError::TooLarge,
-                "bad.tga" => RenderError::Decode("not a Targa file".to_string()),
-                "notes.xyz" => RenderError::Unsupported("no decoder".to_string()),
-                _ => RenderError::Io("cannot open".to_string()),
-            })
-        });
+        let replies = replies(
+            requests(&["huge.tga", "bad.tga", "notes.xyz", "gone.tga"]),
+            4,
+            |request| {
+                Err(match request.path.as_str() {
+                    "huge.tga" => RenderError::TooLarge,
+                    "bad.tga" => RenderError::Decode("not a Targa file".to_string()),
+                    "notes.xyz" => RenderError::Unsupported("no decoder".to_string()),
+                    _ => RenderError::Io("cannot open".to_string()),
+                })
+            },
+        );
 
         let kinds: Vec<_> = replies.iter().map(|(header, _)| header.kind).collect();
         assert_eq!(
@@ -189,7 +201,9 @@ mod tests {
             ]
         );
         assert_eq!(replies[1].0.error.as_deref(), Some("not a Targa file"));
-        assert!(replies.iter().all(|(header, body)| !header.ok && body.is_empty()));
+        assert!(replies
+            .iter()
+            .all(|(header, body)| !header.ok && body.is_empty()));
     }
 
     /// A decoder that panics on one file must not take the process, or the

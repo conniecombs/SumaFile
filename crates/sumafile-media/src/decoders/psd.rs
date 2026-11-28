@@ -98,7 +98,10 @@ fn position(input: &mut impl Seek) -> Result<u64, RenderError> {
 }
 
 fn go_to(input: &mut impl Seek, offset: u64) -> Result<(), RenderError> {
-    input.seek(SeekFrom::Start(offset)).map(drop).map_err(ends_early)
+    input
+        .seek(SeekFrom::Start(offset))
+        .map(drop)
+        .map_err(ends_early)
 }
 
 pub(super) fn decode(path: &Path, purpose: Purpose) -> Result<Decoded, RenderError> {
@@ -145,13 +148,19 @@ pub(super) fn decode(path: &Path, purpose: Purpose) -> Result<Decoded, RenderErr
         && matches!(header.mode, Mode::Rgb | Mode::Grey);
     let planes = colours + usize::from(alpha);
     // An indexed picture becomes three channels; nothing takes more than four.
-    let widest = if header.mode == Mode::Indexed { 3 } else { planes };
+    let widest = if header.mode == Mode::Indexed {
+        3
+    } else {
+        planes
+    };
     check_budget(header.width, header.height, widest as u8, 1)?;
 
     let samples = read_image_data(&mut input, &header, planes)?;
     let (width, height) = (header.width, header.height);
     let image = match (header.mode, alpha) {
-        (Mode::Rgb, false) => RgbImage::from_raw(width, height, samples).map(DynamicImage::ImageRgb8),
+        (Mode::Rgb, false) => {
+            RgbImage::from_raw(width, height, samples).map(DynamicImage::ImageRgb8)
+        }
         (Mode::Rgb, true) => {
             RgbaImage::from_raw(width, height, samples).map(DynamicImage::ImageRgba8)
         }
@@ -227,7 +236,10 @@ fn read_header(input: &mut impl Read) -> Result<Header, RenderError> {
 /// The JPEG thumbnail among the image resources, which start at the input's
 /// position and are `length` bytes long. `None` when there is none or it
 /// cannot be read; the position afterwards is anywhere in the section.
-pub(super) fn embedded_thumbnail<R: Read + Seek>(input: &mut R, length: u64) -> Option<DynamicImage> {
+pub(super) fn embedded_thumbnail<R: Read + Seek>(
+    input: &mut R,
+    length: u64,
+) -> Option<DynamicImage> {
     let end = input.stream_position().ok()?.checked_add(length)?;
     loop {
         // Signature, id, an empty name and a size take 12 bytes.
@@ -287,7 +299,11 @@ fn read_image_data<R: Read>(
     let compressed = match u16_of(input)? {
         0 => false,
         1 => true,
-        _ => return Err(damaged("its image data is compressed in a way SumaFile does not read")),
+        _ => {
+            return Err(damaged(
+                "its image data is compressed in a way SumaFile does not read",
+            ))
+        }
     };
     // Every row's packed length, channel after channel, comes before the rows.
     let row_lengths = if compressed {
@@ -324,7 +340,10 @@ fn read_image_data<R: Read>(
             } else {
                 input.read_exact(&mut row).map_err(ends_early)?;
             }
-            let pixels = samples[y * width * planes..].iter_mut().skip(plane).step_by(planes);
+            let pixels = samples[y * width * planes..]
+                .iter_mut()
+                .skip(plane)
+                .step_by(planes);
             match header.depth {
                 // A set bit is black.
                 1 => {
@@ -417,7 +436,9 @@ mod tests {
     use crate::testing::Folder;
     use image::{DynamicImage, Rgb, RgbImage};
 
-    const PREVIEW: Purpose = Purpose::Preview { max_dimension: 2560 };
+    const PREVIEW: Purpose = Purpose::Preview {
+        max_dimension: 2560,
+    };
     const RGB: u16 = 3;
 
     /// A Photoshop document to write, one plane of samples per channel.
@@ -602,7 +623,10 @@ mod tests {
             ..rgb_document()
         };
 
-        assert_eq!(decoded(&folder, "packed.psd", &document, PREVIEW).to_rgb8(), picture());
+        assert_eq!(
+            decoded(&folder, "packed.psd", &document, PREVIEW).to_rgb8(),
+            picture()
+        );
     }
 
     #[test]
@@ -679,7 +703,10 @@ mod tests {
         let selection = decoded(&folder, "selection.psd", &selection, PREVIEW);
         let unsaid = decoded(&folder, "unsaid.psd", &unsaid, PREVIEW);
 
-        assert!(transparency.to_rgba8().pixels().all(|pixel| pixel.0[3] == 64));
+        assert!(transparency
+            .to_rgba8()
+            .pixels()
+            .all(|pixel| pixel.0[3] == 64));
         assert_eq!(transparency.to_rgb8(), picture());
         assert!(!selection.color().has_alpha());
         assert!(!unsaid.color().has_alpha());
@@ -691,7 +718,10 @@ mod tests {
         let folder = Folder::new("psd-thumb");
         let mut jpeg = Vec::new();
         RgbImage::from_pixel(64, 48, Rgb([255, 0, 0]))
-            .write_to(&mut std::io::Cursor::new(&mut jpeg), image::ImageFormat::Jpeg)
+            .write_to(
+                &mut std::io::Cursor::new(&mut jpeg),
+                image::ImageFormat::Jpeg,
+            )
             .unwrap();
         let blue = RgbImage::from_pixel(128, 96, Rgb([0, 0, 255]));
         let document = Document {
@@ -701,7 +731,10 @@ mod tests {
         let path = folder.write("art.psd", &document.bytes());
         let is = |image: &DynamicImage, colour: [u8; 3]| {
             let pixel = image.to_rgb8().get_pixel(5, 5).0;
-            pixel.iter().zip(colour).all(|(have, want)| have.abs_diff(want) < 8)
+            pixel
+                .iter()
+                .zip(colour)
+                .all(|(have, want)| have.abs_diff(want) < 8)
         };
 
         let small = decode(&path, "psd", Purpose::Thumbnail { size: 48 }).unwrap();
@@ -710,8 +743,15 @@ mod tests {
 
         assert!(is(&small.image, [255, 0, 0]), "the embedded preview");
         assert_eq!((small.image.width(), small.image.height()), (64, 48));
-        assert_eq!(small.full_size, (128, 96), "the document's size, for the shape");
-        assert!(is(&large.image, [0, 0, 255]), "64 pixels are too few for 100");
+        assert_eq!(
+            small.full_size,
+            (128, 96),
+            "the document's size, for the shape"
+        );
+        assert!(
+            is(&large.image, [0, 0, 255]),
+            "64 pixels are too few for 100"
+        );
         assert!(is(&preview.image, [0, 0, 255]));
     }
 
@@ -752,12 +792,18 @@ mod tests {
             ("cut.psd", whole[..whole.len() - 5].to_vec()),
             ("header.psd", whole[..20].to_vec()),
             ("text.psd", b"no Photoshop document here".to_vec()),
-            ("version.psd", [b"8BPS\x00\x07".as_slice(), &whole[6..]].concat()),
+            (
+                "version.psd",
+                [b"8BPS\x00\x07".as_slice(), &whole[6..]].concat(),
+            ),
         ];
 
         for (name, bytes) in cases {
             let error = decode(&folder.write(name, &bytes), "psd", PREVIEW).err();
-            assert!(matches!(error, Some(RenderError::Decode(_))), "{name}: {error:?}");
+            assert!(
+                matches!(error, Some(RenderError::Decode(_))),
+                "{name}: {error:?}"
+            );
         }
     }
 }

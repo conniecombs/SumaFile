@@ -965,7 +965,10 @@ mod tests {
 
         let jpeg = render_decoded(&decoded, 100).unwrap();
 
-        assert_eq!(image::load_from_memory(&jpeg).unwrap().dimensions(), (100, 50));
+        assert_eq!(
+            image::load_from_memory(&jpeg).unwrap().dimensions(),
+            (100, 50)
+        );
     }
 
     #[test]
@@ -977,9 +980,10 @@ mod tests {
         let blended = flatten_onto_white(&half).to_rgb8();
 
         assert!(flat.pixels().all(|pixel| pixel.0 == [255, 255, 255]));
-        assert!(blended
-            .pixels()
-            .all(|pixel| pixel.0.iter().all(|&channel| (126..=128).contains(&channel))));
+        assert!(blended.pixels().all(|pixel| pixel
+            .0
+            .iter()
+            .all(|&channel| (126..=128).contains(&channel))));
     }
 
     #[test]

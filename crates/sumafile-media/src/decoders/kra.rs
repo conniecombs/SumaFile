@@ -44,7 +44,9 @@ mod tests {
     use image::{Rgb, RgbImage};
     use std::io::Write;
 
-    const PREVIEW: Purpose = Purpose::Preview { max_dimension: 2560 };
+    const PREVIEW: Purpose = Purpose::Preview {
+        max_dimension: 2560,
+    };
 
     fn picture() -> RgbImage {
         RgbImage::from_fn(4, 3, |x, y| Rgb([(x * 60) as u8, (y * 100) as u8, 200]))
@@ -103,7 +105,10 @@ mod tests {
 
         for path in [no_picture, not_a_png, text] {
             let error = decode(&path, "kra", PREVIEW).err();
-            assert!(matches!(error, Some(RenderError::Decode(_))), "{path:?}: {error:?}");
+            assert!(
+                matches!(error, Some(RenderError::Decode(_))),
+                "{path:?}: {error:?}"
+            );
         }
     }
 }

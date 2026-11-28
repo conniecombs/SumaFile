@@ -24,7 +24,9 @@ mod tests {
     use crate::render::{Purpose, RenderError};
     use crate::testing::Folder;
 
-    const PREVIEW: Purpose = Purpose::Preview { max_dimension: 2560 };
+    const PREVIEW: Purpose = Purpose::Preview {
+        max_dimension: 2560,
+    };
 
     /// A DDS header for a BC1 (DXT1) texture of this size, without its data.
     fn bc1_header(width: u32, height: u32) -> Vec<u8> {
@@ -93,7 +95,10 @@ mod tests {
         let no_data = decode(&no_data, "dds", PREVIEW).err();
         let text = decode(&text, "dds", PREVIEW).err();
 
-        assert!(matches!(no_data, Some(RenderError::Decode(_))), "{no_data:?}");
+        assert!(
+            matches!(no_data, Some(RenderError::Decode(_))),
+            "{no_data:?}"
+        );
         assert!(matches!(text, Some(RenderError::Decode(_))), "{text:?}");
     }
 }

@@ -67,7 +67,9 @@ mod tests {
     use crate::testing::Folder;
     use image::{DynamicImage, Rgb, RgbImage, Rgba, RgbaImage};
 
-    const PREVIEW: Purpose = Purpose::Preview { max_dimension: 2560 };
+    const PREVIEW: Purpose = Purpose::Preview {
+        max_dimension: 2560,
+    };
 
     /// 4 by 3, each pixel different.
     fn picture() -> RgbImage {
@@ -129,9 +131,17 @@ mod tests {
 
         let near = |value: u8, expected: u8| value.abs_diff(expected) <= 2;
         let [dark, half, full] = decoded.get_pixel(0, 0).0;
-        assert!(dark == 0 && near(half, 186) && full == 255, "{:?}", decoded.get_pixel(0, 0));
+        assert!(
+            dark == 0 && near(half, 186) && full == 255,
+            "{:?}",
+            decoded.get_pixel(0, 0)
+        );
         let [over, one, quarter] = decoded.get_pixel(1, 0).0;
-        assert!(over == 255 && one == 255 && near(quarter, 135), "{:?}", decoded.get_pixel(1, 0));
+        assert!(
+            over == 255 && one == 255 && near(quarter, 135),
+            "{:?}",
+            decoded.get_pixel(1, 0)
+        );
     }
 
     #[test]
@@ -169,7 +179,10 @@ mod tests {
         let truncated = decode(&cut_off, "ppm", PREVIEW).err();
 
         assert!(matches!(wrong, Some(RenderError::Decode(_))), "{wrong:?}");
-        assert!(matches!(truncated, Some(RenderError::Decode(_))), "{truncated:?}");
+        assert!(
+            matches!(truncated, Some(RenderError::Decode(_))),
+            "{truncated:?}"
+        );
     }
 
     #[test]
@@ -188,6 +201,9 @@ mod tests {
 
         let error = decode(&path, "xyz", PREVIEW).err();
 
-        assert!(matches!(error, Some(RenderError::Unsupported(_))), "{error:?}");
+        assert!(
+            matches!(error, Some(RenderError::Unsupported(_))),
+            "{error:?}"
+        );
     }
 }
