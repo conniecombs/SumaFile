@@ -177,8 +177,8 @@ function Get-UiSmokeProcessTable {
 }
 
 # The processes of this run still alive: the app's and the SFTP server's process trees (by parent id), anything
-# started from the app, service, plugin or 7-Zip executables, and anything whose command line names the run folder,
-# among the processes created since the launch.
+# started from the app, service, media process, plugin or 7-Zip executables, and anything whose command line names
+# the run folder, among the processes created since the launch.
 function Get-UiSmokeHelperProcesses {
     param(
         [int[]]$RootProcessIds = @(),
@@ -337,6 +337,10 @@ if (-not $SkipBuild) {
     try {
         & cargo build --locked -p simplefile-service -p sumafile-sevenzip-backend -p sumafile-remote-backend -p sumafile-git-backend -p sumafile-remote-test-server
         if ($LASTEXITCODE -ne 0) { throw 'Backend build failed.' }
+        # The service's media process, built on its own as the release build does. It lands beside the service,
+        # which looks for it next to its own executable.
+        & cargo build --locked -p sumafile-media --bin sumafile-media
+        if ($LASTEXITCODE -ne 0) { throw 'Media process build failed.' }
         # Restage target\plugins from the fresh target\debug output; the App's Debug build copies it into the exe folder.
         & (Join-Path $PSScriptRoot 'build-plugins.ps1') -SkipCargo | Out-Host
         & npm run build:winui
@@ -346,6 +350,10 @@ if (-not $SkipBuild) {
 $exe = Join-Path $root 'src-winui\SimpleFile.App\bin\x64\Debug\net10.0-windows10.0.19041.0\win-x64\SumaFile.exe'
 $service = Join-Path $root 'target\debug\simplefile-service.exe'
 if (-not (Test-Path -LiteralPath $exe) -or -not (Test-Path -LiteralPath $service)) { throw 'Debug app/service missing. Run without -SkipBuild.' }
+# Checked because nothing else would say so: without the media process the service runs, and the picture formats it
+# decodes quietly fall back to Windows.
+$media = Join-Path (Split-Path -Parent $service) 'sumafile-media.exe'
+if (-not (Test-Path -LiteralPath $media)) { throw "sumafile-media.exe is missing beside $service. Run without -SkipBuild." }
 # build:winui copies whatever target\plugins holds, so -SkipBuild could otherwise test an old bundled plugin.
 $bundledPluginsRoot = Join-Path (Split-Path -Parent $exe) 'plugins'
 if (Test-Path -LiteralPath (Join-Path $bundledPluginsRoot 'bundled.json')) {
@@ -659,7 +667,7 @@ if ($KeepResults) {
 } elseif (-not $shotsCopied) {
     Write-Warning "Kept the run folder, which holds the screenshots that could not be copied: $testRoot"
 } else {
-    $helperExecutables = @(@($installDir, $service, $sevenZa, $remoteServerExe, $pluginRoots) | Where-Object { $_ })
+    $helperExecutables = @(@($installDir, $service, $media, $sevenZa, $remoteServerExe, $pluginRoots) | Where-Object { $_ })
     $helperRoots = @(@($appProcessId, $serverProcessId) | Where-Object { $null -ne $_ })
     if (-not (Wait-UiSmokeHelperProcessesGone -RootProcessIds $helperRoots -Since $launchedAt -Executables $helperExecutables -RunRoot $testRoot)) {
         Write-Warning "Kept the run folder while helper processes may still use it: $testRoot"

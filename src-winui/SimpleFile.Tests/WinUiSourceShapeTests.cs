@@ -779,8 +779,11 @@ public class WinUiSourceShapeTests
         Assert.Contains("SetVideoFramePreference", presenter);
         Assert.Contains("MetadataSections", presenter);
         Assert.Contains("VideoThumbnailExtractor", thumbnailHost);
-        Assert.Contains("PhotoFolder.IsImage", thumbnailHost);
-        Assert.Contains("MediaFolder.IsVideo", thumbnailHost);
+        // Which files get Windows' thumbnail is ThumbnailRouting's rule; the host asks it.
+        var thumbnailRouting = File.ReadAllText(Path.Combine(coreRoot, "ThumbnailRouting.cs"));
+        Assert.Contains("ThumbnailRouting.CanUseWindowsThumbnail(extension)", thumbnailHost);
+        Assert.Contains("PhotoFolder.IsImage", thumbnailRouting);
+        Assert.Contains("MediaFolder.IsVideo", thumbnailRouting);
         Assert.Contains("MaxInFlightThumbnails", thumbnailHost);
         Assert.Contains("InFlight.Count >= MaxInFlightThumbnails", thumbnailHost);
         Assert.Contains("MediaFolder.IsMediaFolder", mainWindow);

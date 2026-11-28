@@ -36,6 +36,23 @@ public class ThumbnailRoutingTests
     }
 
     /// <summary>
+    /// When Windows decodes one of these files for the preview pane, the picture kept in memory is capped to what
+    /// the pane can show: a 30,000 by 30,000 pixel file would otherwise hold 3.6 GB. Only the long side is given;
+    /// a zero keeps the shape.
+    /// </summary>
+    [Theory]
+    [InlineData(4000u, 3000u, 2560, 0)]
+    [InlineData(3000u, 4000u, 0, 2560)]
+    [InlineData(30000u, 30000u, 2560, 0)]
+    [InlineData(2560u, 1440u, 0, 0)]
+    [InlineData(800u, 600u, 0, 0)]
+    [InlineData(0u, 0u, 0, 0)]
+    public void AWindowsDecodeIsCappedToThePreviewSize(uint pixelWidth, uint pixelHeight, int width, int height)
+    {
+        Assert.Equal((width, height), ThumbnailRouting.PreviewDecodeSize(pixelWidth, pixelHeight));
+    }
+
+    /// <summary>
     /// When SumaFile's own decoder has no picture for a file, Windows' thumbnail is tried next. That must hold for
     /// every format the media process decodes, not only the ones Windows is known to read: a codec the user
     /// installed may read it.

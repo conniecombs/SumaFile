@@ -749,6 +749,53 @@ public sealed class FileOperationService : ISettingsBackend
         return _ipc.RenderImagePreviewAsync(path, maxDimension, ct);
     }
 
+    /// <summary>
+    /// <see cref="RenderImagePreviewAsync"/> for the file a selection has just landed on. The request is sent once
+    /// <see cref="ThumbnailRouting.PreviewRequestDelay"/> has passed, and not at all when <paramref name="ct"/> is
+    /// cancelled first: a file the selection only passed over never reaches the service.
+    /// </summary>
+    public Task<EncodedImage> RenderImagePreviewDebouncedAsync(string path, CancellationToken ct)
+    {
+        return RenderImagePreviewDebouncedAsync(path, ThumbnailRouting.PreviewRequestDelay, ct);
+    }
+
+    internal async Task<EncodedImage> RenderImagePreviewDebouncedAsync(string path, TimeSpan delay, CancellationToken ct)
+    {
+        await Task.Delay(delay, ct).ConfigureAwait(false);
+        return await RenderImagePreviewAsync(path, ThumbnailRouting.PreviewMaxDimension, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The picture Quick Look shows for an image file. A format the media process decodes is asked for at screen
+    /// size, as the preview pane asks for it; every other picture, and one the media process has no picture for,
+    /// is its 512-pixel thumbnail.
+    /// </summary>
+    public Task<byte[]> RenderQuickLookImageAsync(string path, CancellationToken ct)
+    {
+        return RenderQuickLookImageAsync(path, ThumbnailRouting.PreviewRequestDelay, ct);
+    }
+
+    internal async Task<byte[]> RenderQuickLookImageAsync(string path, TimeSpan delay, CancellationToken ct)
+    {
+        if (ThumbnailRouting.PreviewsThroughService(path))
+        {
+            try
+            {
+                var picture = await RenderImagePreviewDebouncedAsync(path, delay, ct).ConfigureAwait(false);
+                if (picture.Data.Length > 0)
+                {
+                    return picture.Data;
+                }
+            }
+            catch (Exception) when (!ct.IsCancellationRequested)
+            {
+                // The media process has no picture for this file: not installed, too large, damaged, or timed out.
+            }
+        }
+
+        return await GenerateThumbnailAsync(path, 512, ct).ConfigureAwait(false);
+    }
+
     public Task<byte[]> GenerateThumbnailAsync(string path, uint size = 256, CancellationToken ct = default)
     {
         return _ipc.GenerateThumbnailAsync(path, size, ct);

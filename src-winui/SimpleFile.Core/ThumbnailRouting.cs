@@ -11,6 +11,28 @@ public static class ThumbnailRouting
     public const uint PreviewMaxDimension = 2560;
 
     /// <summary>
+    /// How long a selection rests on a file before its picture is asked for. The file service finishes every
+    /// picture it is asked for, two at a time, so the files passed while arrowing through a folder must not be
+    /// asked for: the file the selection stops on would wait behind them.
+    /// </summary>
+    public static readonly TimeSpan PreviewRequestDelay = TimeSpan.FromMilliseconds(150);
+
+    /// <summary>
+    /// The decode size to give Windows for a picture of this many pixels, so that what stays in memory is no larger
+    /// than the preview pane shows. Only the long side is set, to <see cref="PreviewMaxDimension"/>; the zero keeps
+    /// the picture's shape. Both are zero when the picture already fits.
+    /// </summary>
+    public static (int Width, int Height) PreviewDecodeSize(uint pixelWidth, uint pixelHeight)
+    {
+        if (Math.Max(pixelWidth, pixelHeight) <= PreviewMaxDimension)
+        {
+            return (0, 0);
+        }
+
+        return pixelWidth >= pixelHeight ? ((int)PreviewMaxDimension, 0) : (0, (int)PreviewMaxDimension);
+    }
+
+    /// <summary>
     /// True when the file service makes thumbnails for <paramref name="extension"/> (lowercase, without a dot).
     /// Windows' thumbnail is still tried when the service fails.
     /// </summary>

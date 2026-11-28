@@ -397,7 +397,7 @@ public sealed partial class MainWindow
         {
             try
             {
-                imageData = await fileOps.GenerateThumbnailAsync(row.Path, 512, cancellationToken);
+                imageData = await fileOps.RenderQuickLookImageAsync(row.Path, cancellationToken);
             }
             catch
             {
