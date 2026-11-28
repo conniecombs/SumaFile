@@ -8,6 +8,9 @@
 //! A request has an empty body. A successful reply carries the encoded
 //! picture as its body.
 //!
+//! A `video_thumbnail` request goes to the video process, which speaks the
+//! same format. Its successful reply also says who decoded the frame.
+//!
 //! Before it reads its first request, the media process sends one message
 //! with the id 0 and no body: it is running. A process that ends before that
 //! never started, and no file is to blame.
@@ -27,6 +30,11 @@ pub enum Method {
     Thumbnail,
     /// The picture at screen size: at most `maxDimension` on its long side.
     Preview,
+    /// A JPEG of one frame of a video, that fits a `size` by `size` box. The
+    /// frame is `positionPercent` of the way through. Answered by the video
+    /// process (`sumafile-video`).
+    #[serde(rename = "video_thumbnail")]
+    VideoThumbnail,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,6 +47,35 @@ pub struct Request {
     pub size: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_dimension: Option<u32>,
+    /// For a video thumbnail: how far into the video the frame is, 1 to 99.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position_percent: Option<u8>,
+    /// For a video thumbnail: whether the graphics card may decode it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hardware: Option<bool>,
+}
+
+/// Who decoded a video frame. `Hardware` means the graphics card decoded it;
+/// scaling there after a processor decode does not count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Decoder {
+    Hardware,
+    Software,
+}
+
+/// Why the processor decoded a video frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SoftwareReason {
+    /// The request said not to use the graphics card.
+    TurnedOff,
+    /// Windows has no graphics device that can decode video.
+    NoDevice,
+    /// There is a device, and Windows decoded this file on the processor.
+    NoHardwareDecoder,
+    /// Decoding with the device failed, and without it worked.
+    HardwareFailed,
 }
 
 /// How the body of a successful reply is encoded.
@@ -86,6 +123,12 @@ pub struct ResponseHeader {
     pub kind: Option<FailureKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// In a successful reply to a video thumbnail: who decoded the frame.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decoder: Option<Decoder>,
+    /// With `decoder: software`: why.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<SoftwareReason>,
 }
 
 /// The `id` of the message the media process sends once, before it reads any
@@ -103,6 +146,8 @@ impl ResponseHeader {
             height: None,
             kind: None,
             error: None,
+            decoder: None,
+            reason: None,
         }
     }
 
@@ -115,6 +160,23 @@ impl ResponseHeader {
             height: Some(height),
             kind: None,
             error: None,
+            decoder: None,
+            reason: None,
+        }
+    }
+
+    /// A video thumbnail: a JPEG, and who decoded its frame.
+    pub fn video(
+        id: u64,
+        width: u32,
+        height: u32,
+        decoder: Decoder,
+        reason: Option<SoftwareReason>,
+    ) -> Self {
+        Self {
+            decoder: Some(decoder),
+            reason,
+            ..Self::success(id, ImageKind::Jpeg, width, height)
         }
     }
 
@@ -127,6 +189,8 @@ impl ResponseHeader {
             height: None,
             kind: Some(kind),
             error: Some(error.into()),
+            decoder: None,
+            reason: None,
         }
     }
 }
@@ -211,6 +275,55 @@ mod tests {
         assert_eq!(READY_ID, 0);
     }
 
+    /// The words a video thumbnail travels in. A request for a picture
+    /// carries neither of the two video fields.
+    #[test]
+    fn a_video_request_and_its_reply_have_these_words() {
+        let request = Request {
+            id: 7,
+            method: Method::VideoThumbnail,
+            path: r"C:\v\a.mp4".to_string(),
+            size: Some(256),
+            max_dimension: None,
+            position_percent: Some(25),
+            hardware: Some(true),
+        };
+        let reply = ResponseHeader::video(
+            7,
+            256,
+            144,
+            Decoder::Software,
+            Some(SoftwareReason::NoHardwareDecoder),
+        );
+
+        assert_eq!(
+            serde_json::to_string(&request).unwrap(),
+            r#"{"id":7,"method":"video_thumbnail","path":"C:\\v\\a.mp4","size":256,"positionPercent":25,"hardware":true}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&reply).unwrap(),
+            r#"{"id":7,"ok":true,"format":"jpeg","width":256,"height":144,"decoder":"software","reason":"no_hardware_decoder"}"#
+        );
+        let hardware = ResponseHeader::video(8, 64, 64, Decoder::Hardware, None);
+        assert_eq!(
+            serde_json::to_string(&hardware).unwrap(),
+            r#"{"id":8,"ok":true,"format":"jpeg","width":64,"height":64,"decoder":"hardware"}"#
+        );
+        for (reason, word) in [
+            (SoftwareReason::TurnedOff, "turned_off"),
+            (SoftwareReason::NoDevice, "no_device"),
+            (SoftwareReason::NoHardwareDecoder, "no_hardware_decoder"),
+            (SoftwareReason::HardwareFailed, "hardware_failed"),
+        ] {
+            assert_eq!(
+                serde_json::to_string(&reason).unwrap(),
+                format!("\"{word}\"")
+            );
+        }
+        let picture = serde_json::to_string(&super::tests::request()).unwrap();
+        assert!(!picture.contains("positionPercent") && !picture.contains("hardware"));
+    }
+
     fn request() -> Request {
         Request {
             id: 7,
@@ -218,6 +331,8 @@ mod tests {
             path: r"C:\Photos\été\scan.psd".to_string(),
             size: Some(256),
             max_dimension: None,
+            position_percent: None,
+            hardware: None,
         }
     }
 

@@ -45,6 +45,9 @@ pub fn handle(request: &Request) -> Result<Rendered, RenderError> {
     match request.method {
         Method::Thumbnail => thumbnail(path, request.size.unwrap_or(DEFAULT_THUMBNAIL_SIZE)),
         Method::Preview => preview(path, request.max_dimension.unwrap_or(DEFAULT_PREVIEW_SIZE)),
+        Method::VideoThumbnail => Err(RenderError::Unsupported(
+            "Video thumbnails come from the video process.".to_string(),
+        )),
     }
 }
 
@@ -164,6 +167,28 @@ fn encode_preview(image: DynamicImage) -> Result<Rendered, RenderError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Videos go to the video process. Asked by mistake, this one says so
+    /// and decodes nothing.
+    #[test]
+    fn a_video_request_is_not_this_programs_to_answer() {
+        let request = Request {
+            id: 1,
+            method: Method::VideoThumbnail,
+            path: "clip.mp4".to_string(),
+            size: Some(64),
+            max_dimension: None,
+            position_percent: Some(25),
+            hardware: Some(true),
+        };
+
+        let answer = handle(&request);
+
+        assert!(
+            matches!(answer, Err(RenderError::Unsupported(_))),
+            "{answer:?}"
+        );
+    }
     use crate::testing::Folder;
     use image::{GenericImageView, Rgb, RgbImage, Rgba, RgbaImage};
     use sumafile_media_client::protocol::ImageKind;

@@ -128,6 +128,8 @@ mod tests {
                 path: (*path).to_string(),
                 size: Some(64),
                 max_dimension: None,
+                position_percent: None,
+                hardware: None,
             };
             write_message(&mut wire, &request, &[]).unwrap();
         }

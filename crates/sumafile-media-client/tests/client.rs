@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use sumafile_media_client::protocol::ImageKind;
+use sumafile_media_client::protocol::{Decoder, ImageKind, SoftwareReason};
 use sumafile_media_client::{ClientConfig, MediaClient, MediaError};
 
 struct Folder(PathBuf);
@@ -454,6 +454,133 @@ fn a_helper_that_stops_reading_cannot_block_the_client() {
     }
 
     assert_eq!(answered, 20, "every call came back");
+}
+
+fn video_body(path: &Path, percent: u8) -> Vec<u8> {
+    format!(
+        "OK:{}@{percent}",
+        path.file_name().unwrap().to_string_lossy()
+    )
+    .into_bytes()
+}
+
+#[test]
+fn a_video_thumbnail_comes_back_with_who_decoded_it() {
+    let folder = Folder::new("video");
+    let client = client(config());
+    let on_the_card = folder.file("gpu-a.mp4");
+    let on_the_processor = folder.file("b.mp4");
+    let no_device = folder.file("nodevice-c.mp4");
+
+    let hardware = client.video_thumbnail(&on_the_card, 256, 40, true).unwrap();
+    let turned_off = client
+        .video_thumbnail(&on_the_processor, 96, 25, false)
+        .unwrap();
+    let missing = client.video_thumbnail(&no_device, 96, 25, true).unwrap();
+
+    assert_eq!(hardware.decoder, Decoder::Hardware);
+    assert_eq!(hardware.reason, None);
+    assert_eq!(hardware.rendered.bytes, video_body(&on_the_card, 40));
+    assert_eq!(hardware.rendered.kind, ImageKind::Jpeg);
+    assert_eq!(
+        (hardware.rendered.width, hardware.rendered.height),
+        (256, 256)
+    );
+    assert_eq!(turned_off.decoder, Decoder::Software);
+    assert_eq!(turned_off.reason, Some(SoftwareReason::TurnedOff));
+    assert_eq!(missing.reason, Some(SoftwareReason::NoDevice));
+    assert_eq!(client.stats().starts, 1);
+}
+
+/// A slow picture must not hold up a video, nor a video a picture.
+#[test]
+fn videos_wait_in_a_gate_of_their_own() {
+    let folder = Folder::new("video-gate");
+    let mut config = config();
+    config.max_thumbnails = 1;
+    config.max_videos = 1;
+    let client = client(config);
+    let slow_picture = folder.file("slow600-a.x");
+    let video = folder.file("b.mp4");
+
+    let picture_call = {
+        let (client, slow_picture) = (Arc::clone(&client), slow_picture.clone());
+        std::thread::spawn(move || (client.thumbnail(&slow_picture, 64), Instant::now()))
+    };
+    std::thread::sleep(Duration::from_millis(100));
+    let video_reply = client.video_thumbnail(&video, 64, 25, false);
+    let video_done = Instant::now();
+    let (picture_reply, picture_done) = picture_call.join().unwrap();
+
+    assert!(video_reply.is_ok(), "{video_reply:?}");
+    assert!(picture_reply.is_ok(), "{picture_reply:?}");
+    assert!(
+        video_done < picture_done,
+        "the video did not wait for the picture"
+    );
+}
+
+#[test]
+fn a_video_that_takes_too_long_is_recorded_as_bad() {
+    let folder = Folder::new("video-timeout");
+    let mut config = config();
+    config.video_timeout = Duration::from_millis(300);
+    let client = client(config);
+    let hanging = folder.file("hang-a.mp4");
+
+    let started = Instant::now();
+    let first = client.video_thumbnail(&hanging, 64, 25, true);
+    let took = started.elapsed();
+    let second = client.video_thumbnail(&hanging, 64, 25, true);
+
+    assert!(matches!(first, Err(MediaError::Failed(_))), "{first:?}");
+    assert!(
+        took < Duration::from_millis(1200),
+        "the video's own limit applied, not the thumbnail's 1500 ms: {took:?}"
+    );
+    assert!(matches!(second, Err(MediaError::Unsupported)), "{second:?}");
+    assert_eq!(client.stats().starts, 1, "the bad file started nothing");
+}
+
+/// Video has a program and a client of its own, so that a video which ends
+/// its program costs the pictures nothing.
+#[test]
+fn one_clients_video_timeout_leaves_another_clients_picture_running() {
+    let folder = Folder::new("two-clients");
+    let mut video_config = config();
+    video_config.video_timeout = Duration::from_millis(300);
+    let videos = client(video_config);
+    let pictures = client(config());
+    let hanging = folder.file("hang-a.mp4");
+    let slow_picture = folder.file("slow900-b.x");
+
+    let picture_call = {
+        let (pictures, slow_picture) = (Arc::clone(&pictures), slow_picture.clone());
+        std::thread::spawn(move || pictures.thumbnail(&slow_picture, 64))
+    };
+    std::thread::sleep(Duration::from_millis(100));
+    let video_reply = videos.video_thumbnail(&hanging, 64, 25, true);
+    let picture_reply = picture_call.join().unwrap();
+
+    assert!(
+        matches!(video_reply, Err(MediaError::Failed(_))),
+        "{video_reply:?}"
+    );
+    assert_eq!(picture_reply.unwrap().bytes, body(&slow_picture));
+    assert_eq!(pictures.stats().starts, 1, "the picture program ran on");
+}
+
+/// An older media process would answer a video request without saying who
+/// decoded the frame. That is not an answer the service can count.
+#[test]
+fn a_video_reply_that_names_no_decoder_is_a_failure() {
+    let folder = Folder::new("video-nameless");
+    let client = client(config());
+    let nameless = folder.file("nameless-a.mp4");
+
+    let reply = client.video_thumbnail(&nameless, 64, 25, true);
+
+    assert!(matches!(reply, Err(MediaError::Failed(_))), "{reply:?}");
 }
 
 #[test]

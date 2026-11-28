@@ -8,6 +8,7 @@ mod process;
 pub mod protocol;
 
 pub use client::{
-    default_helper_path, ClientConfig, ClientStats, MediaClient, MediaError, Rendered,
-    HELPER_FILE_NAME, HELPER_PATH_VARIABLE,
+    default_helper_path, default_video_helper_path, ClientConfig, ClientStats, MediaClient,
+    MediaError, Rendered, VideoRendered, HELPER_FILE_NAME, HELPER_PATH_VARIABLE,
+    VIDEO_HELPER_FILE_NAME, VIDEO_HELPER_PATH_VARIABLE,
 };

@@ -25,7 +25,8 @@
 
 use crate::process::{self, Job};
 use crate::protocol::{
-    read_message, write_message, FailureKind, ImageKind, Method, Request, ResponseHeader, READY_ID,
+    read_message, write_message, Decoder, FailureKind, ImageKind, Method, Request, ResponseHeader,
+    SoftwareReason, READY_ID,
 };
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -46,16 +47,36 @@ pub const HELPER_FILE_NAME: &str = if cfg!(windows) {
 /// running program. For tests and development.
 pub const HELPER_PATH_VARIABLE: &str = "SUMAFILE_MEDIA_HELPER";
 
+/// The video process's file name, beside the file service.
+pub const VIDEO_HELPER_FILE_NAME: &str = if cfg!(windows) {
+    "sumafile-video.exe"
+} else {
+    "sumafile-video"
+};
+
+/// As `SUMAFILE_MEDIA_HELPER`, for the video process.
+pub const VIDEO_HELPER_PATH_VARIABLE: &str = "SUMAFILE_VIDEO_HELPER";
+
 /// Where the media process is: `SUMAFILE_MEDIA_HELPER` when set, else
 /// `sumafile-media` beside the running program.
 pub fn default_helper_path() -> PathBuf {
-    if let Some(path) = std::env::var_os(HELPER_PATH_VARIABLE).filter(|path| !path.is_empty()) {
+    beside_this_program(HELPER_PATH_VARIABLE, HELPER_FILE_NAME)
+}
+
+/// Where the video process is: `SUMAFILE_VIDEO_HELPER` when set, else
+/// `sumafile-video` beside the running program.
+pub fn default_video_helper_path() -> PathBuf {
+    beside_this_program(VIDEO_HELPER_PATH_VARIABLE, VIDEO_HELPER_FILE_NAME)
+}
+
+fn beside_this_program(variable: &str, file_name: &str) -> PathBuf {
+    if let Some(path) = std::env::var_os(variable).filter(|path| !path.is_empty()) {
         return PathBuf::from(path);
     }
     std::env::current_exe()
         .ok()
-        .and_then(|program| program.parent().map(|folder| folder.join(HELPER_FILE_NAME)))
-        .unwrap_or_else(|| PathBuf::from(HELPER_FILE_NAME))
+        .and_then(|program| program.parent().map(|folder| folder.join(file_name)))
+        .unwrap_or_else(|| PathBuf::from(file_name))
 }
 
 #[derive(Debug, Clone)]
@@ -69,10 +90,15 @@ pub struct ClientConfig {
     pub thumbnail_timeout: Duration,
     /// How long one preview may take to decode.
     pub preview_timeout: Duration,
+    /// How long one video thumbnail may take. Opening a video on a network
+    /// share is slow.
+    pub video_timeout: Duration,
     /// How long the process may have nothing to do before it is ended.
     pub idle_exit: Duration,
     pub max_thumbnails: usize,
     pub max_previews: usize,
+    /// How many video thumbnails are with the process at a time.
+    pub max_videos: usize,
     pub max_bad_files: usize,
     /// The most memory the process may commit (Windows). 0 sets no limit.
     pub memory_limit_bytes: u64,
@@ -89,9 +115,11 @@ impl ClientConfig {
             ready_timeout: Duration::from_secs(15),
             thumbnail_timeout: Duration::from_secs(20),
             preview_timeout: Duration::from_secs(60),
+            video_timeout: Duration::from_secs(30),
             idle_exit: Duration::from_secs(120),
             max_thumbnails: 4,
             max_previews: 2,
+            max_videos: 4,
             max_bad_files: 1024,
             memory_limit_bytes: 3 * 1024 * 1024 * 1024,
             spawn_retry_interval: Duration::from_secs(30),
@@ -106,6 +134,15 @@ pub struct Rendered {
     pub width: u32,
     pub height: u32,
     pub bytes: Vec<u8>,
+}
+
+/// A video thumbnail from the video process, and who decoded its frame.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VideoRendered {
+    pub rendered: Rendered,
+    pub decoder: Decoder,
+    /// Why the processor decoded it. `None` for a hardware decode.
+    pub reason: Option<SoftwareReason>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,6 +203,7 @@ struct Inner {
     turn: RwLock<()>,
     thumbnails: Gate,
     previews: Gate,
+    videos: Gate,
     next_id: AtomicU64,
     starts: AtomicU64,
     spawn_failures: AtomicU64,
@@ -217,8 +255,25 @@ enum Reply {
     },
 }
 
+/// A successful reply: the picture, and what a video reply adds.
+struct Answer {
+    rendered: Rendered,
+    decoder: Option<Decoder>,
+    reason: Option<SoftwareReason>,
+}
+
+/// What one request asks for, beyond its file.
+#[derive(Clone, Copy)]
+struct Ask {
+    method: Method,
+    /// The box's side for a thumbnail, the long side for a preview.
+    side: u32,
+    position_percent: Option<u8>,
+    hardware: Option<bool>,
+}
+
 enum Outcome {
-    Done(Result<Rendered, MediaError>),
+    Done(Result<Answer, MediaError>),
     /// The process stopped under this request, with others in flight.
     Interrupted,
 }
@@ -343,6 +398,7 @@ impl MediaClient {
                 turn: RwLock::new(()),
                 thumbnails: Gate::new(config.max_thumbnails),
                 previews: Gate::new(config.max_previews),
+                videos: Gate::new(config.max_videos),
                 next_id: AtomicU64::new(1),
                 starts: AtomicU64::new(0),
                 spawn_failures: AtomicU64::new(0),
@@ -354,12 +410,43 @@ impl MediaClient {
 
     /// A JPEG of `path` that fits a `size` by `size` box.
     pub fn thumbnail(&self, path: &Path, size: u32) -> Result<Rendered, MediaError> {
-        self.request(Method::Thumbnail, path, size)
+        self.request(path, Ask::picture(Method::Thumbnail, size))
+            .map(|answer| answer.rendered)
     }
 
     /// `path` at screen size: at most `max_dimension` on its long side.
     pub fn preview(&self, path: &Path, max_dimension: u32) -> Result<Rendered, MediaError> {
-        self.request(Method::Preview, path, max_dimension)
+        self.request(path, Ask::picture(Method::Preview, max_dimension))
+            .map(|answer| answer.rendered)
+    }
+
+    /// A JPEG of the frame `position_percent` of the way through the video
+    /// at `path`, that fits a `size` by `size` box. `hardware`: whether the
+    /// graphics card may decode it. The answer says who did.
+    pub fn video_thumbnail(
+        &self,
+        path: &Path,
+        size: u32,
+        position_percent: u8,
+        hardware: bool,
+    ) -> Result<VideoRendered, MediaError> {
+        let answer = self.request(
+            path,
+            Ask {
+                method: Method::VideoThumbnail,
+                side: size,
+                position_percent: Some(position_percent),
+                hardware: Some(hardware),
+            },
+        )?;
+        match answer.decoder {
+            Some(decoder) => Ok(VideoRendered {
+                rendered: answer.rendered,
+                decoder,
+                reason: answer.reason,
+            }),
+            None => Err(MediaError::Failed(NOT_UNDERSTOOD.to_string())),
+        }
     }
 
     pub fn stats(&self) -> ClientStats {
@@ -377,7 +464,7 @@ impl MediaClient {
         }
     }
 
-    fn request(&self, method: Method, path: &Path, side: u32) -> Result<Rendered, MediaError> {
+    fn request(&self, path: &Path, ask: Ask) -> Result<Answer, MediaError> {
         let inner = &self.inner;
         let Some(path_text) = path.to_str() else {
             return Err(MediaError::Unsupported);
@@ -388,9 +475,10 @@ impl MediaClient {
             return Err(MediaError::Unsupported);
         }
 
-        let (gate, timeout) = match method {
+        let (gate, timeout) = match ask.method {
             Method::Thumbnail => (&inner.thumbnails, inner.config.thumbnail_timeout),
             Method::Preview => (&inner.previews, inner.config.preview_timeout),
+            Method::VideoThumbnail => (&inner.videos, inner.config.video_timeout),
         };
         let _slot = gate.enter();
         // Another call may have found this file bad while this one waited.
@@ -400,10 +488,12 @@ impl MediaClient {
 
         let request = |id| Request {
             id,
-            method,
+            method: ask.method,
             path: path_text.to_string(),
-            size: matches!(method, Method::Thumbnail).then_some(side),
-            max_dimension: matches!(method, Method::Preview).then_some(side),
+            size: (!matches!(ask.method, Method::Preview)).then_some(ask.side),
+            max_dimension: matches!(ask.method, Method::Preview).then_some(ask.side),
+            position_percent: ask.position_percent,
+            hardware: ask.hardware,
         };
         let file = (path, &stamp);
         match Inner::attempt(inner, &request, file, timeout, Turn::Shared) {
@@ -418,6 +508,18 @@ impl MediaClient {
     }
 }
 
+impl Ask {
+    fn picture(method: Method, side: u32) -> Self {
+        Self {
+            method,
+            side,
+            position_percent: None,
+            hardware: None,
+        }
+    }
+}
+
+const NOT_UNDERSTOOD: &str = "The media process sent a reply SumaFile does not understand.";
 const STOPPED: &str = "The media process stopped while decoding this file.";
 const NOT_STARTED: &str = "The media process could not be started.";
 /// How long a request that timed out waits for a reply the reader had
@@ -642,18 +744,20 @@ fn end(helper: Option<Helper>) {
     }
 }
 
-fn rendered(header: ResponseHeader, body: Vec<u8>) -> Result<Rendered, MediaError> {
+fn rendered(header: ResponseHeader, body: Vec<u8>) -> Result<Answer, MediaError> {
     if header.ok {
         return match (header.format, header.width, header.height) {
-            (Some(kind), Some(width), Some(height)) => Ok(Rendered {
-                kind,
-                width,
-                height,
-                bytes: body,
+            (Some(kind), Some(width), Some(height)) => Ok(Answer {
+                rendered: Rendered {
+                    kind,
+                    width,
+                    height,
+                    bytes: body,
+                },
+                decoder: header.decoder,
+                reason: header.reason,
             }),
-            _ => Err(MediaError::Failed(
-                "The media process sent a reply SumaFile does not understand.".to_string(),
-            )),
+            _ => Err(MediaError::Failed(NOT_UNDERSTOOD.to_string())),
         };
     }
     let message = header.error.unwrap_or_default();

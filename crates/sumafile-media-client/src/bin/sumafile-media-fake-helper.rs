@@ -8,6 +8,13 @@
 //! - anything else: success, with the body `OK:<file name>`; `png` in the
 //!   name makes the reply a PNG.
 //!
+//! A `video_thumbnail` request that succeeds has the body
+//! `OK:<file name>@<positionPercent>` and says who decoded the frame: the
+//! graphics card when the name has `gpu`; else the processor, because the
+//! request turned the card off, or by name: `nodevice`, `failedhw`, and
+//! otherwise for want of a hardware decoder. `nameless` answers as an older
+//! process would, without saying who.
+//!
 //! Each request runs on its own thread, so replies come in any order.
 //!
 //! Arguments script how it starts:
@@ -21,7 +28,8 @@ use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use sumafile_media_client::protocol::{
-    read_message, write_message, FailureKind, ImageKind, Method, Request, ResponseHeader,
+    read_message, write_message, Decoder, FailureKind, ImageKind, Method, Request, ResponseHeader,
+    SoftwareReason,
 };
 
 fn main() {
@@ -94,9 +102,28 @@ fn answer(request: &Request, output: &Mutex<io::Stdout>) {
             ResponseHeader::failure(request.id, kind, message),
             Vec::new(),
         ),
+        None if request.method == Method::VideoThumbnail && !name.contains("nameless") => {
+            let side = request.size.unwrap_or(0);
+            let (decoder, reason) = if name.contains("gpu") {
+                (Decoder::Hardware, None)
+            } else if request.hardware == Some(false) {
+                (Decoder::Software, Some(SoftwareReason::TurnedOff))
+            } else if name.contains("nodevice") {
+                (Decoder::Software, Some(SoftwareReason::NoDevice))
+            } else if name.contains("failedhw") {
+                (Decoder::Software, Some(SoftwareReason::HardwareFailed))
+            } else {
+                (Decoder::Software, Some(SoftwareReason::NoHardwareDecoder))
+            };
+            let percent = request.position_percent.unwrap_or(0);
+            (
+                ResponseHeader::video(request.id, side, side, decoder, reason),
+                format!("OK:{name}@{percent}").into_bytes(),
+            )
+        }
         None => {
             let side = match request.method {
-                Method::Thumbnail => request.size,
+                Method::Thumbnail | Method::VideoThumbnail => request.size,
                 Method::Preview => request.max_dimension,
             }
             .unwrap_or(0);
