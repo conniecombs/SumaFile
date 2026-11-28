@@ -87,16 +87,22 @@ kept in the disk thumbnail cache.
 
 ### 1. Where the code goes
 
-- `crates/sumafile-media`: a `video` module.
+- `crates/sumafile-video`: a new crate, the program and its library.
   - Platform-neutral parts, tested on Linux: the position rule, the frame-size rule (rotation and pixel shape),
     turning the decoder's pixel rows into a picture, the rule for when to stop stepping forward, and the decision of
     which attempt comes next and what is reported.
-  - `video/mf.rs`, Windows only: the Media Foundation and Direct3D calls, as thin as it can be made.
+  - `mf.rs`, Windows only: the Media Foundation and Direct3D calls, as thin as it can be made.
   - On other systems the request answers `unsupported`.
-- **Video runs in its own copy of the media process.** The file service starts the same program (`sumafile-media`) a
-  second time for video, through a second client. A video that times out, or a graphics driver that crashes, ends
-  only the video copy: picture thumbnails and previews in the other copy carry on. Each copy exits on its own after
-  120 seconds idle and has its own 3 GiB memory limit.
+- **Video runs in a program of its own, `sumafile-video`**, started by the file service through a second client. It
+  is a separate program, not a second copy of `sumafile-media`, for two reasons:
+  - A video that times out, or a graphics driver that crashes, ends only the video process. Picture thumbnails and
+    previews carry on.
+  - Some Windows editions (the "N" editions) ship without Media Foundation. A program that needs Media Foundation
+    does not start there at all. If the picture decoders lived in the same program, those PCs would lose the picture
+    formats too. With two programs, only video thumbnails fall back to Windows there.
+
+  It exits on its own after 120 seconds idle and has its own 3 GiB memory limit. It shares the request loop, the wire
+  format and the JPEG pipeline with `sumafile-media`.
 - `crates/sumafile-media-client`: a third request, `video_thumbnail`, with a 30-second timeout (opening a video on a
   network share is slow) and up to four at a time: two local list thumbnails, one network list thumbnail and one for
   the preview pane (section 4).
@@ -161,6 +167,10 @@ is used for that file. That is slower, because every frame stepped over is conve
 
 **When the graphics device is lost** (driver reset, card removed): the request goes on to the second attempt, and the
 device is made again on the next request.
+
+**A Windows without Media Foundation.** `sumafile-video` does not start. The client treats that as a failed start
+(no file is blamed, the next try comes 30 seconds later), and videos fall back to Windows' thumbnail and then the
+icon.
 
 **What reaches the app.** The service counts thumbnails decoded by the graphics card and by the processor since it
 started, keeps the last reason, logs the first use of each decoder and every change, and offers all of it through a
@@ -260,8 +270,10 @@ processor, given the device, also takes a frame that sits in ordinary memory.
   a hardware decoder is counted under the processor, even on a PC with a good graphics card.
 - **Counts in Settings**, not a single "in use" line. A folder can mix both kinds, and CI cannot prove the hardware
   path, so the user needs to see real numbers. The Settings lines were not in what the user approved.
-- **Video gets its own copy of the media process.** For a short while Task Manager can show two `sumafile-media`
-  processes. In return, a video problem never interrupts picture thumbnails.
+- **Video gets a program of its own, `sumafile-video`.** Task Manager shows it beside `sumafile-media` while videos
+  are being decoded. In return, a video problem never interrupts picture thumbnails, and a Windows without Media
+  Foundation keeps the picture formats. (Changed while planning: the approved draft said "a second copy of
+  `sumafile-media`", which would have stopped starting on those Windows editions.)
 - **Network videos load one at a time**, through a slot of their own.
 - **A queued video thumbnail nobody wants is dropped.** Picture thumbnails keep today's behaviour.
 - **The preview pane's frame picture comes from the file service**, on a slot kept free for it. Each frame the user
