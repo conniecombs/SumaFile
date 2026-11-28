@@ -3430,6 +3430,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sumafile-video"
+version = "1.0.0"
+dependencies = [
+ "image",
+ "sumafile-imaging",
+ "sumafile-media",
+ "sumafile-media-client",
+]
+
+[[package]]
 name = "suppaftp"
 version = "13.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

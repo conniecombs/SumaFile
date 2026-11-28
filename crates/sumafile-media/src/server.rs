@@ -16,6 +16,7 @@ use sumafile_media_client::Rendered;
 
 /// What a handler answers with: the picture, and for a video frame who
 /// decoded it and, for a processor decode, why.
+#[derive(Debug)]
 pub struct Answered {
     pub rendered: Rendered,
     pub video: Option<(Decoder, Option<SoftwareReason>)>,

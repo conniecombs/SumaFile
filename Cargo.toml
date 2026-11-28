@@ -5,6 +5,7 @@ members = [
   "crates/sumafile-imaging",
   "crates/sumafile-media-client",
   "crates/sumafile-media",
+  "crates/sumafile-video",
   "crates/simplefile-ipc",
   "crates/simplefile-service",
   "crates/sumafile-plugin",

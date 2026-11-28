@@ -1,0 +1,24 @@
+[package]
+name = "sumafile-video"
+version = "1.0.0"
+description = "SumaFile's video process: makes video thumbnails with Windows' own decoders, in a process of its own"
+authors = ["SumaFile Team"]
+license = "MIT"
+repository = "https://github.com/conniecombs/SumaFile"
+edition = "2021"
+publish = false
+
+[lib]
+name = "sumafile_video"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sumafile-video"
+path = "src/main.rs"
+
+[dependencies]
+sumafile-imaging = { path = "../sumafile-imaging" }
+sumafile-media-client = { path = "../sumafile-media-client" }
+# For the request loop and its error type, which the two programs share.
+sumafile-media = { path = "../sumafile-media" }
+image = { version = "0.25", default-features = false }
