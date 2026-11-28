@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "crates/simplefile-core",
   "crates/sumafile-imaging",
+  "crates/sumafile-media-client",
   "crates/simplefile-ipc",
   "crates/simplefile-service",
   "crates/sumafile-plugin",

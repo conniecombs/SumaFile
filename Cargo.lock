@@ -2739,6 +2739,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sumafile-media-client"
+version = "1.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "sumafile-plugin"
 version = "1.0.0"
 dependencies = [

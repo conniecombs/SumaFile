@@ -152,7 +152,9 @@ on Windows.
 - Started on the first request with piped standard input and output, no window, below-normal priority. On Windows it
   is put in a job object with a 3 GiB memory limit that also ends it if the service dies. It also exits when its
   input closes.
-- It exits by itself after 120 seconds with no request in flight. The service starts it again on the next request.
+- The client ends it after 120 seconds with no request in flight, and starts it again on the next request. The
+  client does this, not the helper: only the client knows that no request is on its way, so a request can never
+  meet a helper that is just leaving.
 - **Wire format** on the pipes, both directions: `u32 LE header length | header (UTF-8 JSON) | u32 LE body length |
   body`. Headers are at most 64 KiB and bodies at most 256 MiB.
   - `{ "id", "method": "thumbnail", "path", "size" }` → `{ "id", "ok": true, "format": "jpeg", "width", "height" }`
@@ -219,7 +221,7 @@ on Windows.
 - **Client against the fake helper:** request and reply matching out of order, calls beyond the gate wait without
   timing out, timeout ends the helper, a crash with
   one request records the file as bad, a crash with several retries each alone, a bad file answers at once without
-  starting the helper, idle exit followed by a restart, a missing helper answers "unsupported".
+  starting the helper, an idle helper is ended and started again, a missing helper answers "unsupported".
 - **Client against the real helper:** thumbnail and preview end to end for two formats.
 - **Core:** a media-process extension goes to the provider and its result is written to and read from the disk cache;
   a built-in extension never reaches the provider; with no provider registered the extension is unsupported.

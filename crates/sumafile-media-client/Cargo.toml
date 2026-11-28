@@ -1,0 +1,27 @@
+[package]
+name = "sumafile-media-client"
+version = "1.2.0"
+description = "Starts SumaFile's media process and talks to it: the wire format, timeouts and crash isolation"
+authors = ["SumaFile Team"]
+license = "MIT"
+repository = "https://github.com/conniecombs/SumaFile"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+] }
+
+# A stand-in for the media process that the client's tests script by file
+# name. It is never packaged.
+[[bin]]
+name = "sumafile-media-fake-helper"
+path = "src/bin/sumafile-media-fake-helper.rs"
+test = false
