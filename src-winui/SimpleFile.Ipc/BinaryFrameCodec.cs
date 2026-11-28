@@ -52,6 +52,9 @@ public static class BinaryFrameCodec
             Protocol.BinaryListingViewPage => BinaryFrameMessage.Response(
                 reader.ReadInt32(),
                 ReadListingViewPage(ref reader)),
+            Protocol.BinaryImagePreviewResult => BinaryFrameMessage.Response(
+                reader.ReadInt32(),
+                ReadImagePreview(ref reader)),
             _ => throw new InvalidOperationException($"Unknown SumaFile binary frame tag {tag}."),
         };
 
@@ -123,6 +126,18 @@ public static class BinaryFrameCodec
         var writer = new BinaryPayloadWriter(Protocol.BinaryThumbnailResult);
         writer.WriteInt32(requestId);
         writer.WriteBytesArray(data);
+        return writer.ToArray();
+    }
+
+    /// <summary><c>i32 request id | string format | u32 width | u32 height | bytes data</c></summary>
+    public static byte[] EncodeImagePreviewResult(int requestId, EncodedImage preview)
+    {
+        var writer = new BinaryPayloadWriter(Protocol.BinaryImagePreviewResult);
+        writer.WriteInt32(requestId);
+        writer.WriteString(preview.Format);
+        writer.WriteUInt32(preview.Width);
+        writer.WriteUInt32(preview.Height);
+        writer.WriteBytesArray(preview.Data);
         return writer.ToArray();
     }
 
@@ -349,6 +364,14 @@ public static class BinaryFrameCodec
             Kind = reader.ReadString(),
         };
     }
+
+    private static EncodedImage ReadImagePreview(ref BinaryPayloadReader reader) => new()
+    {
+        Format = reader.ReadString(),
+        Width = reader.ReadUInt32(),
+        Height = reader.ReadUInt32(),
+        Data = reader.ReadBytes(),
+    };
 
     private static ThumbnailResult[] ReadThumbnailResults(ref BinaryPayloadReader reader)
     {

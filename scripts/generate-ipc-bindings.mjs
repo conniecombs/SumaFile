@@ -152,6 +152,12 @@ const binaryTags = [
     tag: methods.open_listing_view?.binaryFrameTag,
     name: 'open_listing_view.result',
   },
+  {
+    cs: 'BinaryImagePreviewResult',
+    rust: 'BINARY_IMAGE_PREVIEW_RESULT',
+    tag: methods.render_image_preview?.binaryFrameTag,
+    name: 'render_image_preview.result',
+  },
 ];
 if (methods.get_listing_view_range?.binaryFrameTag !== methods.open_listing_view?.binaryFrameTag) {
   fail('open_listing_view and get_listing_view_range must share one binary frame tag.');
@@ -220,6 +226,7 @@ const wrappers = [
   { method: 'read_file_preview', signature: 'public Task<FilePreview> ReadFilePreviewAsync(string path, ulong? maxSize = null, CancellationToken ct = default)', body: 'InvokeAsync<FilePreview>(Protocol.ReadFilePreviewMethod, new { path, maxSize }, ct)' },
   { method: 'generate_thumbnail', signature: 'public Task<byte[]> GenerateThumbnailAsync(string path, uint size, CancellationToken ct = default)', body: 'InvokeAsync<byte[]>(Protocol.GenerateThumbnailMethod, new { path, size }, ct)' },
   { method: 'generate_thumbnails', signature: 'public Task<ThumbnailResult[]> GenerateThumbnailsAsync(string[] paths, uint size, CancellationToken ct = default)', body: 'InvokeAsync<ThumbnailResult[]>(Protocol.GenerateThumbnailsMethod, new { paths, size }, ct)' },
+  { method: 'render_image_preview', signature: 'public Task<EncodedImage> RenderImagePreviewAsync(string path, uint maxDimension, CancellationToken ct = default)', body: 'InvokeAsync<EncodedImage>(Protocol.RenderImagePreviewMethod, new { path, maxDimension }, ct)' },
   { method: 'open_file_with', signature: 'public Task OpenFileWithAsync(string path, string application, CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.OpenFileWithMethod, new { path, application }, ct)' },
   { method: 'compare_files', signature: 'public Task<FileComparison> CompareFilesAsync(string pathA, string pathB, CancellationToken ct = default)', body: 'InvokeAsync<FileComparison>(Protocol.CompareFilesMethod, new { pathA, pathB }, ct)' },
   { method: 'compute_checksum', signature: 'public Task<Checksums> ComputeChecksumAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<Checksums>(Protocol.ComputeChecksumMethod, new { path }, ct)' },

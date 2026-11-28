@@ -128,6 +128,9 @@ public sealed partial class NamedPipeJsonClient
     public Task<ThumbnailResult[]> GenerateThumbnailsAsync(string[] paths, uint size, CancellationToken ct = default)
         => InvokeAsync<ThumbnailResult[]>(Protocol.GenerateThumbnailsMethod, new { paths, size }, ct);
 
+    public Task<EncodedImage> RenderImagePreviewAsync(string path, uint maxDimension, CancellationToken ct = default)
+        => InvokeAsync<EncodedImage>(Protocol.RenderImagePreviewMethod, new { path, maxDimension }, ct);
+
     public Task OpenFileWithAsync(string path, string application, CancellationToken ct = default)
         => InvokeAsync<object?>(Protocol.OpenFileWithMethod, new { path, application }, ct);
 

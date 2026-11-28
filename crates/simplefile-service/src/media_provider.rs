@@ -78,6 +78,11 @@ pub fn installed_stats() -> Option<ClientStats> {
     INSTALLED.get().map(|provider| provider.stats())
 }
 
+/// The provider is one for the whole process: tests that register one, or
+/// that count on the installed one, take turns.
+#[cfg(test)]
+pub(crate) static PROVIDER_TURN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,6 +137,7 @@ mod tests {
 
     #[test]
     fn installing_registers_the_provider_and_starts_nothing() {
+        let _turn = PROVIDER_TURN.blocking_lock();
         install();
         install();
 

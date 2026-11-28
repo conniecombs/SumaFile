@@ -1,6 +1,6 @@
 {
   "protocolVersion": 1,
-  "domainMethodCount": 84,
+  "domainMethodCount": 85,
   "methods": {
     "ipc.handshake": {
       "kind": "handshake",
@@ -159,6 +159,12 @@
     "read_file_preview": { "params": { "path": "string", "maxSize": "number?" }, "result": "FilePreview" },
     "generate_thumbnail": { "params": { "path": "string", "size": "number" }, "result": "string", "binaryFrameTag": 7 },
     "generate_thumbnails": { "params": { "paths": "string[]", "size": "number" }, "result": "ThumbnailResult[]", "binaryFrameTag": 8 },
+    "render_image_preview": {
+      "params": { "path": "string", "maxDimension": "number?" },
+      "result": "EncodedImage",
+      "binaryFrameTag": 10,
+      "notes": "A picture for the preview pane, in a format the media process (sumafile-media) decodes. maxDimension is the long side: 2560 when absent, kept between 64 and 8192. JSON form: data is base64."
+    },
     "calculate_folder_size": { "params": { "path": "string" }, "result": "number" },
     "count_folder_items": { "params": { "path": "string" }, "result": "number" },
     "get_folder_metrics": {

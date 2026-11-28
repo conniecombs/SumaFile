@@ -20,7 +20,8 @@
         "6": "file-change notification",
         "7": "generate_thumbnail result response",
         "8": "generate_thumbnails result response",
-        "9": "listing view page result response (open_listing_view, get_listing_view_range)"
+        "9": "listing view page result response (open_listing_view, get_listing_view_range)",
+        "10": "render_image_preview result response"
       }
     },
     "maxFrameBytes": 83886080,
@@ -63,7 +64,7 @@
     "log": "%LOCALAPPDATA%\\SimpleFile\\startup.log"
   },
   "outboundOversize": {
-    "previewMethods": ["read_file_preview", "generate_thumbnail", "generate_thumbnails"],
+    "previewMethods": ["read_file_preview", "generate_thumbnail", "generate_thumbnails", "render_image_preview"],
     "unboundedArrayAction": "return -32000 RESULT_TOO_LARGE and keep the pipe"
   },
   "hotPathOptions": {

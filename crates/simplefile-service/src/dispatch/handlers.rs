@@ -589,6 +589,7 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
         },
         METHOD_GENERATE_THUMBNAIL => async_ops::generate_thumbnail(request),
         METHOD_GENERATE_THUMBNAILS => async_ops::generate_thumbnails(request),
+        METHOD_RENDER_IMAGE_PREVIEW => async_ops::render_image_preview(request),
         METHOD_COMPUTE_CHECKSUM => match parse_params::<PathParams>(request) {
             Ok(p) => reply_blocking(request, BlockingLane::General, move || {
                 simplefile_core::checksum::compute_checksum(p.path)

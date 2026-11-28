@@ -7,7 +7,7 @@ namespace SimpleFile.Ipc;
 
 public static partial class Protocol
 {
-    public const int DomainMethodCount = 84;
+    public const int DomainMethodCount = 85;
     public const byte BinaryListDirectoryChunk = 1;
     public const byte BinaryListDirectoryResult = 2;
     public const byte BinarySearchResultsBatch = 3;
@@ -17,6 +17,7 @@ public static partial class Protocol
     public const byte BinaryThumbnailResult = 7;
     public const byte BinaryThumbnailsResult = 8;
     public const byte BinaryListingViewPage = 9;
+    public const byte BinaryImagePreviewResult = 10;
 
     public const string HandshakeMethod = "ipc.handshake";
     public const string HealthMethod = "ipc.health";
@@ -57,6 +58,7 @@ public static partial class Protocol
     public const string ReadFilePreviewMethod = "read_file_preview";
     public const string GenerateThumbnailMethod = "generate_thumbnail";
     public const string GenerateThumbnailsMethod = "generate_thumbnails";
+    public const string RenderImagePreviewMethod = "render_image_preview";
     public const string CalculateFolderSizeMethod = "calculate_folder_size";
     public const string CountFolderItemsMethod = "count_folder_items";
     public const string GetFolderMetricsMethod = "get_folder_metrics";
@@ -155,6 +157,7 @@ public static partial class Protocol
         "read_file_preview",
         "generate_thumbnail",
         "generate_thumbnails",
+        "render_image_preview",
         "calculate_folder_size",
         "count_folder_items",
         "get_folder_metrics",
@@ -233,6 +236,7 @@ public static partial class Protocol
         ("generate_thumbnail.result", BinaryThumbnailResult),
         ("generate_thumbnails.result", BinaryThumbnailsResult),
         ("open_listing_view.result", BinaryListingViewPage),
+        ("render_image_preview.result", BinaryImagePreviewResult),
     ];
 
     public static IReadOnlyList<(string Name, byte Tag)> BinaryFrameEventTags { get; } =

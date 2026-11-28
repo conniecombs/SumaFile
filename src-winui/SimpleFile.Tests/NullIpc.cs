@@ -136,6 +136,8 @@ internal abstract class NullIpc : ISimpleFileIpc
 
     public virtual Task<ThumbnailResult[]> GenerateThumbnailsAsync(string[] paths, uint size, CancellationToken ct = default) => throw NotConfigured();
 
+    public virtual Task<EncodedImage> RenderImagePreviewAsync(string path, uint maxDimension, CancellationToken ct = default) => throw NotConfigured();
+
     public virtual Task OpenFileWithAsync(string path, string application, CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task<FileComparison> CompareFilesAsync(string pathA, string pathB, CancellationToken ct = default) => throw NotConfigured();

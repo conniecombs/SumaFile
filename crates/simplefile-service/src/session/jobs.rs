@@ -840,6 +840,64 @@ pub(super) fn spawn_generate_thumbnail(
     });
 }
 
+/// A picture for the preview pane, from the media process. It waits in the
+/// media lane's preview permits: not behind a folder's thumbnails, and not
+/// as foreground work, which would make every background job pause while
+/// the media process decodes.
+pub(super) fn spawn_render_image_preview(
+    writer: OutboundSink,
+    scheduler: BlockingScheduler,
+    binary_hot_frames: Arc<AtomicBool>,
+    id: Option<Value>,
+    path: String,
+    max_dimension: Option<u32>,
+) {
+    tokio::spawn(async move {
+        let rendered = scheduler
+            .run_media(MediaLane::Preview, move || {
+                simplefile_core::media::render_image_preview(path, max_dimension)
+            })
+            .await;
+        let written = match rendered {
+            Ok(Ok(preview)) => {
+                if let Some(request_id) = binary_response_id(&binary_hot_frames, &id) {
+                    match crate::binary::encode_image_preview_result(request_id, &preview) {
+                        Ok(payload) => write_binary_response(&writer, id, &payload).await,
+                        Err(message) => {
+                            write_json(&writer, &JsonRpcResponse::application_error(id, message))
+                                .await
+                        }
+                    }
+                } else {
+                    use base64::{engine::general_purpose, Engine as _};
+                    let result = json!({
+                        "format": preview.format,
+                        "width": preview.width,
+                        "height": preview.height,
+                        "data": general_purpose::STANDARD.encode(&preview.data),
+                    });
+                    write_json(&writer, &JsonRpcResponse::result(id, result)).await
+                }
+            }
+            Ok(Err(message)) => {
+                write_json(&writer, &JsonRpcResponse::application_error(id, message)).await
+            }
+            Err(message) => {
+                write_json(
+                    &writer,
+                    &JsonRpcResponse::application_error(
+                        id,
+                        format!("image preview task failed: {message}"),
+                    ),
+                )
+                .await
+            }
+        };
+        // The connection is gone when a reply cannot be written.
+        let _ = written;
+    });
+}
+
 pub(super) async fn generate_thumbnails_and_reply(
     writer: &OutboundSink,
     scheduler: BlockingScheduler,

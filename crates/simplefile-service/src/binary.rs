@@ -4,10 +4,10 @@ use simplefile_core::models::{
     ProgressUpdate, SearchResult, ThumbnailResult,
 };
 use simplefile_ipc::{
-    BINARY_FILE_CHANGE, BINARY_FRAME_MAGIC, BINARY_FRAME_VERSION, BINARY_LISTING_VIEW_PAGE,
-    BINARY_LIST_DIRECTORY_CHUNK, BINARY_LIST_DIRECTORY_RESULT, BINARY_OPERATION_PROGRESS,
-    BINARY_SEARCH_RESULTS_BATCH, BINARY_SEARCH_RESULTS_RESULT, BINARY_THUMBNAILS_RESULT,
-    BINARY_THUMBNAIL_RESULT,
+    BINARY_FILE_CHANGE, BINARY_FRAME_MAGIC, BINARY_FRAME_VERSION, BINARY_IMAGE_PREVIEW_RESULT,
+    BINARY_LISTING_VIEW_PAGE, BINARY_LIST_DIRECTORY_CHUNK, BINARY_LIST_DIRECTORY_RESULT,
+    BINARY_OPERATION_PROGRESS, BINARY_SEARCH_RESULTS_BATCH, BINARY_SEARCH_RESULTS_RESULT,
+    BINARY_THUMBNAILS_RESULT, BINARY_THUMBNAIL_RESULT,
 };
 
 type EncodeResult<T> = Result<T, String>;
@@ -129,6 +129,20 @@ pub(crate) fn encode_thumbnail_result(request_id: i32, data: &[u8]) -> EncodeRes
     let mut writer = BinaryWriter::new(BINARY_THUMBNAIL_RESULT);
     writer.i32(request_id);
     writer.bytes(data)?;
+    Ok(writer.finish())
+}
+
+/// `i32 request id | string format | u32 width | u32 height | bytes data`
+pub(crate) fn encode_image_preview_result(
+    request_id: i32,
+    preview: &simplefile_core::media::EncodedImage,
+) -> EncodeResult<Vec<u8>> {
+    let mut writer = BinaryWriter::new(BINARY_IMAGE_PREVIEW_RESULT);
+    writer.i32(request_id);
+    writer.string(&preview.format)?;
+    writer.u32(preview.width);
+    writer.u32(preview.height);
+    writer.bytes(&preview.data)?;
     Ok(writer.finish())
 }
 
@@ -304,6 +318,27 @@ mod tests {
             accessed: String::new(),
             attributes: String::new(),
         }
+    }
+
+    /// The host decodes these same bytes in its test
+    /// `BinaryPreview_DecodesTheServicesGoldenFrame`: request 7, a 640 by
+    /// 480 PNG of five bytes.
+    const GOLDEN_IMAGE_PREVIEW: &str =
+        "53464231030A0700000003000000706E6780020000E0010000050000000102030405";
+
+    #[test]
+    fn image_preview_frame_matches_the_golden_bytes() {
+        let preview = simplefile_core::media::EncodedImage {
+            format: "png".to_string(),
+            width: 640,
+            height: 480,
+            data: vec![1, 2, 3, 4, 5],
+        };
+
+        let frame = encode_image_preview_result(7, &preview).unwrap();
+
+        let hex: String = frame.iter().map(|byte| format!("{byte:02X}")).collect();
+        assert_eq!(GOLDEN_IMAGE_PREVIEW, hex);
     }
 
     #[test]

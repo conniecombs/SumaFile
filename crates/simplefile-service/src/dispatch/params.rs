@@ -250,6 +250,13 @@ pub(super) struct ThumbnailParams {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ImagePreviewParams {
+    pub(super) path: String,
+    pub(super) max_dimension: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct ThumbnailBatchParams {
     pub(super) paths: Vec<String>,
     pub(super) size: Option<u32>,

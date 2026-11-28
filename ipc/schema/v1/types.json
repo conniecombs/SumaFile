@@ -152,6 +152,10 @@
       "source": "crates/simplefile-core/src/models.rs",
       "fields": ["path", "data", "error"]
     },
+    "EncodedImage": {
+      "source": "crates/simplefile-core/src/media.rs",
+      "fields": ["format", "width", "height", "data"]
+    },
     "ImageMetadata": {
       "source": "crates/simplefile-core/src/models.rs",
       "fields": ["width", "height", "exif"]

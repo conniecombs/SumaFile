@@ -1102,3 +1102,67 @@ async fn cancel_entry_facts_replies_and_a_cancelled_request_still_settles() {
     assert_eq!(Value::Null, replies[&3]["result"]);
     assert!(replies[&2]["result"]["settled"].as_u64().unwrap() <= 40);
 }
+
+/// A picture for the preview pane comes from the registered media provider,
+/// and its bytes cross as base64 for a client that did not ask for binary
+/// frames.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn render_image_preview_answers_through_the_media_provider() {
+    use simplefile_core::media::{EncodedImage, MediaProvider};
+
+    struct Fake;
+    impl MediaProvider for Fake {
+        fn thumbnail(&self, _path: &std::path::Path, _size: u32) -> Result<Vec<u8>, String> {
+            Err("not asked for".to_string())
+        }
+
+        fn preview(
+            &self,
+            _path: &std::path::Path,
+            max_dimension: u32,
+        ) -> Result<EncodedImage, String> {
+            Ok(EncodedImage {
+                format: "png".to_string(),
+                width: max_dimension,
+                height: 3,
+                data: b"picture".to_vec(),
+            })
+        }
+    }
+
+    let _turn = crate::media_provider::PROVIDER_TURN.lock().await;
+    simplefile_core::media::register_media_provider(std::sync::Arc::new(Fake));
+    let (mut client, _server) = serve_test_session().await;
+    let dir = scratch_dir("image-preview");
+    let art = dir.join("art.psd");
+    let other = dir.join("photo.heic");
+    std::fs::write(&art, b"8BPS").unwrap();
+    std::fs::write(&other, b"ftypheic").unwrap();
+
+    let preview = call(
+        &mut client,
+        "render_image_preview",
+        2,
+        json!({ "path": art.to_string_lossy(), "maxDimension": 1200 }),
+    )
+    .await;
+    let unsupported = call(
+        &mut client,
+        "render_image_preview",
+        3,
+        json!({ "path": other.to_string_lossy() }),
+    )
+    .await;
+    simplefile_core::media::unregister_media_provider();
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(
+        preview["result"],
+        json!({ "format": "png", "width": 1200, "height": 3, "data": "cGljdHVyZQ==" }),
+        "{preview}"
+    );
+    assert_eq!(
+        unsupported["error"]["message"], "Unsupported image format: heic",
+        "{unsupported}"
+    );
+}

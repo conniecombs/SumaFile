@@ -1,10 +1,10 @@
 use super::folder_jobs::Metrics;
 use super::params::{
     parse_nullable_params, parse_params, CancelEntryFactsParams, CancelFolderParams,
-    DiskCleanupParams, DuplicateCheckParams, EntryFactsParams, ListDirectoryParams,
-    ListingViewIdParams, ListingViewRangeParams, OpenListingViewParams, OperationIdParams,
-    OptionalOperationIdParams, PathParams, ProgressCopyMoveParams, PutEntryFactsParams,
-    SearchFilesParams, SearchIdParams, ThumbnailBatchParams, ThumbnailParams,
+    DiskCleanupParams, DuplicateCheckParams, EntryFactsParams, ImagePreviewParams,
+    ListDirectoryParams, ListingViewIdParams, ListingViewRangeParams, OpenListingViewParams,
+    OperationIdParams, OptionalOperationIdParams, PathParams, ProgressCopyMoveParams,
+    PutEntryFactsParams, SearchFilesParams, SearchIdParams, ThumbnailBatchParams, ThumbnailParams,
 };
 use super::{Dispatch, SessionState};
 use serde_json::Value;
@@ -80,6 +80,17 @@ pub(super) fn generate_thumbnail(request: &JsonRpcRequest) -> Dispatch {
             id: request.id.clone(),
             path: p.path,
             size: p.size,
+        },
+        Err(r) => Dispatch::Reply(r),
+    }
+}
+
+pub(super) fn render_image_preview(request: &JsonRpcRequest) -> Dispatch {
+    match parse_params::<ImagePreviewParams>(request) {
+        Ok(p) => Dispatch::RenderImagePreview {
+            id: request.id.clone(),
+            path: p.path,
+            max_dimension: p.max_dimension,
         },
         Err(r) => Dispatch::Reply(r),
     }

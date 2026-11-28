@@ -695,6 +695,23 @@ public sealed class ThumbnailResult
     public string? Error { get; set; }
 }
 
+/// <summary>An encoded picture for the preview pane, from the file service's media process.</summary>
+public sealed class EncodedImage
+{
+    /// <summary><c>jpeg</c> or <c>png</c>.</summary>
+    [JsonPropertyName("format")]
+    public string Format { get; set; } = "";
+
+    [JsonPropertyName("width")]
+    public uint Width { get; set; }
+
+    [JsonPropertyName("height")]
+    public uint Height { get; set; }
+
+    [JsonPropertyName("data")]
+    public byte[] Data { get; set; } = [];
+}
+
 public sealed class Checksums
 {
     [JsonPropertyName("md5")]

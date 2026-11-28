@@ -32,8 +32,6 @@ pub(crate) enum MediaLane {
     /// A thumbnail of a format the media process decodes.
     Thumbnail,
     /// A picture for the preview pane.
-    // Until `render_image_preview` arrives in the next change.
-    #[allow(dead_code)]
     Preview,
 }
 

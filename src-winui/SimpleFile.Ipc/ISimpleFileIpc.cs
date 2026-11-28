@@ -99,6 +99,12 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task<FilePreview> ReadFilePreviewAsync(string path, ulong? maxSize = null, CancellationToken ct = default);
     Task<byte[]> GenerateThumbnailAsync(string path, uint size, CancellationToken ct = default);
     Task<ThumbnailResult[]> GenerateThumbnailsAsync(string[] paths, uint size, CancellationToken ct = default);
+
+    /// <summary>
+    /// A picture of <paramref name="path"/> for the preview pane, at most <paramref name="maxDimension"/> on its
+    /// long side, in a format the file service's media process decodes. Throws for any other format.
+    /// </summary>
+    Task<EncodedImage> RenderImagePreviewAsync(string path, uint maxDimension, CancellationToken ct = default);
     Task OpenFileWithAsync(string path, string application, CancellationToken ct = default);
     Task<FileComparison> CompareFilesAsync(string pathA, string pathB, CancellationToken ct = default);
     Task<Checksums> ComputeChecksumAsync(string path, CancellationToken ct = default);

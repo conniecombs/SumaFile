@@ -224,6 +224,11 @@ pub(crate) enum Dispatch {
         paths: Vec<String>,
         size: Option<u32>,
     },
+    RenderImagePreview {
+        id: Option<Value>,
+        path: String,
+        max_dimension: Option<u32>,
+    },
     CalculateFolderSize {
         id: Option<Value>,
         path: String,

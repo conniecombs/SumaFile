@@ -19,8 +19,9 @@ const PRE_HANDSHAKE_FRAME_LIMIT: u32 = 64 * 1024;
 use jobs::{
     spawn_copy_move_with_progress, spawn_disk_cleanup, spawn_duplicate_check,
     spawn_folder_item_count, spawn_folder_metrics, spawn_folder_size, spawn_generate_thumbnail,
-    spawn_generate_thumbnails, spawn_install_update, spawn_list_directory, spawn_search_files,
-    CopyMoveJob, DiskCleanupJob, DuplicateCheckJob, EventSink, SearchJob,
+    spawn_generate_thumbnails, spawn_install_update, spawn_list_directory,
+    spawn_render_image_preview, spawn_search_files, CopyMoveJob, DiskCleanupJob, DuplicateCheckJob,
+    EventSink, SearchJob,
 };
 use serde_json::{json, Value};
 use simplefile_ipc::frame::FrameError;
@@ -343,6 +344,20 @@ where
                         id,
                         paths,
                         size,
+                    );
+                }
+                Dispatch::RenderImagePreview {
+                    id,
+                    path,
+                    max_dimension,
+                } => {
+                    spawn_render_image_preview(
+                        writer.clone(),
+                        scheduler.clone(),
+                        binary_hot_frames.clone(),
+                        id,
+                        path,
+                        max_dimension,
                     );
                 }
                 Dispatch::CalculateFolderSize { id, path, cancel } => {
