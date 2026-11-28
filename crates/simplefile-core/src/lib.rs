@@ -26,6 +26,7 @@ pub mod fact_cache;
 pub mod file_attributes;
 pub mod file_ops;
 pub mod listing_view;
+pub mod media;
 pub mod metadata;
 pub mod models;
 pub mod native_accel;

@@ -5,6 +5,10 @@ use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
 
 const MIN_GENERAL_BLOCKING_PERMITS: usize = 2;
 const DEFAULT_TRANSFER_PERMITS: usize = 2;
+/// How many thumbnails and previews wait on the media process at a time: the
+/// numbers its client lets through.
+const MEDIA_THUMBNAIL_PERMITS: usize = 4;
+const MEDIA_PREVIEW_PERMITS: usize = 2;
 const FOREGROUND_YIELD_POLL: Duration = Duration::from_millis(25);
 /// Longest a queued background job waits for foreground work to drain.
 const BACKGROUND_WAIT_CAP: Duration = Duration::from_millis(500);
@@ -16,8 +20,21 @@ pub(crate) struct BlockingScheduler {
     general: Arc<Semaphore>,
     background: Arc<Semaphore>,
     transfer: Arc<Semaphore>,
+    media_thumbnails: Arc<Semaphore>,
+    media_previews: Arc<Semaphore>,
     foreground_in_flight: Arc<AtomicUsize>,
     foreground_notify: Arc<Notify>,
+}
+
+/// Work that waits on the media process (`sumafile-media`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MediaLane {
+    /// A thumbnail of a format the media process decodes.
+    Thumbnail,
+    /// A picture for the preview pane.
+    // Until `render_image_preview` arrives in the next change.
+    #[allow(dead_code)]
+    Preview,
 }
 
 struct BlockingPermits {
@@ -61,6 +78,8 @@ impl BlockingScheduler {
             general: Arc::new(Semaphore::new(general_permits)),
             background: Arc::new(Semaphore::new(background_permits)),
             transfer: Arc::new(Semaphore::new(transfer_permits.max(1))),
+            media_thumbnails: Arc::new(Semaphore::new(MEDIA_THUMBNAIL_PERMITS)),
+            media_previews: Arc::new(Semaphore::new(MEDIA_PREVIEW_PERMITS)),
             foreground_in_flight: Arc::new(AtomicUsize::new(0)),
             foreground_notify: Arc::new(Notify::new()),
         }
@@ -144,6 +163,36 @@ impl BlockingScheduler {
         run_with_permits(permits, task).await
     }
 
+    /// Run work that waits on the media process. It takes no general or
+    /// background permit: the work is another process's, and a slow file
+    /// there must not hold up thumbnails and folder sizes made here. A
+    /// thumbnail waits while foreground work runs, as background work does;
+    /// a preview is what the user is looking at and does not.
+    pub(crate) async fn run_media<F, R>(&self, lane: MediaLane, task: F) -> Result<R, String>
+    where
+        F: FnOnce() -> R + Send + 'static,
+        R: Send + 'static,
+    {
+        let permits = match lane {
+            MediaLane::Thumbnail => &self.media_thumbnails,
+            MediaLane::Preview => &self.media_previews,
+        };
+        let permit = permits
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| "media scheduler is closed".to_string())?;
+        if lane == MediaLane::Thumbnail {
+            self.wait_for_foreground_idle().await;
+        }
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            task()
+        })
+        .await
+        .map_err(|error| error.to_string())
+    }
+
     async fn acquire_general(&self) -> Result<BlockingPermits, String> {
         let general = self
             .general
@@ -212,7 +261,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{BlockingScheduler, DEFAULT_TRANSFER_PERMITS};
+    use super::{BlockingScheduler, MediaLane, DEFAULT_TRANSFER_PERMITS, MEDIA_THUMBNAIL_PERMITS};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{mpsc, Arc};
     use std::time::Duration;
@@ -233,6 +282,95 @@ mod tests {
             scheduler.transfer.available_permits(),
             DEFAULT_TRANSFER_PERMITS
         );
+    }
+
+    /// A thumbnail the media process makes waits on that process, not on a
+    /// core. Held on a background permit, four slow ones would stop every
+    /// JPEG thumbnail and folder size on a four-core PC.
+    #[tokio::test]
+    async fn media_work_does_not_take_background_permits() {
+        let scheduler = BlockingScheduler::new(2, 1);
+        assert_eq!(scheduler.background.available_permits(), 1);
+        let (entered_tx, entered_rx) = oneshot::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let background = {
+            let scheduler = scheduler.clone();
+            tokio::spawn(async move {
+                scheduler
+                    .run_background(move || {
+                        entered_tx.send(()).unwrap();
+                        release_rx.recv().unwrap();
+                    })
+                    .await
+            })
+        };
+        tokio::time::timeout(Duration::from_secs(2), entered_rx)
+            .await
+            .unwrap()
+            .unwrap();
+
+        let thumbnail = tokio::time::timeout(
+            Duration::from_secs(2),
+            scheduler.run_media(MediaLane::Thumbnail, || 7),
+        )
+        .await;
+        let preview = tokio::time::timeout(
+            Duration::from_secs(2),
+            scheduler.run_media(MediaLane::Preview, || 8),
+        )
+        .await;
+
+        assert_eq!(thumbnail, Ok(Ok(7)));
+        assert_eq!(preview, Ok(Ok(8)));
+        release_tx.send(()).unwrap();
+        background.await.unwrap().unwrap();
+    }
+
+    /// The preview pane must not queue behind a folder's thumbnails.
+    #[tokio::test]
+    async fn previews_do_not_wait_for_thumbnails() {
+        let scheduler = BlockingScheduler::new(2, 1);
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let release_rx = Arc::new(std::sync::Mutex::new(release_rx));
+        let entered = Arc::new(AtomicUsize::new(0));
+        let mut thumbnails = Vec::new();
+        for _ in 0..MEDIA_THUMBNAIL_PERMITS + 1 {
+            let (scheduler, entered, release_rx) =
+                (scheduler.clone(), entered.clone(), release_rx.clone());
+            thumbnails.push(tokio::spawn(async move {
+                scheduler
+                    .run_media(MediaLane::Thumbnail, move || {
+                        entered.fetch_add(1, Ordering::SeqCst);
+                        let _ = release_rx.lock().unwrap().recv();
+                    })
+                    .await
+            }));
+        }
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        while entered.load(Ordering::SeqCst) < MEDIA_THUMBNAIL_PERMITS {
+            assert!(tokio::time::Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let preview = tokio::time::timeout(
+            Duration::from_secs(2),
+            scheduler.run_media(MediaLane::Preview, || 9),
+        )
+        .await;
+
+        assert_eq!(
+            entered.load(Ordering::SeqCst),
+            MEDIA_THUMBNAIL_PERMITS,
+            "one more waits"
+        );
+        assert_eq!(preview, Ok(Ok(9)));
+        for _ in 0..MEDIA_THUMBNAIL_PERMITS + 1 {
+            release_tx.send(()).unwrap();
+        }
+        for thumbnail in thumbnails {
+            thumbnail.await.unwrap().unwrap();
+        }
     }
 
     #[tokio::test]

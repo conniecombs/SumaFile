@@ -26,6 +26,7 @@ serde_json = "1"
 simplefile-core = { path = "../simplefile-core" }
 simplefile-ipc = { path = "../simplefile-ipc" }
 sumafile-transfer = { path = "../sumafile-transfer" }
+sumafile-media-client = { path = "../sumafile-media-client" }
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 
 [dev-dependencies]

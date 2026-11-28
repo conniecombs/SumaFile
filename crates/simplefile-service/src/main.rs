@@ -12,6 +12,9 @@ async fn main() {
 async fn run() -> Result<(), String> {
     let startup = Instant::now();
     simplefile_service::logging::install();
+    // Only registers a provider; the media process starts when a thumbnail
+    // or a preview first needs it.
+    simplefile_service::media_provider::install();
     let args = Args::parse(std::env::args().skip(1))?;
     let pipe = pipe_path(&args.pipe_name);
     eprintln!(

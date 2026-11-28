@@ -4,7 +4,7 @@ use super::io::{
 };
 use crate::dispatch::ProgressCopyMoveParams;
 use crate::progress::OperationRegistry;
-use crate::scheduler::BlockingScheduler;
+use crate::scheduler::{BlockingScheduler, MediaLane};
 use crate::session_cache::SessionCache;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -718,6 +718,30 @@ pub(super) fn spawn_list_directory(
     });
 }
 
+/// Where a thumbnail job waits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ThumbnailLane {
+    /// Made here, on a core: the background lane.
+    Background,
+    /// Made by the media process: its own lane, so a slow file there never
+    /// holds a permit the built-in formats need.
+    Media,
+}
+
+/// The media lane when every path is of a format the media process decodes.
+/// A batch that mixes both kinds stays on the background lane.
+fn thumbnail_lane(paths: &[String]) -> ThumbnailLane {
+    let all_media = !paths.is_empty()
+        && paths
+            .iter()
+            .all(|path| simplefile_core::media::thumbnail_uses_media_process(path));
+    if all_media {
+        ThumbnailLane::Media
+    } else {
+        ThumbnailLane::Background
+    }
+}
+
 pub(super) async fn generate_thumbnail_and_reply(
     writer: &OutboundSink,
     scheduler: BlockingScheduler,
@@ -728,21 +752,23 @@ pub(super) async fn generate_thumbnail_and_reply(
     size: Option<u32>,
 ) -> Result<(), String> {
     let start = std::time::Instant::now();
-    let result: Result<Result<Vec<u8>, String>, String> =
-        if let Some(cached) = cache.get_thumbnail(&path, size) {
-            Ok(Ok(cached))
-        } else {
-            let path_for_task = path.clone();
-            let cache_for_task = cache.clone();
-            scheduler
-                .run_background(move || {
-                    let bytes =
-                        simplefile_core::preview::generate_thumbnail(path_for_task.clone(), size)?;
-                    cache_for_task.put_thumbnail(&path_for_task, size, bytes.clone());
-                    Ok(bytes)
-                })
-                .await
+    let result: Result<Result<Vec<u8>, String>, String> = if let Some(cached) =
+        cache.get_thumbnail(&path, size)
+    {
+        Ok(Ok(cached))
+    } else {
+        let path_for_task = path.clone();
+        let cache_for_task = cache.clone();
+        let render = move || {
+            let bytes = simplefile_core::preview::generate_thumbnail(path_for_task.clone(), size)?;
+            cache_for_task.put_thumbnail(&path_for_task, size, bytes.clone());
+            Ok(bytes)
         };
+        match thumbnail_lane(std::slice::from_ref(&path)) {
+            ThumbnailLane::Media => scheduler.run_media(MediaLane::Thumbnail, render).await,
+            ThumbnailLane::Background => scheduler.run_background(render).await,
+        }
+    };
     let run_ms = start.elapsed().as_secs_f64() * 1000.0;
 
     match result {
@@ -825,40 +851,43 @@ pub(super) async fn generate_thumbnails_and_reply(
 ) -> Result<(), String> {
     let start = std::time::Instant::now();
     let scheduler_for_task = scheduler.clone();
-    let result = scheduler
-        .run_background(move || {
-            let mut results = Vec::with_capacity(paths.len());
-            for path in paths {
-                if let Some(cached) = cache.get_thumbnail(&path, size) {
+    let lane = thumbnail_lane(&paths);
+    let render = move || {
+        let mut results = Vec::with_capacity(paths.len());
+        for path in paths {
+            if let Some(cached) = cache.get_thumbnail(&path, size) {
+                results.push(ThumbnailResult {
+                    path,
+                    data: Some(cached),
+                    error: None,
+                });
+                continue;
+            }
+            scheduler_for_task.yield_if_foreground_active_blocking();
+            match simplefile_core::preview::generate_thumbnail(path.clone(), size) {
+                Ok(data) => {
+                    cache.put_thumbnail(&path, size, data.clone());
                     results.push(ThumbnailResult {
                         path,
-                        data: Some(cached),
+                        data: Some(data),
                         error: None,
                     });
-                    continue;
                 }
-                scheduler_for_task.yield_if_foreground_active_blocking();
-                match simplefile_core::preview::generate_thumbnail(path.clone(), size) {
-                    Ok(data) => {
-                        cache.put_thumbnail(&path, size, data.clone());
-                        results.push(ThumbnailResult {
-                            path,
-                            data: Some(data),
-                            error: None,
-                        });
-                    }
-                    Err(error) => {
-                        results.push(ThumbnailResult {
-                            path,
-                            data: None,
-                            error: Some(error),
-                        });
-                    }
+                Err(error) => {
+                    results.push(ThumbnailResult {
+                        path,
+                        data: None,
+                        error: Some(error),
+                    });
                 }
             }
-            results
-        })
-        .await;
+        }
+        results
+    };
+    let result = match lane {
+        ThumbnailLane::Media => scheduler.run_media(MediaLane::Thumbnail, render).await,
+        ThumbnailLane::Background => scheduler.run_background(render).await,
+    };
     let run_ms = start.elapsed().as_secs_f64() * 1000.0;
 
     match result {
@@ -1256,4 +1285,37 @@ pub(super) fn spawn_disk_cleanup(
         let _ = write_json(&writer, &response).await;
         registry.remove_token(&operation_id, &cancel).await;
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{thumbnail_lane, ThumbnailLane};
+
+    fn lane(paths: &[&str]) -> ThumbnailLane {
+        thumbnail_lane(
+            &paths
+                .iter()
+                .map(|path| (*path).to_string())
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    #[test]
+    fn a_thumbnail_the_media_process_makes_waits_in_the_media_lane() {
+        assert_eq!(lane(&[r"C:\Art\cover.psd"]), ThumbnailLane::Media);
+        assert_eq!(
+            lane(&[r"C:\Raw\a.CR2", r"C:\Raw\b.nef"]),
+            ThumbnailLane::Media
+        );
+    }
+
+    #[test]
+    fn built_in_formats_and_mixed_batches_stay_in_the_background_lane() {
+        assert_eq!(lane(&[r"C:\Photos\a.jpg"]), ThumbnailLane::Background);
+        assert_eq!(
+            lane(&[r"C:\Art\cover.psd", r"C:\Photos\a.jpg"]),
+            ThumbnailLane::Background
+        );
+        assert_eq!(lane(&[]), ThumbnailLane::Background);
+    }
 }

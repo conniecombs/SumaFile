@@ -3128,6 +3128,7 @@ dependencies = [
  "serde_json",
  "simplefile-core",
  "simplefile-ipc",
+ "sumafile-media-client",
  "sumafile-transfer",
  "tokio",
  "windows-sys 0.61.2",

@@ -80,11 +80,18 @@ pub fn generate_thumbnail(path: String, size: Option<u32>) -> Result<Vec<u8>, St
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default();
-    let supported = matches!(
+    let built_in = matches!(
         extension.as_str(),
         "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp"
     );
-    if !supported {
+    // The other formats are decoded by the media process, through a provider
+    // the file service registers.
+    let provider = if built_in {
+        None
+    } else {
+        crate::media::provider_for(&extension)
+    };
+    if !built_in && provider.is_none() {
         return Err(format!("Unsupported image format: {extension}"));
     }
 
@@ -112,7 +119,10 @@ pub fn generate_thumbnail(path: String, size: Option<u32>) -> Result<Vec<u8>, St
         }
     }
 
-    let jpeg_bytes = sumafile_imaging::thumbnail::render(&path_buf, &extension, thumb_size)?;
+    let jpeg_bytes = match provider {
+        Some(provider) => provider.thumbnail(&path_buf, thumb_size)?,
+        None => sumafile_imaging::thumbnail::render(&path_buf, &extension, thumb_size)?,
+    };
 
     if cache_enabled {
         // Store in cache (fire-and-forget; errors are silently ignored).
@@ -241,9 +251,13 @@ fn classify_known_extension(extension: &str) -> Option<(&'static str, String)> {
         "hdr" => Some(("image", mime("image/vnd.radiance"))),
         "qoi" => Some(("image", mime("image/qoi"))),
         "pnm" | "pbm" | "pgm" | "ppm" | "pam" => Some(("image", mime("image/x-portable-anymap"))),
-        "dng" | "arw" | "cr2" | "cr3" | "nef" | "orf" | "rw2" | "raf" | "srw" | "pef" | "x3f" => {
+        "dng" | "arw" | "cr2" | "cr3" | "nef" | "orf" | "rw2" | "raf" | "srw" | "pef" | "x3f"
+        | "nrw" | "srf" | "sr2" | "erf" | "3fr" | "mos" | "dcr" | "kdc" => {
             Some(("image", mime("image/x-camera-raw")))
         }
+        "psd" | "psb" => Some(("image", mime("image/vnd.adobe.photoshop"))),
+        "kra" => Some(("image", mime("application/x-krita"))),
+        "ora" => Some(("image", mime("image/openraster"))),
         "pdf" => Some(("pdf", mime("application/pdf"))),
         "mp3" => Some(("audio", mime("audio/mpeg"))),
         "wav" => Some(("audio", mime("audio/wav"))),
@@ -338,7 +352,7 @@ fn classify_known_extension(extension: &str) -> Option<(&'static str, String)> {
         "cer" | "crt" | "der" | "pem" | "pfx" | "p12" | "csr" | "key" => {
             Some(("certificate", mime("application/octet-stream")))
         }
-        "psd" | "ai" | "eps" | "indd" | "xd" | "fig" | "sketch" | "afdesign" => {
+        "ai" | "eps" | "indd" | "xd" | "fig" | "sketch" | "afdesign" => {
             Some(("design", mime("application/octet-stream")))
         }
         "obj" | "fbx" | "stl" | "blend" | "dae" | "gltf" | "glb" | "3ds" | "ply" => {
@@ -354,6 +368,16 @@ fn classify_known_extension(extension: &str) -> Option<(&'static str, String)> {
 mod tests {
     use super::{classify_known_extension, read_file_preview};
     use std::{fs, path::PathBuf};
+
+    /// Formats the media process decodes are pictures to the preview pane,
+    /// which then asks for them through `render_image_preview`.
+    #[test]
+    fn the_preview_table_calls_media_process_formats_images() {
+        for extension in sumafile_imaging::formats::MEDIA_PROCESS_EXTENSIONS {
+            let kind = classify_known_extension(extension).map(|(kind, _)| kind);
+            assert_eq!(kind, Some("image"), ".{extension}");
+        }
+    }
 
     #[test]
     fn classify_known_extension_keeps_inline_preview_types() {
@@ -395,7 +419,7 @@ mod tests {
             ("epub", "ebook"),
             ("eml", "email"),
             ("cer", "certificate"),
-            ("psd", "design"),
+            ("sketch", "design"),
             ("stl", "model"),
             ("dwg", "cad"),
             ("torrent", "torrent"),

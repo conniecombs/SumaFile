@@ -488,10 +488,16 @@ mod safety_tests {
 
     #[test]
     fn eviction_runs_at_most_once_per_interval() {
-        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-        // Reset shared state from other tests by moving far ahead in time.
-        let later = now + Duration::from_secs(10_000);
-        assert!(should_run_eviction(later));
+        // The state is shared with every test that makes a thumbnail, and
+        // those run on the real clock. A time years ahead of it is past
+        // anything they recorded, and makes their own passes not due.
+        let later = SystemTime::now() + Duration::from_secs(10 * 365 * 24 * 3600);
+        // One of their passes may be running at this moment.
+        let waiting_since = std::time::Instant::now();
+        while !should_run_eviction(later) {
+            assert!(waiting_since.elapsed() < Duration::from_secs(30));
+            std::thread::sleep(Duration::from_millis(5));
+        }
         super::finish_eviction();
         assert!(!should_run_eviction(later + Duration::from_secs(5)));
         assert!(should_run_eviction(later + Duration::from_secs(120)));
