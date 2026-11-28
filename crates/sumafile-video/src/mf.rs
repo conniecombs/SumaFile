@@ -266,7 +266,7 @@ unsafe fn create_graphics() -> Result<Graphics> {
     }
     let device = device.ok_or_else(failed)?;
 
-    // A software adapter (Microsoft's Basic Render Driver) would only
+    // Windows' own adapters (its software renderer above all) would only
     // pretend to be a graphics card.
     // SAFETY: plain calls on live COM objects.
     let description = unsafe {
@@ -276,7 +276,8 @@ unsafe fn create_graphics() -> Result<Graphics> {
             .cast::<IDXGIAdapter1>()?
             .GetDesc1()?
     };
-    if description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0 {
+    let flagged_software = description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0;
+    if !attempt::decodes_video(description.VendorId, flagged_software) {
         return Err(failed());
     }
 

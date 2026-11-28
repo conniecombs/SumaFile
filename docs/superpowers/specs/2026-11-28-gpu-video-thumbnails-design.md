@@ -134,8 +134,10 @@ kept in the disk thumbnail cache.
 
 1. **Once per process, on the first video request:** start Media Foundation. With `hardware` on, create a Direct3D 11
    device with video support on the default adapter and a DXGI device manager for it. A software adapter (Microsoft's
-   Basic Render Driver) is refused: it would only pretend. If no device can be made, remember that for this process;
-   the reason is `no_device`.
+   Basic Render Driver) is refused: it would only pretend. So is any other adapter of Windows' own (vendor 0x1414),
+   flagged as software or not: on a virtual machine without a graphics card, and on a PC whose display driver is off,
+   the software renderer is the main adapter without the flag (found on the first CI run; Microsoft's DXGI guide says
+   so). If no device can be made, remember that for this process; the reason is `no_device`.
 2. **Open** the file with a source reader and select only the first video stream. With a device: give the reader the
    device manager and allow hardware transforms. The reader is asked for frames in the decoder's own pixel format,
    and its own converters stay off, so a frame that is only stepped over is never converted or scaled.

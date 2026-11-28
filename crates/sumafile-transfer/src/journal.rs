@@ -1789,6 +1789,9 @@ mod tests {
         fs::write(&existing, b"aside").unwrap();
         lease.backup_intent(&existing, &existing).unwrap();
         let path = record_path(&destination).unwrap();
+        // The lease locks its record, and on Windows a locked file cannot be
+        // read by anyone else. A lease that ends unsettled leaves the record.
+        drop(lease);
         let bytes = fs::read(&path).unwrap();
 
         assert!(bytes.ends_with(b"\n"));
@@ -1800,7 +1803,6 @@ mod tests {
         for line in lines {
             serde_json::from_slice::<Record>(line).expect("each line is a whole record");
         }
-        drop(lease);
         fs::remove_dir_all(root).unwrap();
     }
 

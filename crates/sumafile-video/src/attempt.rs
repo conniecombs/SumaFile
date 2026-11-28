@@ -22,6 +22,22 @@ pub enum Step {
     WithoutDevice,
 }
 
+/// Microsoft's vendor number, which Windows' own adapters carry: the
+/// software renderer (the Basic Render Driver), the Basic Display Adapter,
+/// and the adapters of virtual machines and remote sessions.
+pub const MICROSOFT_VENDOR: u32 = 0x1414;
+
+/// Whether an adapter can decode video in hardware, from its vendor number
+/// and whether Windows flags it as software. Windows' own adapters never
+/// can, flagged or not: on a PC whose display driver is missing or off, and
+/// on a virtual machine without a graphics card, the software renderer is
+/// the main adapter and carries no software flag. A device made on it would
+/// only pretend, and every attempt with it would fail or decode on the
+/// processor all the same.
+pub fn decodes_video(vendor: u32, flagged_software: bool) -> bool {
+    !flagged_software && vendor != MICROSOFT_VENDOR
+}
+
 /// The attempt to make first. `hardware`: the request allows the graphics
 /// card. When an attempt with the device fails, the one without it follows.
 pub fn first_step(hardware: bool, device: Device) -> Step {
@@ -60,6 +76,34 @@ pub fn report(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Windows' own adapters render in software, or pass a virtual machine's
+    /// or a remote session's picture on: none of them decodes video. A
+    /// virtual machine without a graphics card shows its software renderer
+    /// as the main adapter, and then without the software flag.
+    #[test]
+    fn only_a_graphics_cards_own_adapter_decodes_video() {
+        const NVIDIA: u32 = 0x10DE;
+        const AMD: u32 = 0x1002;
+        const INTEL: u32 = 0x8086;
+        const QUALCOMM: u32 = 0x4D4F_4351;
+
+        for vendor in [NVIDIA, AMD, INTEL, QUALCOMM] {
+            assert!(decodes_video(vendor, false), "{vendor:#x}");
+            assert!(
+                !decodes_video(vendor, true),
+                "{vendor:#x} flagged as software"
+            );
+        }
+        assert!(
+            !decodes_video(MICROSOFT_VENDOR, true),
+            "the software renderer"
+        );
+        assert!(
+            !decodes_video(MICROSOFT_VENDOR, false),
+            "the software renderer as the main adapter, a virtual machine's or a remote session's"
+        );
+    }
 
     #[test]
     fn the_first_attempt_uses_the_device_when_it_may_and_can() {

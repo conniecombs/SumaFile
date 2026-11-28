@@ -494,8 +494,11 @@ pads a frame to its block size (1080 rows are decoded into 1088) and states whic
 picture; only that part is taken, and the thumbnail has its shape (`rules::visible_area`).
 
 **What "hardware" means.** A thumbnail is tried with a Direct3D 11 device first, when the request
-allows it and Windows has one that is not a software adapter, and without it second
-(`attempt`). Windows decodes on the processor without any error when it has no hardware decoder
+allows it and Windows has one on a graphics card, and without it second (`attempt`). Windows'
+own adapters (vendor 0x1414: its software renderer, the Basic Display Adapter, a virtual
+machine's or a remote session's) are refused, flagged as software or not: on a virtual machine
+without a graphics card, and on a PC whose display driver is off, the software renderer is the
+main adapter and has no software flag (`attempt::decodes_video`). Windows decodes on the processor without any error when it has no hardware decoder
 for a file, so the attempt alone says nothing. A frame the graphics card decoded arrives as a
 Direct3D texture; one the processor decoded arrives in ordinary memory. Only the first is reported
 as `hardware`. A frame the processor decoded is also converted on the processor: nothing is gained
