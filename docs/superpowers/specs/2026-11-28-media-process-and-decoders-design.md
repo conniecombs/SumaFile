@@ -19,8 +19,8 @@ file can never take down the app or the file service.
 
 ## Goals
 
-1. Thumbnails for these formats, whatever codecs Windows has: PSD, EXR, Radiance HDR, JPEG XL, TIFF, SVG, DDS, TGA,
-   QOI, PNM, Krita, OpenRaster, DICOM and camera RAW.
+1. Thumbnails for these formats, whatever codecs Windows has: PSD and PSB, EXR, Radiance HDR, JPEG XL, TIFF, SVG, DDS,
+   TGA, QOI, PNM, Krita, OpenRaster and camera RAW.
 2. Quick Look and the preview pane show the same formats at screen size.
 3. For these formats SumaFile's decoder goes first. Windows' thumbnail stays as the fallback, then the file icon.
 4. JPG, PNG, GIF, WebP and BMP keep their existing fast path inside the file service, unchanged.
@@ -36,6 +36,9 @@ file can never take down the app or the file service.
 - GPU video thumbnails. That is the second project, built on this media process.
 - HEIC, AVIF and JPEG 2000. They need C libraries with licensing conditions, and Windows' codecs decode HEIC and AVIF
   with hardware. They stay with Windows.
+- DICOM. Its library depends on the unmaintained `encoding` crate, which `cargo audit --deny warnings` in the release
+  check would refuse without a new exception. It waits until the user decides on that exception.
+- Stopping a decode that is no longer wanted. The helper has no cancel message in this round (see "Calls I made").
 - Developing camera RAW sensor data. RAW files show the JPEG preview the camera embedded (see Constraints).
 - Animation. An animated file shows its first frame.
 - Editing, converting or saving images.
@@ -113,24 +116,33 @@ does for the Open With policy, and the repo check fails when a generated file is
 
 | Format | Extensions | Decoder | Notes |
 | --- | --- | --- | --- |
-| Photoshop | `psd`, `psb` | `psd` | Thumbnails use the embedded JPEG thumbnail (image resource 1036) when it is large enough; otherwise the flattened image |
+| Photoshop | `psd`, `psb` | SumaFile's own reader | A thumbnail uses the embedded JPEG thumbnail (image resource 1036) when it is at least as large as the thumbnail asked for; otherwise the flattened image. The flattened image is read for RGB, greyscale, CMYK and indexed colour, 8 and 16 bits, raw and RLE. The `psd` crate is not used: it rejects PSB and parses every layer |
 | OpenEXR | `exr` | `exr` | First RGBA layer, tone-mapped to 8 bits as Oculante does |
 | Radiance HDR | `hdr` | `image` | Tone-mapped the same way |
 | JPEG XL | `jxl` | `jxl-oxide` | Without the optional C colour library |
 | TIFF | `tif`, `tiff` | `tiff`, with Oculante's handling of 16-bit and float samples | |
-| SVG | `svg` | `resvg` | Drawn at the requested size. System fonts load once, on the first SVG |
+| SVG | `svg` | `resvg` | Thumbnails only, drawn at the requested size. System fonts load once, on the first SVG. The preview pane keeps WinUI's own vector SVG view |
 | DDS | `dds` | `image_dds` | |
 | TGA, QOI, PNM | `tga`, `qoi`, `pnm`, `pbm`, `pgm`, `ppm`, `pam` | `image` | |
 | Krita, OpenRaster | `kra`, `ora` | `zip` | The `mergedimage.png` stored inside |
-| DICOM | `dcm` | `dicom-object`, `dicom-pixeldata` | First frame |
-| Camera RAW | `dng`, `nef`, `nrw`, `cr2`, `cr3`, `arw`, `srf`, `sr2`, `pef`, `srw`, `orf`, `rw2`, `raf`, `erf`, `3fr`, `mos`, `dcr`, `kdc` | SumaFile's own reader | The largest embedded JPEG preview, turned by its EXIF orientation |
+| Camera RAW | `dng`, `nef`, `nrw`, `cr2`, `cr3`, `arw`, `srf`, `sr2`, `pef`, `srw`, `orf`, `rw2`, `raf`, `erf`, `3fr`, `mos`, `dcr`, `kdc` | SumaFile's own reader | The largest embedded JPEG preview, turned by its EXIF orientation. See the size rule below |
 
 The decoder is picked by file extension. A file whose contents do not match fails, and the fallback takes over.
 
-Camera RAW reader: most of these are TIFF files. The reader walks IFD0, IFD1 and the SubIFDs, collects every JPEG it
-finds (JPEGInterchangeFormat, a JPEG-compressed single strip, Panasonic's JpgFromRaw), and takes the one with the most
-pixels that decodes. RAF reads the preview offset from its header. CR3 reads the preview box from its ISO container.
-A file with no usable preview fails, and Windows' thumbnail takes over.
+Camera RAW reader: most of these are TIFF files. The reader walks the whole IFD chain (IFD0, IFD1, IFD2 and on) and
+every SubIFD, collects every JPEG it finds (JPEGInterchangeFormat, a JPEG-compressed single strip, Panasonic's
+JpgFromRaw), and takes the one with the most pixels that decodes. RAF reads the preview offset from its header. CR3
+reads the preview box from its ISO container. It does not read maker notes.
+
+Size rule for camera RAW: a thumbnail uses the embedded preview when its long side is at least half the size asked
+for, and is never enlarged. A preview for the preview pane needs a long side of at least 1,000 pixels. Anything
+smaller, or a file with no embedded JPEG, fails, and Windows' thumbnail takes over.
+
+What is verified: the reader is tested with synthetic containers built in the tests, because the repository has no
+real camera files. By the layout of the formats it should serve DNG, NEF, CR2, CR3, ARW, RW2, RAF and PEF. Formats
+that keep their only large preview in a maker note (ORF, and some ERF and SRW files) or as uncompressed pixels (MOS,
+some DCR, KDC and 3FR files) fail here and fall back to Windows. Real files of each maker are for the user to check
+on Windows.
 
 ### 3. The media process
 
@@ -148,8 +160,9 @@ A file with no usable preview fails, and Windows' thumbnail takes over.
   - `{ "id", "method": "preview", "path", "maxDimension" }` → the same shape; `format` is `jpeg` for an opaque
     picture and `png` for one with transparency.
   - A failure is `{ "id", "ok": false, "kind": "unsupported" | "too_large" | "decode" | "io", "error": "<text>" }`.
-- The helper serves up to four requests at a time (fewer on a PC with fewer cores). Replies carry the request's id and
-  may arrive in any order.
+- The client sends at most four thumbnail requests and two preview requests at a time; further calls wait in the
+  client. A request's timeout therefore measures its decode, never time spent queued. The helper runs each request on
+  its own thread. Replies carry the request's id and may arrive in any order.
 - **Limits inside the helper:** a decode may use at most 1 GiB of pixels (width × height × channels × bytes per
   sample); beyond that the answer is `too_large`. An SVG is never drawn larger than the requested size.
 - **Timeouts in the client:** 20 seconds for a thumbnail, 60 seconds for a preview. A request that times out ends the
@@ -164,21 +177,28 @@ A file with no usable preview fails, and Windows' thumbnail takes over.
 - `preview::generate_thumbnail` accepts the six built-in extensions, as now, and every media-process extension. For
   the latter it asks the registered provider instead of calling the in-process pipeline. The disk cache check before
   and the cache write after are the same code for both.
+- **Its own lane in the service.** A thumbnail of a media-process format waits on the helper, which is not work for
+  the service's cores. It runs on a new media lane of the scheduler (four permits) instead of the background lane, so
+  slow PSDs never hold the permits JPG thumbnails, folder sizes and scans use. Like background work, it waits while
+  foreground work runs.
 - The helper's `thumbnail` renders with the same pipeline as the built-in formats (`sumafile-imaging`): decode, turn by
   orientation, fit, scale, encode as JPEG. Transparent pictures are flattened onto white.
 - Files inside archives work as they do today: the service resolves the entry to a temporary file and passes that path.
 - The app: `FileListThumbnailHost.CanUseAppThumbnail` becomes the six built-ins plus the generated list. The order is
-  already "app thumbnail, then Windows' thumbnail, then icon", so no other change is needed there.
+  already "app thumbnail, then Windows' thumbnail, then icon".
+- **Its own gate in the app.** Media-process formats load through their own gate, two at a time, as video thumbnails
+  already do. They never take one of the four slots the built-in formats and Windows' thumbnails share.
 
 ### 5. Preview pane and Quick Look
 
 - New IPC method `render_image_preview { path, maxDimension }` with a binary result frame (tag 10) carrying the format,
-  width, height and encoded bytes, and a base64 JSON form for a client that did not ask for binary frames. It runs as
-  foreground work.
-- `PreviewPresenter.Image`: for a media-process format it asks the service first (`maxDimension` 2560) and shows the
-  result. If that fails it continues with today's path (Windows' thumbnail, then Windows' codecs).
-- `preview.rs` and the C# preview lists classify `psd`, `psb`, `kra`, `ora`, `dcm` and the added RAW extensions as
-  images.
+  width, height and encoded bytes, and a base64 JSON form for a client that did not ask for binary frames. It runs on
+  the media lane's preview permits (two), not as foreground work: a preview can wait on the helper for seconds, and
+  foreground work makes every background job pause.
+- `PreviewPresenter.Image`: for a media-process format other than SVG it asks the service first (`maxDimension` 2560)
+  and shows the result. If that fails it continues with today's path (Windows' thumbnail, then Windows' codecs). SVG
+  keeps WinUI's vector view, which stays sharp at any zoom.
+- `preview.rs` and the C# preview lists classify `psd`, `psb`, `kra`, `ora` and the added RAW extensions as images.
 
 ### 6. Packaging
 
@@ -190,13 +210,14 @@ A file with no usable preview fails, and Windows' thumbnail takes over.
 ### 7. Tests (what must be proven)
 
 - **Each format decodes.** A fixture per format, generated in the test where an encoder or a hand-written minimal file
-  is practical (EXR, HDR, TIFF, TGA, QOI, PNM, SVG, Krita, OpenRaster, DICOM, DDS, PSD, and synthetic RAW containers
+  is practical (EXR, HDR, TIFF, TGA, QOI, PNM, SVG, Krita, OpenRaster, DDS, PSD, PSB, and synthetic RAW containers
   with an embedded JPEG), or a small committed file with a permissive licence where it is not (JPEG XL). Each test
   checks size and a few known pixels.
 - **Embedded previews are used:** a PSD and a RAW container whose embedded preview differs visibly from the main image
   produce the preview's pixels.
 - **Limits:** an image over the pixel budget answers `too_large`; a truncated or wrong-format file answers `decode`.
-- **Client against the fake helper:** request and reply matching out of order, timeout ends the helper, a crash with
+- **Client against the fake helper:** request and reply matching out of order, calls beyond the gate wait without
+  timing out, timeout ends the helper, a crash with
   one request records the file as bad, a crash with several retries each alone, a bad file answers at once without
   starting the helper, idle exit followed by a restart, a missing helper answers "unsupported".
 - **Client against the real helper:** thumbnail and preview end to end for two formats.
@@ -215,8 +236,19 @@ A file with no usable preview fails, and Windows' thumbnail takes over.
 - No Settings switch in this round.
 - Previews are rendered to at most 2560 pixels on the long side.
 - Transparent pictures are flattened onto white in thumbnails and keep their transparency in previews.
-- The numbers above: four requests at a time, 20 and 60 second timeouts, 120 seconds idle, 1 GiB of pixels, a 3 GiB
-  process limit, 1,024 remembered bad files.
+- The numbers above: four thumbnails and two previews at a time, 20 and 60 second timeouts, 120 seconds idle, 1 GiB
+  of pixels, a 3 GiB process limit, 1,024 remembered bad files.
+
+After the builder check (a reviewer read this design as the builder would):
+
+- **Separate lanes, no cancel.** Media-process formats have their own gate in the app and their own lane in the
+  service, so a slow file never delays a JPG thumbnail. There is no cancel message: after leaving a folder, the
+  thumbnails already asked for (at most 128, the app's existing limit) finish two at a time at below-normal priority
+  and land in the disk cache. A cancel message is the follow-up if that proves wasteful.
+- **Camera RAW** uses one generic reader and the size rule in section 2. No maker-note parsing.
+- **Photoshop** uses SumaFile's own reader, which also reads PSB.
+- **DICOM is deferred**, to keep the security audit gate as it is.
+- **SVG previews** stay with WinUI's vector view.
 
 ## Left to the builder
 

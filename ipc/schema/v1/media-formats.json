@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "description": "Image formats the media process (sumafile-media) decodes for thumbnails and previews.",
+  "formats": [
+    { "name": "Photoshop", "extensions": ["psd", "psb"] },
+    { "name": "OpenEXR", "extensions": ["exr"] },
+    { "name": "Radiance HDR", "extensions": ["hdr"] },
+    { "name": "JPEG XL", "extensions": ["jxl"] },
+    { "name": "TIFF", "extensions": ["tif", "tiff"] },
+    { "name": "SVG", "extensions": ["svg"] },
+    { "name": "DirectDraw Surface", "extensions": ["dds"] },
+    { "name": "Targa", "extensions": ["tga"] },
+    { "name": "QOI", "extensions": ["qoi"] },
+    { "name": "Portable anymap", "extensions": ["pnm", "pbm", "pgm", "ppm", "pam"] },
+    { "name": "Krita", "extensions": ["kra"] },
+    { "name": "OpenRaster", "extensions": ["ora"] },
+    {
+      "name": "Camera RAW",
+      "extensions": [
+        "dng", "nef", "nrw", "cr2", "cr3", "arw", "srf", "sr2", "pef",
+        "srw", "orf", "rw2", "raf", "erf", "3fr", "mos", "dcr", "kdc"
+      ]
+    }
+  ]
+}

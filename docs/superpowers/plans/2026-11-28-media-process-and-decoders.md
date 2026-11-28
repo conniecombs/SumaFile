@@ -2,22 +2,22 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** SumaFile decodes PSD, EXR, HDR, JPEG XL, TIFF, SVG, DDS, TGA, QOI, PNM, Krita, OpenRaster, DICOM and camera RAW itself, for thumbnails and previews, in a separate helper process the file service owns.
+**Goal:** SumaFile decodes PSD, PSB, EXR, HDR, JPEG XL, TIFF, SVG, DDS, TGA, QOI, PNM, Krita, OpenRaster and camera RAW itself, for thumbnails and previews, in a separate helper process the file service owns.
 
 **Architecture:** The thumbnail pipeline moves from `simplefile-core` into a leaf crate, `sumafile-imaging`. A new helper binary, `sumafile-media`, holds decoders ported from Oculante and answers `thumbnail` and `preview` requests on its standard input and output. `sumafile-media-client` starts the helper on first use, enforces timeouts and isolates files that crash it. Core gets a `MediaProvider` registry (shaped like `archive::engine`) that the service fills.
 
-**Tech Stack:** Rust 1.98 (`image` 0.25, `fast_image_resize`, `psd`, `exr`, `jxl-oxide`, `tiff`, `resvg`, `image_dds`, `dicom-object`, `dicom-pixeldata`, `zip`), C# / WinUI 3, Node scripts for generated code.
+**Tech Stack:** Rust 1.98 (`image` 0.25, `fast_image_resize`, `exr`, `jxl-oxide`, `tiff`, `resvg`, `image_dds`, `zip`), C# / WinUI 3, Node scripts for generated code.
 
 **Spec:** `docs/superpowers/specs/2026-11-28-media-process-and-decoders-design.md`
 
 ## Global Constraints
 
-- Every added library is permissively licensed. Never add `quickraw`, `dds-rs`, `rawloader`, `rawler` or any LGPL/GPL crate.
+- Every added library is permissively licensed. Never add `quickraw`, `dds-rs`, `rawloader`, `rawler` or any LGPL/GPL crate. Never add `psd` (rejects PSB) or the `dicom-*` crates (they pull in the unmaintained `encoding` crate; DICOM is deferred).
 - No C or C++ library: `cargo tree -i cc --target x86_64-pc-windows-msvc -p sumafile-media` prints nothing.
 - Code ported from Oculante starts with: `// Ported from Oculante (https://github.com/woelper/oculante), Copyright (c) Johann Woelper, MIT licence. See LICENSE-oculante.txt.`
 - Nothing is added to startup: the service registers the provider without starting the helper.
 - JPG, PNG, GIF, WebP and BMP thumbnails are byte-for-byte what they were: the existing thumbnail tests pass unchanged after the move.
-- Numbers from the spec: 4 requests at a time, thumbnail timeout 20 s, preview timeout 60 s, idle exit 120 s, pixel budget 1 GiB, process memory limit 3 GiB, 1,024 remembered bad files, preview long side 2560, header limit 64 KiB, body limit 256 MiB.
+- Numbers from the spec: 4 thumbnails and 2 previews at a time (gated in the client), thumbnail timeout 20 s, preview timeout 60 s, idle exit 120 s, pixel budget 1 GiB, process memory limit 3 GiB, 1,024 remembered bad files, preview long side 2560, header limit 64 KiB, body limit 256 MiB.
 - Helper executable name `sumafile-media.exe`; override variable `SUMAFILE_MEDIA_HELPER`.
 - Test-first: each test is run and seen to fail before its code is written.
 - Commits end with the two attribution lines of this session. Push to `WorkingBranch` only. No pull request.
@@ -89,7 +89,7 @@
   - `pub fn write_message<W: Write>(writer: &mut W, header: &impl Serialize, body: &[u8]) -> io::Result<()>`
   - `pub fn read_message<R: Read>(reader: &mut R) -> io::Result<Option<(Vec<u8>, Vec<u8>)>>` (`None` at a clean end of input; an over-limit length is `InvalidData`)
 - `client`:
-  - `pub struct ClientConfig { pub helper_path: PathBuf, pub thumbnail_timeout: Duration, pub preview_timeout: Duration, pub max_bad_files: usize, pub memory_limit_bytes: u64 }` with `ClientConfig::for_helper(path)` filling the spec's numbers
+  - `pub struct ClientConfig { pub helper_path: PathBuf, pub thumbnail_timeout: Duration, pub preview_timeout: Duration, pub max_thumbnails: usize, pub max_previews: usize, pub max_bad_files: usize, pub memory_limit_bytes: u64 }` with `ClientConfig::for_helper(path)` filling the spec's numbers. Calls beyond `max_thumbnails` / `max_previews` wait inside the client before the request is sent, so a timeout never counts queueing.
   - `pub fn default_helper_path() -> PathBuf`: `SUMAFILE_MEDIA_HELPER` if set, else `sumafile-media[.exe]` beside `current_exe()`
   - `pub struct MediaClient` (`Send + Sync`); `MediaClient::new(config)`; never spawns in `new`
   - `pub fn thumbnail(&self, path: &Path, size: u32) -> Result<Rendered, MediaError>`
@@ -101,7 +101,7 @@
 - Fake helper (test-only binary, never packaged), scripted by the requested file's name: contains `ok` → success with body `b"OK:" + name`; `slow` → waits 300 ms first; `hang` → never answers; `crash` → `exit(3)`; `toolarge` → `too_large` failure. `FAKE_HELPER_STARTS` names a file it appends one line to at start. `FAKE_HELPER_IDLE_MS` makes it exit after that long idle.
 
 - [ ] **Step 1:** Protocol tests first (`a_message_round_trips`, `an_over_limit_header_is_refused`, `a_clean_end_reads_as_none`); see them fail; implement; pass.
-- [ ] **Step 2:** Write the fake helper and the failing client tests in `tests/client.rs`: `replies_are_matched_out_of_order`, `a_timeout_ends_the_helper_and_records_the_file`, `a_timeout_retries_the_other_requests_alone`, `a_crash_with_one_request_records_the_file`, `a_bad_file_answers_without_starting_the_helper`, `a_bad_file_is_tried_again_after_it_changes`, `an_idle_exit_is_followed_by_a_restart`, `a_missing_helper_answers_unsupported`, `a_helper_that_cannot_start_is_not_retried_in_a_loop`, `a_failure_kind_maps_to_its_error`. Tests use timeouts of 1–2 s through `ClientConfig`.
+- [ ] **Step 2:** Write the fake helper and the failing client tests in `tests/client.rs`: `replies_are_matched_out_of_order`, `calls_beyond_the_gate_wait_without_timing_out`, `a_timeout_ends_the_helper_and_records_the_file`, `a_timeout_retries_the_other_requests_alone`, `a_crash_with_one_request_records_the_file`, `a_bad_file_answers_without_starting_the_helper`, `a_bad_file_is_tried_again_after_it_changes`, `an_idle_exit_is_followed_by_a_restart`, `a_missing_helper_answers_unsupported`, `a_helper_that_cannot_start_is_not_retried_in_a_loop`, `a_failure_kind_maps_to_its_error`. Tests use timeouts of 1–2 s through `ClientConfig`.
 - [ ] **Step 3:** Run; expected FAIL. Implement `client.rs` and `process.rs`.
 - [ ] **Step 4:** `cargo test -p sumafile-media-client`; expected PASS, three runs in a row with no flake. `xcheck.sh clippy -p sumafile-media-client -- -D warnings`. Commit.
 
@@ -115,7 +115,7 @@
 - `limits`: `pub const PIXEL_BUDGET_BYTES: u64 = 1 << 30; pub fn check_budget(width: u32, height: u32, channels: u8, bytes_per_sample: u8) -> Result<(), RenderError>`
 - `render`: `pub enum RenderError { Unsupported(String), TooLarge, Decode(String), Io(String) }`; `pub enum Purpose { Thumbnail { size: u32 }, Preview { max_dimension: u32 } }`; `pub fn thumbnail(path: &Path, size: u32) -> Result<Rendered, RenderError>`; `pub fn preview(path: &Path, max_dimension: u32) -> Result<Rendered, RenderError>` (JPEG when opaque, PNG when any pixel is transparent; never enlarges)
 - `decoders`: `pub fn decode(path: &Path, extension: &str, purpose: Purpose) -> Result<Decoded, RenderError>` dispatching by extension; this task covers `tga`, `qoi`, `pnm`, `pbm`, `pgm`, `ppm`, `pam`, `hdr` (tone-mapped) through `image`, each checked against the pixel budget from its header before decoding.
-- `server`: `pub struct ServerConfig { pub workers: usize, pub idle_exit: Duration }`; `pub fn run<R: Read + Send + 'static, W: Write + Send + 'static>(input: R, output: W, config: ServerConfig) -> ExitReason`; `pub enum ExitReason { InputClosed, Idle }`. Workers: `min(4, available_parallelism)`. `main` exits the process as soon as `run` returns.
+- `server`: `pub struct ServerConfig { pub idle_exit: Duration }`; `pub fn run<R: Read + Send + 'static, W: Write + Send + 'static>(input: R, output: W, config: ServerConfig) -> ExitReason`; `pub enum ExitReason { InputClosed, Idle }`. Each request runs on its own thread (the client gates how many arrive); a panic in a decoder is caught and answered as a `decode` failure. `main` exits the process as soon as `run` returns.
 
 - [ ] **Step 1:** Failing unit tests per format (`decodes_tga`, `decodes_qoi`, `decodes_ppm`, `decodes_hdr_tone_mapped`), each writing a 4×3 fixture with `image` and checking size and two pixels; `over_budget_answers_too_large` (a PPM header claiming 40,000 × 40,000); `wrong_contents_answer_decode`; `preview_keeps_transparency_as_png`; `preview_never_enlarges`.
 - [ ] **Step 2:** See them fail; implement `limits`, `render`, `decoders::simple`.
@@ -137,18 +137,18 @@
 - [ ] **Step 2:** See them fail; port and implement each decoder; pass.
 - [ ] **Step 3:** No-C check and clippy as in Task 4. Commit.
 
-### Task 6: Ported decoders: Photoshop, Krita and OpenRaster, DICOM
+### Task 6: Photoshop (own reader), Krita and OpenRaster
 
 **Files:**
-- Create: `crates/sumafile-media/src/decoders/{psd.rs,kra.rs,dicom.rs}`
+- Create: `crates/sumafile-media/src/decoders/{psd.rs,kra.rs}`
 - Modify: `decoders/mod.rs`, `Cargo.toml`
 
 **Interfaces:**
-- `psd::decode`: for `Purpose::Thumbnail { size }`, use the embedded JPEG of image resource 1036 when its long side is at least `size`; otherwise the flattened composite from the `psd` crate. `pub(super) fn embedded_thumbnail(bytes: &[u8]) -> Option<DynamicImage>` walks the image resource section itself.
-- `kra::decode`: the entry `mergedimage.png` of the zip, for `kra` and `ora`.
-- `dicom::decode`: first frame through `dicom-pixeldata`.
+- `psd::decode(path, purpose)`: SumaFile's own reader, reading with `Seek` so the layer section is skipped, never loaded. Header (version 1 PSD, version 2 PSB) → colour mode data → image resources → skip layer and mask info (4-byte length in PSD, 8-byte in PSB) → image data (compression 0 raw or 1 RLE; RLE row counts are 2 bytes in PSD, 4 in PSB). Colour modes RGB, greyscale, CMYK and indexed; depth 8 and 16 (high byte). Anything else is `RenderError::Decode`. The pixel budget is checked from the header.
+- For `Purpose::Thumbnail { size }` it returns the embedded JPEG of image resource 1036 when its long side is at least `size`; otherwise the flattened image. `pub(super) fn embedded_thumbnail<R: Read + Seek>(reader: &mut R) -> Option<DynamicImage>`.
+- `kra::decode`: the entry `mergedimage.png` of the zip, for `kra` and `ora`; the entry's decoded size is checked against the pixel budget.
 
-- [ ] **Step 1:** Failing tests: `decodes_a_flat_psd` (hand-written minimal 8-bit RGB PSD), `a_psd_thumbnail_uses_the_embedded_preview` (embedded preview red, composite blue; a small thumbnail is red, a preview is blue), `decodes_kra_and_ora` (zip written in the test), `decodes_dicom` (file written with `dicom-object`), and the truncated cases.
+- [ ] **Step 1:** Failing tests, with files written by a test helper `write_psd(spec)`: `decodes_a_raw_rgb_psd`, `decodes_an_rle_psd`, `decodes_a_psb`, `decodes_greyscale_cmyk_and_indexed`, `decodes_16_bit`, `a_psd_thumbnail_uses_the_embedded_preview` (embedded preview red, flattened image blue; a small thumbnail is red, a larger one and a preview are blue), `an_unsupported_colour_mode_answers_decode`, `a_psd_over_budget_answers_too_large`, `decodes_kra_and_ora` (zip written in the test), and the truncated cases.
 - [ ] **Step 2:** See them fail; implement; pass. No-C check, clippy. Commit.
 
 ### Task 7: Camera RAW embedded previews
@@ -158,13 +158,13 @@
 - Modify: `decoders/mod.rs`
 
 **Interfaces:**
-- `raw::decode(path, purpose)`: collects candidate JPEG byte ranges, decodes the one with the most pixels that decodes (through `sumafile_imaging` so a thumbnail uses the reduced JPEG decode), and turns it by the EXIF orientation of IFD0.
-- `tiff_walk::jpeg_candidates(bytes: &[u8]) -> Vec<Range<usize>>`: IFD0, IFD1, SubIFDs (tag `0x014A`); a candidate is `0x0201`+`0x0202`, or compression 6/7 with one strip (`0x0111`+`0x0117`), or tag `0x002E`; accepts the TIFF magic variants of ORF and RW2; bounded: at most 64 IFDs, every offset checked against the file length.
+- `raw::decode(path, purpose)`: collects candidate JPEG byte ranges, decodes the one with the most pixels that decodes, and turns it by the EXIF orientation of IFD0. Size rule: `Thumbnail { size }` needs a long side of at least `size / 2`; `Preview` needs at least 1,000; never enlarged; otherwise `RenderError::Decode("no embedded preview large enough")`.
+- `tiff_walk::jpeg_candidates(bytes: &[u8]) -> Vec<Range<usize>>`: the whole IFD chain (IFD0, IFD1, IFD2, ...) and every SubIFD (tag `0x014A`); a candidate is `0x0201`+`0x0202`, or compression 6/7 with one strip (`0x0111`+`0x0117`), or tag `0x002E`; accepts the TIFF magic variants of ORF and RW2; bounded: at most 64 IFDs, every offset checked against the file length.
 - `raf::jpeg_candidate(bytes)`: offset and length at bytes 84 and 88 of a `FUJIFILMCCD-RAW` file.
 - `cr3::jpeg_candidates(bytes)`: the `PRVW` and `THMB` boxes of the Canon uuid boxes.
 - No candidate → `RenderError::Decode("no embedded preview")`.
 
-- [ ] **Step 1:** Failing tests with synthetic containers built in the test: `a_tiff_raw_uses_the_largest_embedded_jpeg` (IFD1 thumbnail 16×16, SubIFD preview 64×48 → 64×48), `a_raw_preview_is_turned_by_its_orientation`, `a_panasonic_jpg_from_raw_is_found`, `a_raf_preview_is_found`, `a_cr3_preview_is_found`, `offsets_outside_the_file_are_ignored`, `an_ifd_loop_ends`, `a_raw_without_a_preview_answers_decode`.
+- [ ] **Step 1:** Failing tests with synthetic containers built in the test: `a_tiff_raw_uses_the_largest_embedded_jpeg` (IFD1 thumbnail 16×16, SubIFD preview 64×48 → 64×48), `a_raw_preview_is_turned_by_its_orientation`, `a_panasonic_jpg_from_raw_is_found`, `a_preview_in_the_third_ifd_is_found`, `a_small_preview_is_refused_for_a_large_thumbnail_and_for_a_preview`, `a_raf_preview_is_found`, `a_cr3_preview_is_found`, `offsets_outside_the_file_are_ignored`, `an_ifd_loop_ends`, `a_raw_without_a_preview_answers_decode`.
 - [ ] **Step 2:** See them fail; implement; pass. Clippy. Commit.
 
 ### Task 8: Core provider registry and thumbnail routing; the service registers the client
@@ -179,13 +179,14 @@
   - `pub trait MediaProvider: Send + Sync { fn thumbnail(&self, path: &Path, size: u32) -> Result<Vec<u8>, String>; fn preview(&self, path: &Path, max_dimension: u32) -> Result<EncodedImage, String>; }`
   - `pub fn register_media_provider(provider: Arc<dyn MediaProvider>)`, `pub fn unregister_media_provider()`, `pub fn media_provider() -> Option<Arc<dyn MediaProvider>>`
   - `pub fn render_image_preview(path: String, max_dimension: Option<u32>) -> Result<EncodedImage, String>`: resolves the readable path as `generate_thumbnail` does; a media-process extension with a provider → `provider.preview`; anything else → `Err("Unsupported image format: <ext>")`. Default `max_dimension` 2560, clamped to 64..=8192.
-- `generate_thumbnail`: supported = the six built-ins, or a media-process extension while a provider is registered. Cache lookup and write are shared.
-- `preview.rs` extension table gains `psd`, `psb`, `kra`, `ora`, `dcm` and the RAW extensions of the format list not yet there, all as `"image"`.
+- `generate_thumbnail`: supported = the six built-ins, or a media-process extension while a provider is registered. Cache lookup and write are shared. `pub fn thumbnail_uses_media_process(path: &str) -> bool` tells the service which lane to use.
+- `preview.rs` extension table gains `psd`, `psb`, `kra`, `ora` and the RAW extensions of the format list not yet there, all as `"image"`.
 - Service: `pub(crate) struct ClientProvider(MediaClient)` implementing the trait; registered once, lazily constructed, never spawning.
+- Scheduler: `pub(crate) enum MediaLane { Thumbnail, Preview }` and `pub(crate) async fn run_media<F, R>(&self, lane: MediaLane, task: F) -> Result<R, String>` with its own semaphores (4 and 2); it takes no general or background permit and waits for foreground work like `run_background`. `generate_thumbnail_and_reply` and the batch job use it for media-process paths.
 
 - [ ] **Step 1:** Failing core tests with a counting fake provider: `a_media_extension_goes_to_the_provider`, `a_media_thumbnail_is_cached_on_disk` (second call does not reach the provider), `a_built_in_extension_never_reaches_the_provider`, `without_a_provider_the_extension_is_unsupported`, `render_image_preview_clamps_the_dimension`, `the_preview_table_calls_psd_an_image`.
 - [ ] **Step 2:** See them fail; implement; pass (Linux patch applied, then removed).
-- [ ] **Step 3:** Failing service test `the_provider_maps_client_errors_to_messages`; implement `media_provider.rs`; pass. `xcheck.sh clippy -p simplefile-core -p simplefile-service -- -D warnings`. Commit.
+- [ ] **Step 3:** Failing service tests `the_provider_maps_client_errors_to_messages` and `media_work_does_not_take_background_permits` (with every background permit held, `run_media` still runs); implement `media_provider.rs` and `run_media`; pass. `xcheck.sh clippy -p simplefile-core -p simplefile-service -- -D warnings`. Commit.
 
 ### Task 9: IPC method `render_image_preview`
 
@@ -195,7 +196,7 @@
 **Interfaces:**
 - Schema: `"render_image_preview": { "params": { "path": "string", "maxDimension": "number?" }, "result": "ImagePreview", "binaryFrameTag": 10 }`; type `ImagePreview { format, width, height, data }`.
 - Binary frame 10: `i32 request id | string format | u32 width | u32 height | bytes data`. JSON form: `data` is base64.
-- Rust: `pub(crate) fn encode_image_preview_result(request_id: i32, preview: &EncodedImage) -> EncodeResult<Vec<u8>>`; the job runs with `run_foreground`.
+- Rust: `pub(crate) fn encode_image_preview_result(request_id: i32, preview: &EncodedImage) -> EncodeResult<Vec<u8>>`; the job runs with `run_media(MediaLane::Preview, ...)`.
 - C#: `Task<ImagePreview> RenderImagePreviewAsync(string path, uint maxDimension, CancellationToken ct = default)`; `public sealed class ImagePreview { public string Format; public uint Width; public uint Height; public byte[] Data; }`
 
 - [ ] **Step 1:** Failing tests: Rust `image_preview_frame_layout` (golden bytes) and a dispatch test `render_image_preview_answers_through_the_provider`; C# `BinaryFrameCodecTests.DecodesImagePreview` with the same golden bytes.
@@ -208,10 +209,11 @@
 - Modify: `src-winui/SimpleFile.App/FileListThumbnailHost.cs` (`CanUseAppThumbnail`), `src-winui/SimpleFile.App/PreviewPresenter.Image.cs`, the C# preview extension lists that classify images
 
 **Interfaces:**
-- `public static class ThumbnailRouting { public static bool CanUseAppThumbnail(string extension); public static bool PreviewsThroughService(string? path); public const uint PreviewMaxDimension = 2560; }` (`CanUseAppThumbnail`: the six built-ins or `MediaFormats.IsMediaProcessFormat`).
+- `public static class ThumbnailRouting { public static bool CanUseAppThumbnail(string extension); public static bool UsesMediaProcess(string extension); public static bool PreviewsThroughService(string? path); public const uint PreviewMaxDimension = 2560; }` (`CanUseAppThumbnail`: the six built-ins or `MediaFormats.IsMediaProcessFormat`; `PreviewsThroughService`: a media-process format other than `svg`).
+- `FileListThumbnailHost`: a third gate, `MediaLoadGate = new(2, 2)`, used when `UsesMediaProcess(extension)`; video keeps `VideoLoadGate`, everything else `LoadGate`.
 - `PreviewPresenter.Image`: when `PreviewsThroughService(path)`, call `RenderImagePreviewAsync` first and show the bytes; on any failure continue with the existing Windows path.
 
-- [ ] **Step 1:** Failing tests `ThumbnailRoutingTests`: `AppThumbnailsCoverBuiltInsAndMediaFormats`, `HeicStaysWithWindows`, `PsdPreviewsThroughTheService`, `JpgDoesNotPreviewThroughTheService`.
+- [ ] **Step 1:** Failing tests `ThumbnailRoutingTests`: `AppThumbnailsCoverBuiltInsAndMediaFormats`, `HeicStaysWithWindows`, `PsdPreviewsThroughTheService`, `JpgDoesNotPreviewThroughTheService`, `SvgKeepsItsVectorPreview`, `OnlyMediaFormatsUseTheMediaGate`.
 - [ ] **Step 2:** See them fail; implement; pass with `cstest.sh`. Type-check the App project with the scratchpad `appcheck`. Commit.
 
 ### Task 11: Packaging, licence text, documentation, full checks

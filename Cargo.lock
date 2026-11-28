@@ -2735,6 +2735,7 @@ dependencies = [
  "image",
  "jpeg-decoder",
  "kamadak-exif",
+ "serde_json",
 ]
 
 [[package]]
