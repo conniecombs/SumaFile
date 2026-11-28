@@ -203,9 +203,12 @@ graphics card, after a change to `crates/sumafile-video` or to how video thumbna
    Thumbnails already cached are not decoded again, so they would not be counted.
 2. Browse a folder with a 4K H.264 file, an HEVC or AV1 file if the codec pack is installed, a
    phone video shot upright, and a folder of a few hundred videos. Thumbnails appear and are
-   upright.
+   upright. Look at the bottom edge of a 1080p video's thumbnail: there is no stray line of green
+   or grey. A video with non-square pixels (a DVD rip, old DV footage) has its real shape.
 3. Open Settings, Storage & Cache. Under **Use the graphics card for video thumbnails** the first
-   line counts those thumbnails as decoded by the graphics card.
+   line counts those thumbnails as decoded by the graphics card. After browsing an old AVI or WMV
+   file, the second line reads "the graphics card has no decoder for that video's format", not
+   "hardware decoding failed".
 4. Turn the switch off, choose another empty cache folder and browse the same folders. Thumbnails
    still appear, and Settings counts processor decodes, with the reason "the graphics card is
    turned off above".
@@ -246,9 +249,13 @@ The `video-thumbnails` scenario makes thumbnails of 24 small videos the script w
 (uncompressed, so they need no codec). It makes each through the file service's video process
 with a fresh cache (`newMs`), then through the app's old in-app extractor (`oldMs`, and
 `oldPictures`, the number it produced), then through the service again from the cache (`warmMs`).
-Every video must get a thumbnail on the new path, each must be decoded exactly once, and none may
-be counted as decoded by the graphics card; those are gates. The two per-thumbnail times are how
-the new path is compared with the old one on a machine without a hardware decoder.
+Every video must get a thumbnail on the new path, each must be decoded exactly once, the thumbnail
+cache folder must hold a file for each (`thumbnailsOnDisk`), and none may be counted as decoded by
+the graphics card; those are gates. The two per-thumbnail times are how the new path is compared
+with the old one on a machine without a hardware decoder. For that comparison the script builds the
+video program optimised, as it ships, and points the service at it with `SUMAFILE_VIDEO_HELPER`.
+The app and the file service are debug builds, which counts against the new path only: a new path
+that is not slower here is not slower in a release.
 
 The `thumbnails` scenario opens a folder of 96 camera-like photos (1600x1200
 JPEGs; every other one a portrait stored on its side with Exif orientation 6,

@@ -449,6 +449,13 @@ impl MediaClient {
         }
     }
 
+    /// How many starts ran without the job object's limits. Unlike
+    /// [`Self::stats`] this waits for nothing: it may be asked while a
+    /// process is starting.
+    pub fn starts_without_limits(&self) -> u64 {
+        self.inner.starts_without_limits.load(Ordering::Relaxed)
+    }
+
     pub fn stats(&self) -> ClientStats {
         let state = lock(&self.inner.state);
         let running = state

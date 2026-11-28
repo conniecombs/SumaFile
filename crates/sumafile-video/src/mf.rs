@@ -12,7 +12,7 @@
 
 use crate::attempt::{self, Device, Step};
 use crate::pixels::upright_rgb;
-use crate::rules::{self, Turn};
+use crate::rules::{self, Area, Turn};
 use image::{DynamicImage, RgbImage};
 use std::mem::ManuallyDrop;
 use std::path::Path;
@@ -24,7 +24,7 @@ use sumafile_media::server::Answered;
 use sumafile_media_client::protocol::ImageKind;
 use sumafile_media_client::Rendered;
 use windows::core::{Error, Interface, Result, GUID, HSTRING};
-use windows::Win32::Foundation::{E_FAIL, HMODULE};
+use windows::Win32::Foundation::{E_FAIL, HMODULE, RECT};
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
 use windows::Win32::Graphics::Direct3D11::{
     D3D11CreateDevice, ID3D11Device, ID3D11Multithread, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
@@ -37,17 +37,21 @@ use windows::Win32::Media::MediaFoundation::{
     CLSID_VideoProcessorMFT, IMF2DBuffer, IMFAttributes, IMFDXGIBuffer, IMFDXGIDeviceManager,
     IMFMediaType, IMFSample, IMFSourceReader, IMFTransform, IMFVideoProcessorControl,
     MFCreate2DMediaBuffer, MFCreateAttributes, MFCreateDXGIDeviceManager, MFCreateMediaType,
-    MFCreateSample, MFCreateSourceReaderFromURL, MFMediaType_Video, MFStartup, MFVideoFormat_NV12,
-    MFVideoFormat_P010, MFVideoFormat_RGB32, MFVideoFormat_YUY2, MFVideoInterlace_Progressive,
-    MFSTARTUP_LITE, MFT_MESSAGE_COMMAND_DRAIN, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING,
+    MFCreateSample, MFCreateSourceReaderFromURL, MFMediaType_Video, MFStartup,
+    MFVideoFormat_ARGB32, MFVideoFormat_AYUV, MFVideoFormat_I420, MFVideoFormat_IYUV,
+    MFVideoFormat_NV12, MFVideoFormat_P010, MFVideoFormat_RGB24, MFVideoFormat_RGB32,
+    MFVideoFormat_RGB555, MFVideoFormat_RGB565, MFVideoFormat_UYVY, MFVideoFormat_YUY2,
+    MFVideoFormat_YV12, MFVideoFormat_YVYU, MFVideoInterlace_Progressive, MFSTARTUP_LITE,
+    MFT_MESSAGE_COMMAND_DRAIN, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING,
     MFT_MESSAGE_NOTIFY_START_OF_STREAM, MFT_MESSAGE_SET_D3D_MANAGER, MFT_OUTPUT_DATA_BUFFER,
     MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES, MFT_OUTPUT_STREAM_PROVIDES_SAMPLES,
     MF_E_TRANSFORM_NEED_MORE_INPUT, MF_MT_ALL_SAMPLES_INDEPENDENT, MF_MT_DEFAULT_STRIDE,
-    MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE, MF_MT_PIXEL_ASPECT_RATIO,
-    MF_MT_SUBTYPE, MF_MT_VIDEO_ROTATION, MF_PD_DURATION, MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS,
-    MF_SOURCE_READERF_ENDOFSTREAM, MF_SOURCE_READERF_ERROR, MF_SOURCE_READER_ALL_STREAMS,
-    MF_SOURCE_READER_D3D_MANAGER, MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING,
-    MF_SOURCE_READER_FIRST_VIDEO_STREAM, MF_SOURCE_READER_MEDIASOURCE, MF_VERSION, ROTATION_NONE,
+    MF_MT_FRAME_SIZE, MF_MT_GEOMETRIC_APERTURE, MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE,
+    MF_MT_MINIMUM_DISPLAY_APERTURE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE, MF_MT_VIDEO_ROTATION,
+    MF_PD_DURATION, MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, MF_SOURCE_READERF_ENDOFSTREAM,
+    MF_SOURCE_READERF_ERROR, MF_SOURCE_READER_ALL_STREAMS, MF_SOURCE_READER_D3D_MANAGER,
+    MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+    MF_SOURCE_READER_MEDIASOURCE, MF_VERSION, ROTATION_NONE,
 };
 use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
 use windows::Win32::System::Com::{CoCreateInstance, CoIncrementMTAUsage, CLSCTX_INPROC_SERVER};
@@ -57,6 +61,25 @@ const ALL_STREAMS: u32 = MF_SOURCE_READER_ALL_STREAMS.0 as u32;
 const MEDIA_SOURCE: u32 = MF_SOURCE_READER_MEDIASOURCE.0 as u32;
 /// `D3DFMT_X8R8G8B8`: 32 bits a pixel as blue, green, red, unused.
 const X8R8G8B8: u32 = 22;
+/// The pixel formats a file's frames may be stored in without compression,
+/// each of which the video processor takes as input. Decided by the format,
+/// not by asking the type whether it is compressed: that answer follows
+/// another attribute, which a source may leave unset.
+const UNCOMPRESSED: [GUID; 13] = [
+    MFVideoFormat_RGB24,
+    MFVideoFormat_RGB32,
+    MFVideoFormat_ARGB32,
+    MFVideoFormat_RGB555,
+    MFVideoFormat_RGB565,
+    MFVideoFormat_NV12,
+    MFVideoFormat_YUY2,
+    MFVideoFormat_UYVY,
+    MFVideoFormat_YVYU,
+    MFVideoFormat_YV12,
+    MFVideoFormat_I420,
+    MFVideoFormat_IYUV,
+    MFVideoFormat_AYUV,
+];
 /// A reader that keeps answering with neither a frame nor an end is given up.
 const MOST_READS_WITHOUT_A_FRAME: u32 = 1000;
 
@@ -383,16 +406,20 @@ unsafe fn frame(
         let mut reader = open_reader(url, manager, false)?;
         let native = reader.GetNativeMediaType(VIDEO_STREAM, 0)?;
 
-        // Frames in the decoder's own format: what Windows' decoders give,
-        // commonest first. A file that is not compressed keeps its format.
-        let mut asked = ask_for(
-            &reader,
-            &[MFVideoFormat_NV12, MFVideoFormat_P010, MFVideoFormat_YUY2],
-        );
-        if !asked && !native.IsCompressedFormat()?.as_bool() {
-            asked = reader
+        // A file whose frames are not compressed keeps its own format: the
+        // video processor takes it as it is. Otherwise frames are asked for
+        // in the decoder's own format: what Windows' decoders give,
+        // commonest first.
+        let native_subtype = native.GetGUID(&MF_MT_SUBTYPE).unwrap_or(GUID::zeroed());
+        let mut asked = UNCOMPRESSED.contains(&native_subtype)
+            && reader
                 .SetCurrentMediaType(VIDEO_STREAM, None, &native)
                 .is_ok();
+        if !asked {
+            asked = ask_for(
+                &reader,
+                &[MFVideoFormat_NV12, MFVideoFormat_P010, MFVideoFormat_YUY2],
+            );
         }
         if !asked && manager.is_none() {
             // A decoder that offers none of these: the reader's own
@@ -424,6 +451,9 @@ unsafe fn frame(
         // Read after the frames: the format may have changed on the way.
         let current = reader.GetCurrentMediaType(VIDEO_STREAM)?;
         let frame_size = unpack(current.GetUINT64(&MF_MT_FRAME_SIZE)?);
+        // The part of the frame that is picture: a decoder pads the frame to
+        // its block size, and the padding is not to be shown.
+        let picture_area = rules::visible_area(frame_size, stated_area(&current));
         let pixel_aspect = current
             .GetUINT64(&MF_MT_PIXEL_ASPECT_RATIO)
             .map(unpack)
@@ -432,9 +462,19 @@ unsafe fn frame(
             .GetUINT32(&MF_MT_VIDEO_ROTATION)
             .or_else(|_| native.GetUINT32(&MF_MT_VIDEO_ROTATION))
             .unwrap_or(0);
-        let (width, height) = rules::processor_size(frame_size, pixel_aspect, box_side);
+        let (width, height) = rules::processor_size(
+            (picture_area.width, picture_area.height),
+            pixel_aspect,
+            box_side,
+        );
 
-        let converted = convert(&sample, &current, width, height, manager)?;
+        // The device is for a frame that is on the graphics card. A frame
+        // the processor decoded sits in ordinary memory and is converted
+        // there: nothing is gained by sending it to the card and back.
+        let converter = manager.filter(|_| on_graphics_card);
+        let whole_frame = (picture_area.width, picture_area.height) == frame_size;
+        let source = (!whole_frame).then_some(picture_area);
+        let converted = convert(&sample, &current, source, width, height, converter)?;
         let picture = copy_out(&converted, width, height, Turn::from_degrees(rotation))?;
         Ok(Frame {
             picture,
@@ -443,15 +483,34 @@ unsafe fn frame(
     }
 }
 
+/// The area a video type states as its picture, when it states one.
+///
+/// # Safety
+/// `video_type` must be a live media type.
+unsafe fn stated_area(video_type: &IMFMediaType) -> Option<Area> {
+    [MF_MT_MINIMUM_DISPLAY_APERTURE, MF_MT_GEOMETRIC_APERTURE]
+        .iter()
+        .find_map(|key| {
+            let mut blob = [0u8; 16];
+            let mut length = 0u32;
+            // SAFETY: the buffer and the length outlive the call, which
+            // writes no more than the buffer holds.
+            unsafe { video_type.GetBlob(key, &mut blob, Some(&mut length)) }.ok()?;
+            rules::area_from_blob(blob.get(..length as usize)?)
+        })
+}
+
 /// `sample`, a frame of type `input`, as 32-bit RGB at `width` by `height`,
 /// through Windows' video processor: on the graphics card when `manager` is
-/// given, on the processor otherwise. The frame is not turned here.
+/// given, on the processor otherwise. `source` is the part of the frame to
+/// take, when that is not all of it. The frame is not turned here.
 ///
 /// # Safety
 /// Media Foundation must be started, and `sample` and `input` live.
 unsafe fn convert(
     sample: &IMFSample,
     input: &IMFMediaType,
+    source: Option<Area>,
     width: u32,
     height: u32,
     manager: Option<&IMFDXGIDeviceManager>,
@@ -465,20 +524,41 @@ unsafe fn convert(
         if let Some(manager) = manager {
             processor.ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, manager.as_raw() as usize)?;
         }
-        // Turning is done by this program's own code, which is tested.
-        if let Ok(control) = processor.cast::<IMFVideoProcessorControl>() {
-            let _ = control.SetRotation(ROTATION_NONE);
-        }
         processor.SetInputType(0, input, 0)?;
+        if let Ok(control) = processor.cast::<IMFVideoProcessorControl>() {
+            // Turning is done by this program's own code, which is tested.
+            let _ = control.SetRotation(ROTATION_NONE);
+            if let Some(area) = source {
+                let part = RECT {
+                    left: area.x as i32,
+                    top: area.y as i32,
+                    right: (area.x + area.width) as i32,
+                    bottom: (area.y + area.height) as i32,
+                };
+                let _ = control.SetSourceRectangle(Some(&part));
+            }
+        }
 
-        let output = MFCreateMediaType()?;
-        output.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
-        output.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_RGB32)?;
-        output.SetUINT64(&MF_MT_FRAME_SIZE, pack(width, height))?;
-        output.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, pack(1, 1))?;
-        output.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
-        output.SetUINT32(&MF_MT_ALL_SAMPLES_INDEPENDENT, 1)?;
-        processor.SetOutputType(0, &output, 0)?;
+        // 32-bit RGB, with or without the word "alpha": the bytes are the
+        // same, and a processor may offer only one of the two.
+        let mut output_set = Err(failed());
+        for subtype in [MFVideoFormat_RGB32, MFVideoFormat_ARGB32] {
+            let output = MFCreateMediaType()?;
+            output.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
+            output.SetGUID(&MF_MT_SUBTYPE, &subtype)?;
+            output.SetUINT64(&MF_MT_FRAME_SIZE, pack(width, height))?;
+            output.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, pack(1, 1))?;
+            output.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
+            output.SetUINT32(&MF_MT_ALL_SAMPLES_INDEPENDENT, 1)?;
+            // Top row first, said outright: an RGB picture in ordinary
+            // memory is otherwise bottom row first by habit.
+            output.SetUINT32(&MF_MT_DEFAULT_STRIDE, width * 4)?;
+            output_set = processor.SetOutputType(0, &output, 0);
+            if output_set.is_ok() {
+                break;
+            }
+        }
+        output_set?;
 
         processor.ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0)?;
         processor.ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0)?;
@@ -565,19 +645,7 @@ unsafe fn copy_out(sample: &IMFSample, width: u32, height: u32, turn: Turn) -> R
             std::slice::from_raw_parts(data, length as usize).to_vec()
         };
         let _ = buffer.Unlock();
-        let stride = sample_stride(sample).unwrap_or(row_bytes as i32);
-        upright_rgb(&copied, stride, width, height, turn).ok_or_else(failed)
+        // The output type declares the top row first (`convert`).
+        upright_rgb(&copied, row_bytes as i32, width, height, turn).ok_or_else(failed)
     }
-}
-
-/// The default stride a sample states for itself, when it states one.
-/// Negative: the bottom row comes first.
-///
-/// # Safety
-/// `sample` must be a live sample.
-unsafe fn sample_stride(sample: &IMFSample) -> Option<i32> {
-    // SAFETY: a plain call on a live COM object, with a constant key.
-    unsafe { sample.GetUINT32(&MF_MT_DEFAULT_STRIDE) }
-        .ok()
-        .map(|stride| stride as i32)
 }

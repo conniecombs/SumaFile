@@ -21,8 +21,9 @@ pub struct ClientProvider {
     client: MediaClient,
     video: MediaClient,
     tally: VideoTally,
-    /// How many starts without limits have been logged.
-    unlimited_starts_logged: AtomicU64,
+    /// How many starts without limits have been logged, for each program.
+    unlimited_picture_starts_logged: AtomicU64,
+    unlimited_video_starts_logged: AtomicU64,
 }
 
 impl ClientProvider {
@@ -33,7 +34,8 @@ impl ClientProvider {
             client: MediaClient::new(pictures),
             video: MediaClient::new(videos),
             tally: VideoTally::new(),
-            unlimited_starts_logged: AtomicU64::new(0),
+            unlimited_picture_starts_logged: AtomicU64::new(0),
+            unlimited_video_starts_logged: AtomicU64::new(0),
         }
     }
 
@@ -60,19 +62,15 @@ impl ClientProvider {
             log::info!("{line}");
         }
     }
+}
 
-    /// Log each start of the media process that Windows refused a job object
-    /// for. Such a process decodes as usual, but its memory is not capped.
-    fn log_unlimited_starts(&self) {
-        let unlimited = self.client.stats().starts_without_limits;
-        let logged = self
-            .unlimited_starts_logged
-            .fetch_max(unlimited, Ordering::Relaxed);
-        if unlimited > logged {
-            log::warn!(
-                "media process: running without its memory limit: Windows refused the job object"
-            );
-        }
+/// Log each start of a program that Windows refused a job object for. Such
+/// a process works as usual, but its memory is not capped. The count is
+/// read without waiting on the client: the other program may be starting.
+fn log_unlimited_starts(client: &MediaClient, logged: &AtomicU64, program: &str) {
+    let unlimited = client.starts_without_limits();
+    if unlimited > logged.fetch_max(unlimited, Ordering::Relaxed) {
+        log::warn!("{program}: running without its memory limit: Windows refused the job object");
     }
 }
 
@@ -102,8 +100,13 @@ impl MediaProvider for ClientProvider {
     ) -> Result<VideoThumbnail, String> {
         let made = self
             .video
-            .video_thumbnail(path, size, position_percent, hardware)
-            .map_err(|error| reported(path, &error))?;
+            .video_thumbnail(path, size, position_percent, hardware);
+        log_unlimited_starts(
+            &self.video,
+            &self.unlimited_video_starts_logged,
+            "video process",
+        );
+        let made = made.map_err(|error| reported(path, &error))?;
         let (decoder, reason) = (decoder_of(made.decoder), made.reason.map(reason_of));
         self.count(decoder, reason);
         Ok(VideoThumbnail {
@@ -115,7 +118,11 @@ impl MediaProvider for ClientProvider {
 
     fn thumbnail(&self, path: &Path, size: u32) -> Result<Vec<u8>, String> {
         let result = self.client.thumbnail(path, size);
-        self.log_unlimited_starts();
+        log_unlimited_starts(
+            &self.client,
+            &self.unlimited_picture_starts_logged,
+            "media process",
+        );
         result
             .map(|rendered| rendered.bytes)
             .map_err(|error| reported(path, &error))
@@ -123,7 +130,11 @@ impl MediaProvider for ClientProvider {
 
     fn preview(&self, path: &Path, max_dimension: u32) -> Result<EncodedImage, String> {
         let result = self.client.preview(path, max_dimension);
-        self.log_unlimited_starts();
+        log_unlimited_starts(
+            &self.client,
+            &self.unlimited_picture_starts_logged,
+            "media process",
+        );
         result
             .map(|rendered| EncodedImage {
                 format: rendered.kind.as_str().to_string(),
@@ -151,9 +162,35 @@ fn reported(path: &Path, error: &MediaError) -> String {
 
 static INSTALLED: OnceLock<Arc<ClientProvider>> = OnceLock::new();
 
+/// The two error-mode flags [`quiet_error_boxes`] turns on.
+#[cfg(windows)]
+const QUIET_ERRORS: u32 = windows_sys::Win32::System::Diagnostics::Debug::SEM_FAILCRITICALERRORS
+    | windows_sys::Win32::System::Diagnostics::Debug::SEM_NOGPFAULTERRORBOX;
+
+/// Ask Windows to report a program that cannot be loaded, or that crashes,
+/// as an error and not with a message box. The programs this service starts
+/// inherit the setting.
+///
+/// The video program needs Media Foundation, which some Windows editions
+/// ship without. Starting it there fails, and that is handled: video
+/// thumbnails fall back to Windows' own. Without this, Windows would also
+/// put up a "DLL was not found" box at every attempt. A decoder that
+/// crashes is handled too, and must not put up a crash report.
+#[cfg(windows)]
+fn quiet_error_boxes() {
+    use windows_sys::Win32::System::Diagnostics::Debug::{GetErrorMode, SetErrorMode};
+
+    // SAFETY: both calls take and return a plain number.
+    unsafe { SetErrorMode(GetErrorMode() | QUIET_ERRORS) };
+}
+
+#[cfg(not(windows))]
+fn quiet_error_boxes() {}
+
 /// Register the provider for the media and video processes beside this
 /// program. Each process starts with the first request that needs it.
 pub fn install() {
+    quiet_error_boxes();
     let provider = INSTALLED.get_or_init(|| {
         Arc::new(ClientProvider::new(
             ClientConfig::for_helper(default_helper_path()),
@@ -306,6 +343,21 @@ mod tests {
         ] {
             assert_eq!(reason_of(from), to);
         }
+    }
+
+    /// A program that cannot be loaded must fail quietly: see
+    /// `quiet_error_boxes`. The setting belongs to this process, and the
+    /// programs it starts inherit it.
+    #[cfg(windows)]
+    #[test]
+    fn error_boxes_are_off_for_this_process_and_the_programs_it_starts() {
+        use windows_sys::Win32::System::Diagnostics::Debug::GetErrorMode;
+
+        quiet_error_boxes();
+
+        // SAFETY: the call takes nothing and returns a plain number.
+        let mode = unsafe { GetErrorMode() };
+        assert_eq!(mode & QUIET_ERRORS, QUIET_ERRORS);
     }
 
     #[test]

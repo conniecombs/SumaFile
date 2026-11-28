@@ -1,11 +1,15 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using System.Globalization;
+using SimpleFile.Core;
 
 namespace SimpleFile.App;
 
 internal sealed partial class PreviewPresenter
 {
+    // The picture beside the frame choices: one request at a time, and of those waiting only the newest.
+    private readonly LatestRequest _videoFramePicture = new();
+
     private bool TryRenderVideoPosterPreview(string path, int token, CancellationToken cancellationToken)
     {
         if (!VideoThumbnailExtractor.CanUseVideoThumbnail(path) || !IsCurrent(path, token, cancellationToken))
@@ -49,9 +53,13 @@ internal sealed partial class PreviewPresenter
             }
 
             // The same request the file list makes, so the picture here is the thumbnail the list will show. It
-            // does not wait in the list's queues: the file service keeps a slot free for it.
-            var bytes = await fileOps.GenerateVideoThumbnailAsync(path, 144, frame.Percent, cancellationToken);
-            var source = bytes.Length > 0
+            // does not wait in the list's queues: the file service keeps a slot free for it. One slot, so this
+            // pane never has more than one request with the service, and asks only once the selection has
+            // rested: the service finishes every request it is sent.
+            var bytes = await _videoFramePicture.RunAsync(
+                () => fileOps.GenerateVideoFramePictureAsync(path, 144, frame.Percent, cancellationToken),
+                cancellationToken);
+            var source = bytes is { Length: > 0 }
                 ? await PreviewImageSourceFactory.FromBytesAsync(bytes, path, 144)
                 : null;
             if (source is null || !IsCurrentVideoFrame(path, previewToken, frame, frameToken, cancellationToken))

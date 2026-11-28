@@ -11,8 +11,9 @@ const MEDIA_THUMBNAIL_PERMITS: usize = 4;
 const MEDIA_PREVIEW_PERMITS: usize = 2;
 /// How many video thumbnails wait on the video process at a time: two from
 /// local drives and one from a network drive for the file list, and one for
-/// the preview pane's frame picker. The app keeps to those numbers, so the
-/// picker always finds one free.
+/// the preview pane's frame picker. The app keeps to those numbers (its
+/// list gates, and one picker request at a time), so the picker always
+/// finds one free.
 const MEDIA_VIDEO_PERMITS: usize = 4;
 const FOREGROUND_YIELD_POLL: Duration = Duration::from_millis(25);
 /// Longest a queued background job waits for foreground work to drain.

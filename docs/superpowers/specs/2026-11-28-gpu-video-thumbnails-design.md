@@ -123,7 +123,8 @@ kept in the disk thumbnail cache.
   and ignored for pictures. Old clients keep working: the field is optional and defaults to 25.
 - The service reads the setting `videoThumbnailsUseGpu` (default true) and passes it as `hardware`.
 - **Disk cache.** The cache key gains the position, so the thumbnail at 25 % and the one at a picked frame are both
-  kept. Picture keys do not change, so no picture thumbnail is made again.
+  kept, and a version number for the way video thumbnails are made, so a later change to that can leave the old ones
+  behind. Picture keys do not change, so no picture thumbnail is made again.
 - **Video extensions.** `ipc/schema/v1/media-formats.json` gains a `video` list, holding the extensions
   `MediaFolder.VideoExtensions` has today. The generator writes it for Rust and C#, and `MediaFolder` reads the
   generated list, so the two sides cannot drift.
@@ -138,7 +139,9 @@ kept in the disk thumbnail cache.
 2. **Open** the file with a source reader and select only the first video stream. With a device: give the reader the
    device manager and allow hardware transforms. The reader is asked for frames in the decoder's own pixel format,
    and its own converters stay off, so a frame that is only stepped over is never converted or scaled.
-3. **Read what the file says:** frame size, rotation, pixel aspect ratio and duration.
+3. **Read what the file says:** frame size, rotation, pixel aspect ratio and duration, and which part of the frame
+   is the picture. A decoder pads a frame to its block size (1080 rows are decoded into 1088) and states the picture's
+   area; only that area is converted, and the thumbnail has its shape.
 4. **Seek** to the position and **read frames** until one is at or past it. The position rule is today's
    `VideoThumbnailFrame.PositionFor`: the percent of the duration, at most 250 ms before the end, and the start when
    the duration is unknown. A seek lands on the key frame before the position, so frames are decoded forward from
@@ -149,8 +152,9 @@ kept in the disk thumbnail cache.
    processor arrives in ordinary memory. That is what `decoder` reports. A video Windows has no hardware decoder for
    is decoded on the processor even when a device was given, without any error: it reports `software` with
    `no_hardware_decoder`.
-6. **Convert and scale the one chosen frame** with Windows' video processor. Given the device, it works on the
-   graphics card; without one, on the processor. The output is 32-bit RGB at the thumbnail's size: the frame fitted
+6. **Convert and scale the one chosen frame** with Windows' video processor. A frame decoded on the graphics card
+   is converted there; a frame decoded on the processor is converted on the processor, because sending it to the
+   card and back gains nothing. The output is 32-bit RGB at the thumbnail's size: the frame fitted
    into the thumbnail box with twice the box's pixels on each side, as picture thumbnails do, and never larger than
    the frame.
 7. **Copy the pixels out** (this brings the small scaled frame back to memory), turn them by the file's rotation, and
@@ -170,7 +174,8 @@ device is made again on the next request.
 
 **A Windows without Media Foundation.** `sumafile-video` does not start. The client treats that as a failed start
 (no file is blamed, the next try comes 30 seconds later), and videos fall back to Windows' thumbnail and then the
-icon.
+icon. The service turns Windows' error boxes off for itself and the programs it starts, so a start that fails for a
+missing system file shows nothing.
 
 **What reaches the app.** The service counts thumbnails decoded by the graphics card and by the processor since it
 started, keeps the last reason, logs the first use of each decoder and every change, and offers all of it through a
@@ -185,7 +190,9 @@ small request, `get_media_status`. A thumbnail that comes from the disk cache is
   (the folder was left, the row scrolled away) is dropped before it starts.
 - **The preview pane's frame picker.** The small picture beside the frame choices comes from the same request
   (144 pixels, at the chosen percent). It does not wait in the list's queues: one of the service's four video slots
-  is always free for it. Until the picture arrives, and when the service has none, the picker shows the file's icon.
+  is always free for it. It asks after the choice has rested 150 ms and makes one request at a time, the newest
+  choice only, so stepping through frames never takes more than that one slot. Until the picture arrives, and when
+  the service has none, the picker shows the file's icon.
   "Use this frame" keeps working: it stores a percent, and that percent goes with every later request.
 - **Settings**, on the page that holds the thumbnail cache:
   ```

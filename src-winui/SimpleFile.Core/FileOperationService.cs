@@ -810,6 +810,28 @@ public sealed class FileOperationService : ISettingsBackend
         return _ipc.GenerateVideoThumbnailAsync(path, size, positionPercent, ct);
     }
 
+    /// <summary>
+    /// <see cref="GenerateVideoThumbnailAsync"/> for the picture beside the preview pane's frame choices. The
+    /// request is sent once <see cref="ThumbnailRouting.PreviewRequestDelay"/> has passed, and not at all when
+    /// <paramref name="ct"/> is cancelled first: a video the selection only passed over never reaches the
+    /// service, which would otherwise decode it to the end.
+    /// </summary>
+    public Task<byte[]> GenerateVideoFramePictureAsync(string path, uint size, int positionPercent, CancellationToken ct)
+    {
+        return GenerateVideoFramePictureAsync(path, size, positionPercent, ThumbnailRouting.PreviewRequestDelay, ct);
+    }
+
+    internal async Task<byte[]> GenerateVideoFramePictureAsync(
+        string path,
+        uint size,
+        int positionPercent,
+        TimeSpan delay,
+        CancellationToken ct)
+    {
+        await Task.Delay(delay, ct).ConfigureAwait(false);
+        return await GenerateVideoThumbnailAsync(path, size, positionPercent, ct).ConfigureAwait(false);
+    }
+
     /// <summary>The video thumbnails decoded since the file service started, and by whom.</summary>
     public Task<MediaStatus> GetMediaStatusAsync(CancellationToken ct = default)
     {

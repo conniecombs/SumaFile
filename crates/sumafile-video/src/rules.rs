@@ -46,6 +46,65 @@ pub fn processor_size(frame: (u32, u32), pixel_aspect: (u32, u32), box_side: u32
     sumafile_imaging::thumbnail::fit(shown_width, height, limit)
 }
 
+/// A rectangle of a decoded frame, in pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Area {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// The area a video type states as its picture, from the sixteen bytes
+/// Media Foundation stores it in (`MFVideoArea`): two offsets, each a 16-bit
+/// fraction and a signed 16-bit whole part, then a width and a height.
+/// `None` for anything else, and for an offset or a size below zero.
+pub fn area_from_blob(blob: &[u8]) -> Option<Area> {
+    let &[_, _, x_low, x_high, _, _, y_low, y_high, ref size @ ..] = blob else {
+        return None;
+    };
+    let &[w0, w1, w2, w3, h0, h1, h2, h3] = size else {
+        return None;
+    };
+    Some(Area {
+        x: u32::try_from(i16::from_le_bytes([x_low, x_high])).ok()?,
+        y: u32::try_from(i16::from_le_bytes([y_low, y_high])).ok()?,
+        width: u32::try_from(i32::from_le_bytes([w0, w1, w2, w3])).ok()?,
+        height: u32::try_from(i32::from_le_bytes([h0, h1, h2, h3])).ok()?,
+    })
+}
+
+/// The part of a decoded frame to show. Decoders pad a frame to their block
+/// size (1080 rows are decoded into 1088) and say which part is the picture;
+/// what lies outside is not to be shown. `aperture` is that part when the
+/// file states one. One that is empty or does not lie inside the frame is
+/// ignored, and the whole frame is shown.
+pub fn visible_area(frame: (u32, u32), aperture: Option<Area>) -> Area {
+    let whole = Area {
+        x: 0,
+        y: 0,
+        width: frame.0,
+        height: frame.1,
+    };
+    match aperture {
+        Some(area)
+            if area.width > 0
+                && area.height > 0
+                && area
+                    .x
+                    .checked_add(area.width)
+                    .is_some_and(|right| right <= frame.0)
+                && area
+                    .y
+                    .checked_add(area.height)
+                    .is_some_and(|bottom| bottom <= frame.1) =>
+        {
+            area
+        }
+        _ => whole,
+    }
+}
+
 /// How far a decoded frame is turned, clockwise, to stand upright.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Turn {
@@ -143,6 +202,83 @@ mod tests {
                 "{frame:?} with pixels of {pixel_aspect:?} in a box of {box_side}"
             );
         }
+    }
+
+    /// Media Foundation's `MFVideoArea`: two offsets (a fraction and a whole
+    /// part each) and a size, sixteen bytes.
+    fn area_blob(x: i16, y: i16, width: i32, height: i32) -> Vec<u8> {
+        let mut blob = Vec::new();
+        for offset in [x, y] {
+            blob.extend_from_slice(&0u16.to_le_bytes());
+            blob.extend_from_slice(&offset.to_le_bytes());
+        }
+        blob.extend_from_slice(&width.to_le_bytes());
+        blob.extend_from_slice(&height.to_le_bytes());
+        blob
+    }
+
+    /// Decoders work in blocks of sixteen, so a 1080-row video is decoded
+    /// into 1088 rows and says which part is the picture. The rest is not
+    /// to be shown, and the picture's shape is that part's shape.
+    #[test]
+    fn a_padded_frame_shows_its_picture_area() {
+        let aperture = area_from_blob(&area_blob(0, 0, 1920, 1080));
+        let area = visible_area((1920, 1088), aperture);
+
+        assert_eq!(
+            area,
+            Area {
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1080
+            }
+        );
+        assert_eq!(
+            processor_size((area.width, area.height), (1, 1), 256),
+            (512, 288)
+        );
+        assert_eq!(
+            area_from_blob(&area_blob(8, 4, 1904, 1072)),
+            Some(Area {
+                x: 8,
+                y: 4,
+                width: 1904,
+                height: 1072
+            })
+        );
+    }
+
+    #[test]
+    fn a_frame_without_an_area_is_shown_whole() {
+        let whole = Area {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1088,
+        };
+
+        assert_eq!(visible_area((1920, 1088), None), whole);
+    }
+
+    /// A file may state an area that is empty, negative, or not inside its
+    /// own frame. Then the whole frame is shown.
+    #[test]
+    fn an_area_that_makes_no_sense_is_ignored() {
+        let whole = visible_area((1920, 1088), None);
+
+        for blob in [
+            area_blob(0, 0, 4000, 1080),
+            area_blob(0, 16, 1920, 1080),
+            area_blob(0, 0, 0, 1080),
+            area_blob(0, 0, 1920, -8),
+            area_blob(-2, 0, 1920, 1080),
+        ] {
+            assert_eq!(visible_area((1920, 1088), area_from_blob(&blob)), whole);
+        }
+        assert_eq!(area_from_blob(&[0u8; 15]), None);
+        assert_eq!(area_from_blob(&[0u8; 17]), None);
+        assert_eq!(area_from_blob(&[]), None);
     }
 
     #[test]

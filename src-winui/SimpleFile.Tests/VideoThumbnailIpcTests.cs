@@ -101,9 +101,47 @@ public class VideoThumbnailIpcTests
         Assert.Equal(2ul, status.VideoSoftware);
     }
 
+    /// <summary>
+    /// The preview pane's frame picture is asked for once the selection has rested on the video, as a
+    /// picture's preview is: the file service finishes every request it is sent.
+    /// </summary>
+    [Fact]
+    public async Task AFramePictureIsAskedForOnlyAfterTheSelectionHasRested()
+    {
+        var ipc = new VideoIpc();
+        var service = new FileOperationService(ipc);
+        var selected = System.Diagnostics.Stopwatch.GetTimestamp();
+
+        var bytes = await service.GenerateVideoFramePictureAsync(@"C:\films\clip.mp4", 144, 25, CancellationToken.None);
+
+        Assert.Equal(new byte[] { 7 }, bytes);
+        Assert.Equal((@"C:\films\clip.mp4", 144u, 25), ipc.Asked);
+        var waited = System.Diagnostics.Stopwatch.GetElapsedTime(selected, ipc.AskedAt);
+        Assert.True(
+            waited >= ThumbnailRouting.PreviewRequestDelay - TimeSpan.FromMilliseconds(32),
+            $"The frame was asked for after {waited.TotalMilliseconds:0} ms.");
+    }
+
+    [Fact]
+    public async Task AVideoTheSelectionPassedOverIsNeverAskedFor()
+    {
+        var ipc = new VideoIpc();
+        var service = new FileOperationService(ipc);
+        using var selection = new CancellationTokenSource();
+
+        var picture = service.GenerateVideoFramePictureAsync(@"C:\films\clip.mp4", 144, 25, TimeSpan.FromSeconds(30), selection.Token);
+        selection.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => picture.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(default, ipc.Asked);
+    }
+
     private sealed class VideoIpc : NullIpc
     {
         public (string Path, uint Size, int PositionPercent) Asked { get; private set; }
+
+        /// <summary>The <see cref="System.Diagnostics.Stopwatch"/> timestamp of the latest request.</summary>
+        public long AskedAt { get; private set; }
 
         public override Task<byte[]> GenerateVideoThumbnailAsync(
             string path,
@@ -111,6 +149,7 @@ public class VideoThumbnailIpcTests
             int positionPercent,
             CancellationToken ct = default)
         {
+            AskedAt = System.Diagnostics.Stopwatch.GetTimestamp();
             Asked = (path, size, positionPercent);
             return Task.FromResult<byte[]>([7]);
         }

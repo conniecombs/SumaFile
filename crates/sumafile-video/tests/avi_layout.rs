@@ -137,6 +137,39 @@ fn a_frame_turned_or_flipped_is_not_upright() {
     }
 }
 
+/// Black and white cannot show red and blue changing places. The light
+/// stripes of the strip are yellow: swapped, they would be cyan.
+#[test]
+fn a_frame_with_red_and_blue_swapped_is_caught() {
+    for index in [0, 21, 63] {
+        let right = avi::frame_picture(96, 64, index);
+        assert!(avi::frame_colours_are_right(&right), "frame {index}");
+        assert_eq!(right.get_pixel(12, 4), &Rgb([255, 255, 0]));
+
+        let swapped = RgbImage::from_fn(96, 64, |x, y| {
+            let Rgb([red, green, blue]) = *right.get_pixel(x, y);
+            Rgb([blue, green, red])
+        });
+        assert!(!avi::frame_colours_are_right(&swapped), "frame {index}");
+        assert!(
+            avi::frame_is_upright(&swapped),
+            "the stripes are still there"
+        );
+    }
+}
+
+/// In the file a pixel is blue, green, red.
+#[test]
+fn the_strip_is_yellow_in_the_file() {
+    let (width, height) = (96usize, 64usize);
+    let file = avi::bytes(width as u32, height as u32, 10, 1);
+    let movie = find(&file, b"movi");
+    let top_row = movie + 4 + 8 + (height - 1) * width * 3;
+
+    assert_eq!(&file[top_row + 12 * 3..top_row + 12 * 3 + 3], [0, 255, 255]);
+    assert_eq!(&file[top_row + 4 * 3..top_row + 4 * 3 + 3], [0, 0, 0]);
+}
+
 /// A bitmap stores its bottom row first.
 #[test]
 fn the_bottom_row_comes_first_in_the_file() {
@@ -144,7 +177,8 @@ fn the_bottom_row_comes_first_in_the_file() {
     let file = avi::bytes(width as u32, height as u32, 10, 4);
     let movie = find(&file, b"movi");
     let frame = movie + 4 + 8;
-    let pixel = |row: usize, x: usize| file[frame + row * width * 3 + x * 3];
+    // The green byte of a pixel: bright in white and in yellow.
+    let pixel = |row: usize, x: usize| file[frame + row * width * 3 + x * 3 + 1];
 
     // Frame 0: black bars below, the strip of stripes on top.
     assert_eq!(pixel(0, 4), 0, "the first row in the file is bars");

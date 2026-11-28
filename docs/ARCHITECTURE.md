@@ -475,6 +475,8 @@ picture decoders in the same program, those PCs would lose the picture formats t
 `sumafile-media` must never depend on the `windows` crate or on `sumafile-video`; a maintenance test
 (`scripts/tests/video-program.test.mjs`) holds it to that. On such a PC the video process fails to
 start, the client treats that as a failed start, and video thumbnails fall back to Windows' own.
+The service turns Windows' error boxes off for itself and the programs it starts
+(`media_provider::quiet_error_boxes`), or each attempt there would put up a "DLL was not found" box.
 
 **The request.** `{ id, method: "video_thumbnail", path, size, positionPercent, hardware }` is
 answered with `{ id, ok: true, format: "jpeg", width, height, decoder, reason }` and the JPEG.
@@ -487,14 +489,17 @@ so a frame that is only stepped over is never converted. It seeks to the positio
 (`rules::position_for`: the percent of the duration, at most 250 ms before the end), and steps
 forward to the first frame at or past it (`rules::choose_frame`; after three seconds the frame
 reached is used). That one frame is converted to 32-bit RGB and scaled by Windows' video processor,
-copied out, turned upright (`pixels::upright_rgb`) and encoded by the thumbnail pipeline.
+copied out, turned upright (`pixels::upright_rgb`) and encoded by the thumbnail pipeline. A decoder
+pads a frame to its block size (1080 rows are decoded into 1088) and states which part is the
+picture; only that part is taken, and the thumbnail has its shape (`rules::visible_area`).
 
 **What "hardware" means.** A thumbnail is tried with a Direct3D 11 device first, when the request
 allows it and Windows has one that is not a software adapter, and without it second
 (`attempt`). Windows decodes on the processor without any error when it has no hardware decoder
 for a file, so the attempt alone says nothing. A frame the graphics card decoded arrives as a
 Direct3D texture; one the processor decoded arrives in ordinary memory. Only the first is reported
-as `hardware`. Scaling on the graphics card after a processor decode does not count.
+as `hardware`. A frame the processor decoded is also converted on the processor: nothing is gained
+by sending it to the graphics card and back.
 
 **In the service.** A video extension (the `video` list of `media-formats.json`) takes the video
 route in `preview::generate_thumbnail_at`. The position is part of the disk cache's key for a
@@ -513,7 +518,9 @@ log gets a line at the first decode and whenever the decoder in use changes.
 of its frame, then Windows' own thumbnail. Local videos load two at a time; videos on a network
 drive (`NetworkPaths`) one at a time, through a slot of their own. A video thumbnail that reaches
 the front of its queue with nobody waiting (`WantedRequests`) is dropped. The preview pane's frame
-picker makes the same request at 144 pixels, outside those queues. Settings shows the counts under
+picker makes the same request at 144 pixels, outside those queues: after the selection has rested
+150 ms, and never more than one at a time (`LatestRequest`), so it takes one of the lane's four
+permits at most. Settings shows the counts under
 "Use the graphics card for video thumbnails" (`MediaStatusText`).
 
 **What only a real PC can prove.** The test machines have no graphics card, and the test video is

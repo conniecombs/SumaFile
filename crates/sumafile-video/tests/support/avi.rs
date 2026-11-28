@@ -7,8 +7,9 @@
 //! says which frame it shows.
 //!
 //! The top quarter of every frame is a strip of twelve narrow stripes,
-//! black then white. Bars look the same upside down; the strip says which
-//! way up the picture is.
+//! black then yellow. Bars look the same upside down; the strip says which
+//! way up the picture is, and its yellow says that red and blue are where
+//! they belong.
 
 #![allow(dead_code)]
 
@@ -18,32 +19,44 @@ use std::path::Path;
 /// The bars a frame is drawn as, so frames 0 to 63 can be told apart.
 pub const BARS: u32 = 6;
 
-/// Whether the pixel at (`x`, `y`) of frame `index` is white.
-fn is_white(index: usize, x: u32, y: u32, width: u32, height: u32) -> bool {
+/// The colour of the pixel at (`x`, `y`) of frame `index`, as red, green,
+/// blue.
+fn colour(index: usize, x: u32, y: u32, width: u32, height: u32) -> [u8; 3] {
+    const BLACK: [u8; 3] = [0, 0, 0];
     if y < height / 4 {
-        // The strip: each bar's width holds a black stripe, then a white one.
-        return x * 2 * BARS / width % 2 == 1;
+        // The strip: each bar's width holds a black stripe, then a yellow
+        // one. Yellow, so that red and blue changing places would show.
+        return if x * 2 * BARS / width % 2 == 1 {
+            [255, 255, 0]
+        } else {
+            BLACK
+        };
     }
     let bar = x * BARS / width;
-    index >> bar & 1 == 1
+    if index >> bar & 1 == 1 {
+        [255, 255, 255]
+    } else {
+        BLACK
+    }
 }
 
 /// Frame `index` as a picture.
 pub fn frame_picture(width: u32, height: u32, index: usize) -> RgbImage {
     RgbImage::from_fn(width, height, |x, y| {
-        let value = if is_white(index, x, y, width, height) {
-            255
-        } else {
-            0
-        };
-        Rgb([value, value, value])
+        Rgb(colour(index, x, y, width, height))
     })
 }
 
-fn is_bright(picture: &RgbImage, x: u32, y: u32) -> bool {
+fn pixel(picture: &RgbImage, x: u32, y: u32) -> [u32; 3] {
     let (width, height) = picture.dimensions();
-    let Rgb([red, green, blue]) = *picture.get_pixel(x.min(width - 1), y.min(height - 1));
-    u32::from(red) + u32::from(green) + u32::from(blue) > 3 * 128
+    picture
+        .get_pixel(x.min(width - 1), y.min(height - 1))
+        .0
+        .map(u32::from)
+}
+
+fn is_bright(picture: &RgbImage, x: u32, y: u32) -> bool {
+    pixel(picture, x, y).iter().sum::<u32>() > 3 * 128
 }
 
 /// The number of the frame a picture shows, read at the middle of each bar.
@@ -55,14 +68,28 @@ pub fn frame_index_in(picture: &RgbImage) -> usize {
         .sum()
 }
 
+/// The middle of stripe `number` of the strip, counted from the left.
+fn stripe(picture: &RgbImage, number: u32) -> u32 {
+    (2 * number + 1) * picture.width() / (4 * BARS)
+}
+
 /// Whether the strip of stripes is where it belongs: across the top, black
 /// stripe first. A picture flipped, mirrored or turned fails this.
 pub fn frame_is_upright(picture: &RgbImage) -> bool {
-    let (width, height) = picture.dimensions();
-    let stripe = |number: u32| (2 * number + 1) * width / (4 * BARS);
+    let row = picture.height() / 8;
     (0..BARS).all(|bar| {
-        !is_bright(picture, stripe(2 * bar), height / 8)
-            && is_bright(picture, stripe(2 * bar + 1), height / 8)
+        !is_bright(picture, stripe(picture, 2 * bar), row)
+            && is_bright(picture, stripe(picture, 2 * bar + 1), row)
+    })
+}
+
+/// Whether the strip's light stripes are yellow: much red and green, little
+/// blue. With red and blue changed places they would be cyan.
+pub fn frame_colours_are_right(picture: &RgbImage) -> bool {
+    let row = picture.height() / 8;
+    (0..BARS).all(|bar| {
+        let [red, green, blue] = pixel(picture, stripe(picture, 2 * bar + 1), row);
+        red > 150 && green > 150 && blue < 110
     })
 }
 
@@ -154,9 +181,9 @@ pub fn bytes(width: u32, height: u32, frames_per_second: u32, frame_count: usize
         let mut rows = vec![0u8; frame_bytes];
         for (row, y) in rows.chunks_exact_mut(row_bytes).zip((0..height).rev()) {
             for x in 0..width {
-                if is_white(frame, x, y, width, height) {
-                    row[x as usize * 3..x as usize * 3 + 3].fill(255);
-                }
+                // A bitmap's pixel is blue, green, red.
+                let [red, green, blue] = colour(frame, x, y, width, height);
+                row[x as usize * 3..x as usize * 3 + 3].copy_from_slice(&[blue, green, red]);
             }
         }
         index.extend_from_slice(b"00db");

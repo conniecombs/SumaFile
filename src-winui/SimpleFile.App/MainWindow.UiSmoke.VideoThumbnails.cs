@@ -15,7 +15,8 @@ public sealed partial class MainWindow
     /// nothing cached), the old path (the in-app extractor), and the new path again (from the cache). Every file
     /// must get a thumbnail on the new path. The old path is timed for comparison: the in-app extractor is
     /// removed only if the new path is not slower on a machine without a hardware decoder, which is what the
-    /// test machine is.
+    /// test machine is. The video process is a release build here (the script sees to that); the app and the
+    /// file service are debug builds, which counts against the new path only.
     /// </para>
     /// </summary>
     private async Task SmokeVideoThumbnailsAsync(ExplorerWorkspace workspace, string root, string videos, List<object> results)
@@ -64,6 +65,11 @@ public sealed partial class MainWindow
             }
             var warmMs = timer.Elapsed.TotalMilliseconds;
 
+            // The thumbnails are on disk, so they survive a restart. (The warm pass above may have been
+            // answered from the file service's memory.)
+            var onDisk = Directory.EnumerateFiles(cacheFolder, "*.jpg", SearchOption.AllDirectories).Count();
+            SmokeAssert(onDisk >= files.Length, $"The thumbnail cache holds {onDisk} files for {files.Length} videos");
+
             var after = await fileOps.GetMediaStatusAsync(CancellationToken.None);
             var decoded = after.VideoHardware + after.VideoSoftware - before.VideoHardware - before.VideoSoftware;
             SmokeAssert(decoded == (ulong)files.Length,
@@ -77,6 +83,7 @@ public sealed partial class MainWindow
                 newMs, newPerThumbnailMs = newMs / files.Length,
                 oldMs, oldPictures, oldPerThumbnailMs = oldMs / files.Length,
                 warmMs, warmPerThumbnailMs = warmMs / files.Length,
+                thumbnailsOnDisk = onDisk,
                 videoHardware = after.VideoHardware, videoSoftware = after.VideoSoftware,
                 lastSoftwareReason = after.LastSoftwareReason, passed = true,
             });

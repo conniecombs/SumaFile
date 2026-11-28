@@ -100,6 +100,10 @@ fn the_frame_at_each_position_is_the_one_asked_for() {
             avi::frame_is_upright(&picture),
             "{percent} %: the picture is the right way up"
         );
+        assert!(
+            avi::frame_colours_are_right(&picture),
+            "{percent} %: red and blue are where they belong"
+        );
         assert_eq!(
             avi::frame_index_in(&picture),
             frame_at(percent),
@@ -205,15 +209,22 @@ fn wav() -> Vec<u8> {
 }
 
 /// A sound file with a video's extension, or a recording whose picture
-/// track is missing: there is no frame to show.
+/// track is missing: there is no frame to show. Under its own name too.
 #[test]
 fn a_file_without_a_video_stream_answers_decode() {
     let folder = Folder::new("sound");
-    let sound = folder.file("sound.wav", &wav());
+    let client = client();
 
-    let reply = client().video_thumbnail(&sound, 96, 25, true);
+    for name in ["sound.avi", "sound.wav"] {
+        let sound = folder.file(name, &wav());
 
-    assert!(matches!(reply, Err(MediaError::Decode(_))), "{reply:?}");
+        let reply = client.video_thumbnail(&sound, 96, 25, true);
+
+        assert!(
+            matches!(reply, Err(MediaError::Decode(_))),
+            "{name}: {reply:?}"
+        );
+    }
 }
 
 #[test]
@@ -224,6 +235,29 @@ fn a_unicode_path_gets_its_thumbnail() {
     let thumbnail = client().video_thumbnail(&video, 96, 25, false).unwrap();
 
     assert_eq!(avi::frame_index_in(&picture(&thumbnail)), frame_at(25));
+}
+
+/// Media Foundation takes a path where it also takes a web address. A
+/// file's name must not be read as one: these characters mean something in
+/// an address and nothing in a name.
+#[test]
+fn a_name_with_the_characters_of_a_web_address_gets_its_thumbnail() {
+    let folder = Folder::new("address");
+    let client = client();
+
+    for name in ["take #2 100%20 done & dusted.avi", "a+b=c;d,e'f.avi"] {
+        let video = folder.video(name);
+
+        let thumbnail = client
+            .video_thumbnail(&video, 96, 25, false)
+            .unwrap_or_else(|error| panic!("{name}: {error:?}"));
+
+        assert_eq!(
+            avi::frame_index_in(&picture(&thumbnail)),
+            frame_at(25),
+            "{name}"
+        );
+    }
 }
 
 #[test]

@@ -341,9 +341,14 @@ if (-not $SkipBuild) {
         # which looks for it next to its own executable.
         & cargo build --locked -p sumafile-media --bin sumafile-media
         if ($LASTEXITCODE -ne 0) { throw 'Media process build failed.' }
-        # The service's video process, and the tool that writes the test videos for the video thumbnail scenario.
-        & cargo build --locked -p sumafile-video --bin sumafile-video --example write-test-avi
+        # The service's video process, built optimised, as it ships. The video thumbnail scenario times it against
+        # the app's old path, which runs in Windows' own optimised code: an unoptimised build would lose that
+        # comparison for a reason no user would ever meet. The service is pointed at it below.
+        & cargo build --locked --release -p sumafile-video --bin sumafile-video
         if ($LASTEXITCODE -ne 0) { throw 'Video process build failed.' }
+        # The tool that writes the test videos for that scenario.
+        & cargo build --locked -p sumafile-video --example write-test-avi
+        if ($LASTEXITCODE -ne 0) { throw 'Test video writer build failed.' }
         # Restage target\plugins from the fresh target\debug output; the App's Debug build copies it into the exe folder.
         & (Join-Path $PSScriptRoot 'build-plugins.ps1') -SkipCargo | Out-Host
         & npm run build:winui
@@ -357,9 +362,10 @@ if (-not (Test-Path -LiteralPath $exe) -or -not (Test-Path -LiteralPath $service
 # decodes quietly fall back to Windows.
 $media = Join-Path (Split-Path -Parent $service) 'sumafile-media.exe'
 if (-not (Test-Path -LiteralPath $media)) { throw "sumafile-media.exe is missing beside $service. Run without -SkipBuild." }
-# The same for the video process: without it, video thumbnails quietly fall back to Windows' own.
-$video = Join-Path (Split-Path -Parent $service) 'sumafile-video.exe'
-if (-not (Test-Path -LiteralPath $video)) { throw "sumafile-video.exe is missing beside $service. Run without -SkipBuild." }
+# The same for the video process: without it, video thumbnails quietly fall back to Windows' own. It is the
+# release build (see above), so it is not beside the debug service; SUMAFILE_VIDEO_HELPER tells the service where.
+$video = Join-Path $root 'target\release\sumafile-video.exe'
+if (-not (Test-Path -LiteralPath $video)) { throw "sumafile-video.exe is missing: $video. Run without -SkipBuild." }
 $aviWriter = Join-Path $root 'target\debug\examples\write-test-avi.exe'
 if (-not (Test-Path -LiteralPath $aviWriter)) { throw "write-test-avi.exe is missing: $aviWriter. Run without -SkipBuild." }
 # build:winui copies whatever target\plugins holds, so -SkipBuild could otherwise test an old bundled plugin.
@@ -519,6 +525,7 @@ $start.EnvironmentVariables['SIMPLEFILE_UI_SMOKE_BASELINE'] = $(if ($Baseline) {
 $start.EnvironmentVariables['SIMPLEFILE_UI_SMOKE_MAX_WIDTH'] = [string]$MaxWindowWidth
 $start.EnvironmentVariables['SUMAFILE_SMOKE_POINTER'] = $(if ($PointerInput) { '1' } else { '0' })
 $start.EnvironmentVariables['SIMPLEFILE_SERVICE_PATH'] = $service
+$start.EnvironmentVariables['SUMAFILE_VIDEO_HELPER'] = $video
 $start.EnvironmentVariables['SIMPLEFILE_APP_DATA_DIR'] = Join-Path $testRoot 'state'
 $start.EnvironmentVariables['SIMPLEFILE_METADATA_DB'] = Join-Path $testRoot 'state\metadata.db'
 if ($archivesRoot) { $start.EnvironmentVariables['SUMAFILE_SMOKE_ARCHIVES'] = $archivesRoot }

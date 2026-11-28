@@ -76,6 +76,7 @@ fn nothing_starts_until_the_first_request() {
     let client = client(config());
 
     assert_eq!(client.stats().starts, 0);
+    assert_eq!(client.starts_without_limits(), 0);
 }
 
 #[test]

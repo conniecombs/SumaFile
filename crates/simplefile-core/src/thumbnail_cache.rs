@@ -83,6 +83,29 @@ fn cache_key(
     thumb_size: u32,
     position_percent: Option<u8>,
 ) -> String {
+    cache_key_for(
+        path,
+        modified,
+        size,
+        thumb_size,
+        position_percent,
+        VIDEO_THUMBNAIL_FORMAT,
+    )
+}
+
+/// How video thumbnails are rendered. Raise it when the way a frame is
+/// chosen, turned or shaped changes, so that the video thumbnails already
+/// cached are left behind. Pictures have [`THUMBNAIL_FORMAT`].
+const VIDEO_THUMBNAIL_FORMAT: u32 = 1;
+
+fn cache_key_for(
+    path: &str,
+    modified: SystemTime,
+    size: u64,
+    thumb_size: u32,
+    position_percent: Option<u8>,
+    video_format: u32,
+) -> String {
     let modified_epoch = modified
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -102,6 +125,8 @@ fn cache_key(
     if let Some(position_percent) = position_percent {
         hasher.update(b":position:");
         hasher.update([position_percent]);
+        hasher.update(b":video-format:");
+        hasher.update(video_format.to_le_bytes());
     }
     let hash = hasher.finalize();
     hex::encode(hash)
@@ -405,6 +430,22 @@ mod tests {
         assert_ne!(key(Some(25)), key(Some(60)));
         assert_ne!(key(Some(25)), key(None));
         assert_eq!(key(Some(25)), key(Some(25)));
+    }
+
+    /// When the way a video's frame is turned or shaped changes, the
+    /// thumbnails already cached are wrong. The video key carries a version
+    /// so they can be left behind. A picture's key does not carry it.
+    #[test]
+    fn a_video_key_carries_its_rendering_version() {
+        let t = SystemTime::UNIX_EPOCH;
+        let key = |position, version| cache_key_for(r"C:\v\a.mp4", t, 1234, 128, position, version);
+
+        assert_ne!(key(Some(25), 1), key(Some(25), 2));
+        assert_eq!(key(None, 1), key(None, 2));
+        assert_eq!(
+            key(Some(25), VIDEO_THUMBNAIL_FORMAT),
+            cache_key(r"C:\v\a.mp4", t, 1234, 128, Some(25))
+        );
     }
 
     #[test]

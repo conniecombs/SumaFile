@@ -70,7 +70,11 @@ public class VideoThumbnailRequestTests
         var video = Read("PreviewPresenter.Video.cs");
         var frame = Slice(video, "private async Task LoadVideoFramePreviewAsync(", "private bool IsCurrentVideoFrame(");
 
-        Assert.Contains("GenerateVideoThumbnailAsync(path, 144, frame.Percent, cancellationToken)", frame);
         Assert.DoesNotContain("VideoThumbnailExtractor", frame);
+        // After the selection has rested, and never more than one with the service: it finishes every request
+        // it is sent, and the picture must not take the slots the list's thumbnails wait for.
+        Assert.Contains("_videoFramePicture.RunAsync(", frame);
+        Assert.Contains("fileOps.GenerateVideoFramePictureAsync(path, 144, frame.Percent, cancellationToken)", frame);
+        Assert.DoesNotContain("GenerateVideoThumbnailAsync(", frame);
     }
 }
