@@ -338,12 +338,6 @@ internal static class FileListThumbnailHost
         VideoThumbnailExtractor.CanUseVideoThumbnail(extension);
 
     private static bool CanUseWindowsThumbnail(string extension) =>
-        PhotoFolder.IsImage(extension)
-            || extension is "pdf"
-            || MediaFolder.IsVideo(extension)
-            || extension is "doc" or "docx" or "rtf" or "odt"
-            or "xls" or "xlsx" or "xlsm" or "ods"
-            or "ppt" or "pptx" or "pptm" or "odp"
-            or "psd" or "ai" or "eps";
+        ThumbnailRouting.CanUseWindowsThumbnail(extension);
 }
 

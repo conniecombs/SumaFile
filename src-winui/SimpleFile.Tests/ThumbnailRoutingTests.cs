@@ -36,6 +36,43 @@ public class ThumbnailRoutingTests
     }
 
     /// <summary>
+    /// When SumaFile's own decoder has no picture for a file, Windows' thumbnail is tried next. That must hold for
+    /// every format the media process decodes, not only the ones Windows is known to read: a codec the user
+    /// installed may read it.
+    /// </summary>
+    [Fact]
+    public void EveryMediaFormatFallsBackToWindows()
+    {
+        var missing = MediaFormats.Extensions.Where(extension => !ThumbnailRouting.CanUseWindowsThumbnail(extension));
+        Assert.Empty(missing);
+    }
+
+    [Theory]
+    [InlineData("jpg")]
+    [InlineData("heic")]
+    [InlineData("pdf")]
+    [InlineData("mp4")]
+    [InlineData("docx")]
+    [InlineData("xlsx")]
+    [InlineData("pptx")]
+    [InlineData("ai")]
+    [InlineData("eps")]
+    public void WindowsThumbnailsCoverPicturesVideosAndDocuments(string extension)
+    {
+        Assert.True(ThumbnailRouting.CanUseWindowsThumbnail(extension));
+    }
+
+    [Theory]
+    [InlineData("txt")]
+    [InlineData("zip")]
+    [InlineData("exe")]
+    [InlineData("")]
+    public void OtherFilesGetNoWindowsThumbnail(string extension)
+    {
+        Assert.False(ThumbnailRouting.CanUseWindowsThumbnail(extension));
+    }
+
+    /// <summary>
     /// A slow Photoshop file must never take one of the slots JPG thumbnails load through, so the formats the
     /// media process decodes have a gate of their own.
     /// </summary>

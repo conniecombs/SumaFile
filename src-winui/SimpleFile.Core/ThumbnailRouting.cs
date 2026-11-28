@@ -25,6 +25,20 @@ public static class ThumbnailRouting
         MediaFormats.IsMediaProcessFormat(extension);
 
     /// <summary>
+    /// True when Windows' own thumbnail is worth asking for: pictures, videos, common documents, and every format
+    /// the media process decodes. For the last group it is the fallback when SumaFile's decoder has no picture.
+    /// </summary>
+    public static bool CanUseWindowsThumbnail(string extension) =>
+        PhotoFolder.IsImage(extension)
+            || extension is "pdf"
+            || MediaFolder.IsVideo(extension)
+            || extension is "doc" or "docx" or "rtf" or "odt"
+            or "xls" or "xlsx" or "xlsm" or "ods"
+            or "ppt" or "pptx" or "pptm" or "odp"
+            or "ai" or "eps"
+            || MediaFormats.IsMediaProcessFormat(extension);
+
+    /// <summary>
     /// True when the preview pane asks the file service for the picture first. That is every media-process
     /// format except SVG, which WinUI draws as vectors.
     /// </summary>
