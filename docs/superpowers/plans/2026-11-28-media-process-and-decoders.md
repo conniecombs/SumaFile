@@ -125,7 +125,7 @@
 ### Task 5: Ported decoders: EXR, TIFF, JPEG XL, SVG, DDS
 
 **Files:**
-- Create: `crates/sumafile-media/src/decoders/{exr.rs,tiff.rs,jxl.rs,svg.rs,dds.rs,tonemap.rs}`, `crates/sumafile-media/tests/fixtures/tiny.jxl` (+ `tiny.jxl.LICENSE`)
+- Create: `crates/sumafile-media/src/decoders/{exr.rs,tiff.rs,jxl.rs,svg.rs,dds.rs}` (`tonemap.rs` came with Task 4). The JPEG XL test file is made in the test by `zune-jpegxl`, a pure-Rust encoder used as a dev-dependency, so no binary fixture is committed.
 - Modify: `crates/sumafile-media/src/decoders/mod.rs`, `Cargo.toml`
 
 **Interfaces:**

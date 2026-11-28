@@ -1,6 +1,11 @@
 //! One decoder per format, picked by the file's extension.
 
+mod dds;
+mod exr;
+mod jxl;
 mod simple;
+mod svg;
+mod tiff;
 
 use crate::render::{Purpose, RenderError};
 use std::fs::File;
@@ -13,11 +18,15 @@ pub use sumafile_imaging::thumbnail::Decoded;
 /// A decoder may return less than the whole picture when the purpose needs
 /// less: an embedded preview for a thumbnail, for example.
 pub fn decode(path: &Path, extension: &str, purpose: Purpose) -> Result<Decoded, RenderError> {
-    let _ = purpose;
     match extension {
         "tga" | "qoi" | "pnm" | "pbm" | "pgm" | "ppm" | "pam" | "hdr" => {
             simple::decode(path, extension)
         }
+        "exr" => exr::decode(path),
+        "tif" | "tiff" => tiff::decode(path),
+        "jxl" => jxl::decode(path),
+        "svg" => svg::decode(path, purpose),
+        "dds" => dds::decode(path),
         _ => Err(RenderError::Unsupported(format!(
             "SumaFile has no decoder for .{extension} files."
         ))),

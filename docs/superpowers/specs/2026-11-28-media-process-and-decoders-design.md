@@ -213,8 +213,8 @@ on Windows.
 
 - **Each format decodes.** A fixture per format, generated in the test where an encoder or a hand-written minimal file
   is practical (EXR, HDR, TIFF, TGA, QOI, PNM, SVG, Krita, OpenRaster, DDS, PSD, PSB, and synthetic RAW containers
-  with an embedded JPEG), or a small committed file with a permissive licence where it is not (JPEG XL). Each test
-  checks size and a few known pixels.
+  with an embedded JPEG; JPEG XL through `zune-jpegxl`, a pure-Rust encoder used only by the tests). Each test checks
+  size and a few known pixels.
 - **Embedded previews are used:** a PSD and a RAW container whose embedded preview differs visibly from the main image
   produce the preview's pixels.
 - **Limits:** an image over the pixel budget answers `too_large`; a truncated or wrong-format file answers `decode`.
@@ -258,4 +258,3 @@ After the builder check (a reviewer read this design as the builder would):
 - How much of Oculante's loader is kept as-is for each format, as long as the ported parts carry the credit header.
 - The exact shape of the C# preview change, following `PreviewPresenter`'s existing structure.
 - Message wording, following existing thumbnail and preview messages.
-- Which small JPEG XL file to commit, provided its licence allows it.

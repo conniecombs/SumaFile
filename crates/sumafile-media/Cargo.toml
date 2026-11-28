@@ -20,3 +20,12 @@ sumafile-imaging = { path = "../sumafile-imaging" }
 sumafile-media-client = { path = "../sumafile-media-client" }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "tga", "qoi", "pnm", "hdr"] }
 serde_json = "1"
+exr = "1.74"
+tiff = "0.11"
+jxl-oxide = { version = "0.12", default-features = false, features = ["image", "rayon"] }
+resvg = { version = "0.50", default-features = false, features = ["text", "system-fonts", "memmap-fonts", "raster-images"] }
+image_dds = { version = "0.7", default-features = false, features = ["ddsfile", "image"] }
+
+[dev-dependencies]
+zune-jpegxl = "0.5"
+zune-core = "0.5"
