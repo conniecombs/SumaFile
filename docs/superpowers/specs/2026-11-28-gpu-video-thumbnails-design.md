@@ -233,6 +233,27 @@ small request, `get_media_status`. A thumbnail that comes from the disk cache is
 - The switch turned off and the cache cleared: Settings counts processor decodes, and thumbnails still appear.
 - After a restart the thumbnails come from the disk cache at once.
 
+## Checked against Microsoft's documentation
+
+Read in the documentation's source (`MicrosoftDocs/win32`, `desktop-src/medfound`), because none of this can be run
+in the development container:
+
+- A decoder that cannot use the graphics device falls back to processor decoding inside Windows, and the caller gets
+  no error (*Supporting Direct3D 11 Video Decoding in Media Foundation*, "Fallback to Software Decoding"). This is why
+  section 3, step 5 looks at the frame itself.
+- A decoder that does use the device hands out frames as Direct3D surfaces (same page, "Allocating Uncompressed
+  Buffers"; `MF_SOURCE_READER_D3D_MANAGER`: "the source reader uses the Direct3D device to allocate video buffers").
+- The reader's simple converter cannot be combined with a graphics device (`MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING`:
+  `MF_SOURCE_READER_D3D_MANAGER` "must be FALSE"). So the two attempts cannot share it, and the design converts the
+  chosen frame itself.
+- Windows' video processor (`CLSID_VideoProcessorMFT`) takes every pixel format the usual decoders produce (NV12,
+  P010, YUY2, I420, YV12, RGB24, RGB32 and more), outputs 32-bit RGB, resizes, and works on the graphics card through
+  Direct3D 11.
+- All the calls are in version 0.62 of the `windows` crate, which the workspace already builds.
+
+Not stated in the documentation, so settled by the second attempt and by the user's PC check: whether the video
+processor, given the device, also takes a frame that sits in ordinary memory.
+
 ## Calls I made (the user can overrule)
 
 - **What "hardware" means.** Only a frame the graphics card itself decoded counts. So an old AVI or a format without
