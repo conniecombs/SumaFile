@@ -30,3 +30,26 @@ test('the video program is a crate of its own and is not published', () => {
   assert.match(source, /^publish = false$/mu);
   assert.ok(dependencyNames(source).includes('sumafile-media'), 'it shares the request loop with sumafile-media');
 });
+
+// The UI smoke proves the whole chain on Windows (app, file service, video process, Media Foundation) and times
+// the new path against the old one, with videos it writes itself.
+const read = relative => readFileSync(path.join(root, relative), 'utf8');
+
+test('the UI smoke builds the video program and the tool that writes its test videos', () => {
+  const smoke = read('scripts/smoke-winui-ui.ps1');
+  assert.match(smoke, /cargo build --locked -p sumafile-video --bin sumafile-video --example write-test-avi/u);
+  assert.match(smoke, /sumafile-video\.exe is missing beside/u, 'a missing video program fails the smoke');
+  assert.match(smoke, /write-test-avi\.exe/u);
+  assert.match(smoke, /Join-Path \$testRoot 'videos'/u, 'the videos go into the run folder');
+  assert.match(smoke, /\$helperExecutables = @\(@\(\$installDir, \$service, \$media, \$video,/u, 'cleanup waits for it');
+  assert.match(smoke, /scenario -eq 'video-thumbnails'/u, 'the timings are printed');
+});
+
+test('the app runs the video thumbnail scenario in the UI smoke', () => {
+  const smoke = read('src-winui/SimpleFile.App/MainWindow.UiSmoke.cs');
+  assert.match(smoke, /CheckpointAsync\("video-thumbnails"\)/u);
+  const scenario = read('src-winui/SimpleFile.App/MainWindow.UiSmoke.VideoThumbnails.cs');
+  assert.match(scenario, /scenario = "video-thumbnails"/u);
+  assert.match(scenario, /GenerateVideoThumbnailAsync\(/u, 'the new path');
+  assert.match(scenario, /GetMediaStatusAsync\(/u, 'what was decoded is read back');
+});

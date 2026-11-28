@@ -199,6 +199,11 @@ uninstalling, or remove those entries in Credential Manager. Settings in
   camera's embedded preview when that is large enough; videos show a frame;
   PDFs and Office documents use Windows' own thumbnails. Settings -> Storage &
   cache controls the thumbnail cache
+- Video thumbnails are decoded by the graphics card where Windows has a
+  hardware decoder for the video, in a separate process, and kept in the
+  thumbnail cache, so a folder of videos fills at once on the next visit.
+  Settings -> Storage & cache has the switch, and shows how many thumbnails
+  the graphics card and the processor decoded
 - More picture formats, whatever codecs Windows has: SumaFile also makes
   thumbnails and previews for Photoshop (PSD, PSB), OpenEXR, Radiance HDR,
   JPEG XL, TIFF, SVG, DDS, Targa, QOI, PNM, Krita and OpenRaster files, and

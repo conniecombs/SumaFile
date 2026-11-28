@@ -139,6 +139,7 @@ start the real service and the staged plugins, which must be built first.
 | `crates/sumafile-imaging` | The thumbnail pipeline (`thumbnail`: decode, fit, scale, encode as JPEG) and the generated list of formats the media process decodes (`formats`). A leaf crate | none |
 | `crates/sumafile-media-client` | The file service's side of the media process: the wire format (`protocol`), and the client that starts the process, gates and times its requests and isolates files that crash it. Standard library and `serde` only | none |
 | `crates/sumafile-media` | The media process, `sumafile-media.exe`: the decoders (`decoders/`), the render functions and the request loop. It ships beside the service | `sumafile-imaging`, `sumafile-media-client` |
+| `crates/sumafile-video` | The video process, `sumafile-video.exe`: video thumbnails through Windows' Media Foundation (`mf.rs`), and the rules that need no Windows (`rules`, `pixels`, `attempt`). It ships beside the service | `sumafile-imaging`, `sumafile-media-client`, `sumafile-media` |
 | `crates/simplefile-core` | The domain, with no transport: `dir_list`, `listing_view`, `collation`, `file_ops`, `archive`, `preview`, thumbnails, `metadata`, `entry_facts`, `fact_cache`, `drives`, `recycle_bin`, `tags`, `smart_folders`, `settings_store`, `cleanup`, `checksum`, `compare`, `open_with`, `terminal`, `updater`, and the wire types in `models.rs` | `sumafile-transfer` |
 | `crates/simplefile-service` | The process: the pipe (`main.rs`), the session loop (`session/`), `dispatch/`, `scheduler.rs`, `binary.rs`, `listing_views.rs`, `session_cache.rs`, the transfer engine (`progress.rs`, `progress/`), `search.rs`, `watcher.rs`, `shell.rs`, `plugin_archive/` | `simplefile-core`, `simplefile-ipc`, `sumafile-transfer` |
 | `crates/sumafile-plugin` | The helper crate for backends: the pipe server, `plugin.handshake`, request routing, cancel flags, `HostClient` | `simplefile-ipc` |
@@ -460,6 +461,66 @@ To add a format: add it to `media-formats.json`, run the generator, write the de
 tests in `crates/sumafile-media/src/decoders`, and add its extension to the dispatch in
 `decoders/mod.rs`.
 
+## The video process
+
+Video thumbnails are made by a second helper, `sumafile-video.exe` (`crates/sumafile-video`). It
+speaks the media process's wire format, runs its request loop, and is owned by a second
+`MediaClient` in the service's provider. The client's rules are the same: timeouts, bad files, a
+failed start, the idle exit, the job object.
+
+**Why a program of its own.** A video that hangs a decoder or crashes a graphics driver ends only
+this process, and picture thumbnails carry on. And it needs Media Foundation, which some Windows
+editions (the "N" editions) ship without. A program that needs it does not start there. Were the
+picture decoders in the same program, those PCs would lose the picture formats too. So
+`sumafile-media` must never depend on the `windows` crate or on `sumafile-video`; a maintenance test
+(`scripts/tests/video-program.test.mjs`) holds it to that. On such a PC the video process fails to
+start, the client treats that as a failed start, and video thumbnails fall back to Windows' own.
+
+**The request.** `{ id, method: "video_thumbnail", path, size, positionPercent, hardware }` is
+answered with `{ id, ok: true, format: "jpeg", width, height, decoder, reason }` and the JPEG.
+`decoder` is `hardware` or `software`. `reason`, present with `software`, is `turned_off`,
+`no_device`, `no_hardware_decoder` or `hardware_failed`.
+
+**One thumbnail** (`mf.rs`, Windows only). The file is opened with Media Foundation's source
+reader. The reader is asked for frames in the decoder's own pixel format, with its converters off,
+so a frame that is only stepped over is never converted. It seeks to the position
+(`rules::position_for`: the percent of the duration, at most 250 ms before the end), and steps
+forward to the first frame at or past it (`rules::choose_frame`; after three seconds the frame
+reached is used). That one frame is converted to 32-bit RGB and scaled by Windows' video processor,
+copied out, turned upright (`pixels::upright_rgb`) and encoded by the thumbnail pipeline.
+
+**What "hardware" means.** A thumbnail is tried with a Direct3D 11 device first, when the request
+allows it and Windows has one that is not a software adapter, and without it second
+(`attempt`). Windows decodes on the processor without any error when it has no hardware decoder
+for a file, so the attempt alone says nothing. A frame the graphics card decoded arrives as a
+Direct3D texture; one the processor decoded arrives in ordinary memory. Only the first is reported
+as `hardware`. Scaling on the graphics card after a processor decode does not count.
+
+**In the service.** A video extension (the `video` list of `media-formats.json`) takes the video
+route in `preview::generate_thumbnail_at`. The position is part of the disk cache's key for a
+video; a picture's key is unchanged. A video inside an archive is refused before its path is
+resolved, so it is never unpacked for a thumbnail. `videoThumbnailsUseGpu` (on unless it holds
+`false`) is read for every request and sent as `hardware`. Video thumbnails wait in their own lane
+(`MediaLane::Video`, four permits: two local list thumbnails, one from a network drive, one for the
+preview pane), and do not wait for foreground work.
+
+**The counts.** The provider counts each decode by who made it and keeps the last reason for a
+processor decode (`media_status.rs`). `get_media_status` answers from those counts without asking
+the video process. A thumbnail that comes from the cache was not decoded and is not counted. The
+log gets a line at the first decode and whenever the decoder in use changes.
+
+**In the app.** `FileListThumbnailHost` asks the service for a video's thumbnail with the position
+of its frame, then Windows' own thumbnail. Local videos load two at a time; videos on a network
+drive (`NetworkPaths`) one at a time, through a slot of their own. A video thumbnail that reaches
+the front of its queue with nobody waiting (`WantedRequests`) is dropped. The preview pane's frame
+picker makes the same request at 144 pixels, outside those queues. Settings shows the counts under
+"Use the graphics card for video thumbnails" (`MediaStatusText`).
+
+**What only a real PC can prove.** The test machines have no graphics card, and the test video is
+uncompressed, so every automated run takes the processor path. The hardware path, a phone video's
+turn, and non-square pixels are checked by hand: see
+[`WINUI_RUNTIME_VERIFICATION.md`](WINUI_RUNTIME_VERIFICATION.md#video-thumbnails-on-a-real-pc).
+
 ## Plugins
 
 A plugin is a folder with a `plugin.json` and up to two halves. `SimpleFile.PluginHost` runs in the
@@ -625,6 +686,7 @@ session loop; the data folder keeps its identifier; the startup limits hold. Thr
 | --- | --- | --- |
 | An IPC method, event or wire type | [Adding a method](#adding-a-method) | `npm run check`, `npm run check:rust`, `npm run check:winui` |
 | File-system behaviour: listing, file operations, archives, previews, metadata | `crates/simplefile-core/src` | `npm run check:rust` |
+| Video thumbnails | [The video process](#the-video-process): `crates/sumafile-video`, `ipc/schema/v1/media-formats.json` (`video`) | `npm run check`, `npm run check:rust`, `npm run check:winui`, then the real-PC check |
 | A picture format SumaFile decodes itself | [The media process](#the-media-process): `ipc/schema/v1/media-formats.json`, `crates/sumafile-media/src/decoders` | `npm run check`, `npm run check:rust`, `npm run check:winui` |
 | How a request is scheduled, streamed or cancelled | `crates/simplefile-service/src/session`, `dispatch`, `scheduler.rs` | `npm run check:rust` |
 | Transfers | `crates/simplefile-service/src/progress*`, `crates/sumafile-transfer`; in the app `TransferManagerViewModel` (the queue), `TransferPolicy` (options) and `TransferConflictSession` (conflicts); [TRANSFER_TUNING.md](TRANSFER_TUNING.md) | `npm run check:rust`, `npm run check:winui` |

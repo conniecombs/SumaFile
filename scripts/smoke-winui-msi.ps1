@@ -68,6 +68,10 @@ try {
     if (-not (Test-Path -LiteralPath (Join-Path $service.DirectoryName "sumafile-media.exe"))) {
         throw "WinUI MSI extraction did not contain sumafile-media.exe beside simplefile-service.exe."
     }
+    # The video process ships beside it too; without it, video thumbnails fall back to Windows' own.
+    if (-not (Test-Path -LiteralPath (Join-Path $service.DirectoryName "sumafile-video.exe"))) {
+        throw "WinUI MSI extraction did not contain sumafile-video.exe beside simplefile-service.exe."
+    }
 
     Write-Host "Extracted $($msi.Name) to $extractDir."
     Write-Host "Extracted executable version: $($exe.VersionInfo.ProductVersion)."

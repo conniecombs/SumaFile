@@ -43,7 +43,7 @@ rendering performance measurement.
 
 The plugin switches select one of three modes. Every mode runs the common
 scenarios: `large-folder` and `navigate-during-loading` for each folder size,
-`thumbnails`, `dual-pane-layout`, `single-pane-layout`,
+`thumbnails`, `video-thumbnails`, `dual-pane-layout`, `single-pane-layout`,
 `pane-filter-search-controls`, `preview-collapse-expand-pin`,
 `conflict-comparison-dialog`, `rename-before-after-preview`,
 `transfer-cancellation`, `adaptive-transfer-ui`, `storage-pressure-recovery`
@@ -193,6 +193,28 @@ empty destination folder, nested file conflicts, and Undo and Redo with
 destination-only files. Use copy/paste, drag and drop, or the other-pane commands
 to exercise the shared transfer path.
 
+## Video thumbnails on a real PC
+
+The automated runs cannot prove hardware decoding: the test machines have no graphics card, and
+the smoke's videos are uncompressed, which no graphics card decodes. Check by hand on a PC with a
+graphics card, after a change to `crates/sumafile-video` or to how video thumbnails are asked for.
+
+1. In Settings, Storage & Cache, choose a new, empty folder as the thumbnail cache location.
+   Thumbnails already cached are not decoded again, so they would not be counted.
+2. Browse a folder with a 4K H.264 file, an HEVC or AV1 file if the codec pack is installed, a
+   phone video shot upright, and a folder of a few hundred videos. Thumbnails appear and are
+   upright.
+3. Open Settings, Storage & Cache. Under **Use the graphics card for video thumbnails** the first
+   line counts those thumbnails as decoded by the graphics card.
+4. Turn the switch off, choose another empty cache folder and browse the same folders. Thumbnails
+   still appear, and Settings counts processor decodes, with the reason "the graphics card is
+   turned off above".
+5. Restart SumaFile and open the folder again: the thumbnails come from the disk cache at once, and
+   the counts stay at zero.
+
+If the phone video shows on its side, the turn direction in `rules::Turn::from_degrees`
+(`crates/sumafile-video/src/rules.rs`) is the wrong way round.
+
 ## Refresh the README screenshots
 
 Use the `sumafile-winui-runtime` artifact from a successful **WinUI host** job on
@@ -219,6 +241,14 @@ The harness also atomically updates `progress.json` before each major scenario,
 including transfer options, concurrency, storage pressure and bulk copying.
 If the host exceeds its process timeout, the script prints the last checkpoint;
 both CI workflows retain it even when a final report could not be written.
+
+The `video-thumbnails` scenario makes thumbnails of 24 small videos the script writes itself
+(uncompressed, so they need no codec). It makes each through the file service's video process
+with a fresh cache (`newMs`), then through the app's old in-app extractor (`oldMs`, and
+`oldPictures`, the number it produced), then through the service again from the cache (`warmMs`).
+Every video must get a thumbnail on the new path, each must be decoded exactly once, and none may
+be counted as decoded by the graphics card; those are gates. The two per-thumbnail times are how
+the new path is compared with the old one on a machine without a hardware decoder.
 
 The `thumbnails` scenario opens a folder of 96 camera-like photos (1600x1200
 JPEGs; every other one a portrait stored on its side with Exif orientation 6,

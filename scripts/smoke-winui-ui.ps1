@@ -177,7 +177,7 @@ function Get-UiSmokeProcessTable {
 }
 
 # The processes of this run still alive: the app's and the SFTP server's process trees (by parent id), anything
-# started from the app, service, media process, plugin or 7-Zip executables, and anything whose command line names
+# started from the app, service, media and video process, plugin or 7-Zip executables, and anything whose command line names
 # the run folder, among the processes created since the launch.
 function Get-UiSmokeHelperProcesses {
     param(
@@ -341,6 +341,9 @@ if (-not $SkipBuild) {
         # which looks for it next to its own executable.
         & cargo build --locked -p sumafile-media --bin sumafile-media
         if ($LASTEXITCODE -ne 0) { throw 'Media process build failed.' }
+        # The service's video process, and the tool that writes the test videos for the video thumbnail scenario.
+        & cargo build --locked -p sumafile-video --bin sumafile-video --example write-test-avi
+        if ($LASTEXITCODE -ne 0) { throw 'Video process build failed.' }
         # Restage target\plugins from the fresh target\debug output; the App's Debug build copies it into the exe folder.
         & (Join-Path $PSScriptRoot 'build-plugins.ps1') -SkipCargo | Out-Host
         & npm run build:winui
@@ -354,6 +357,11 @@ if (-not (Test-Path -LiteralPath $exe) -or -not (Test-Path -LiteralPath $service
 # decodes quietly fall back to Windows.
 $media = Join-Path (Split-Path -Parent $service) 'sumafile-media.exe'
 if (-not (Test-Path -LiteralPath $media)) { throw "sumafile-media.exe is missing beside $service. Run without -SkipBuild." }
+# The same for the video process: without it, video thumbnails quietly fall back to Windows' own.
+$video = Join-Path (Split-Path -Parent $service) 'sumafile-video.exe'
+if (-not (Test-Path -LiteralPath $video)) { throw "sumafile-video.exe is missing beside $service. Run without -SkipBuild." }
+$aviWriter = Join-Path $root 'target\debug\examples\write-test-avi.exe'
+if (-not (Test-Path -LiteralPath $aviWriter)) { throw "write-test-avi.exe is missing: $aviWriter. Run without -SkipBuild." }
 # build:winui copies whatever target\plugins holds, so -SkipBuild could otherwise test an old bundled plugin.
 $bundledPluginsRoot = Join-Path (Split-Path -Parent $exe) 'plugins'
 if (Test-Path -LiteralPath (Join-Path $bundledPluginsRoot 'bundled.json')) {
@@ -388,6 +396,10 @@ foreach ($count in $Counts) {
     }
 }
 New-SmokePhotoFixture -Folder (Join-Path $testRoot 'photos')
+# Videos for the video thumbnail scenario: small and uncompressed, so they need no codec and the result does not
+# depend on what this machine has installed (see crates\sumafile-video\tests\support\avi.rs).
+& $aviWriter (Join-Path $testRoot 'videos') 24 | Out-Host
+if ($LASTEXITCODE -ne 0) { throw 'The test videos could not be written.' }
 $archivesRoot = $null
 if ($PluginsDir -or $NoPlugins) {
     # sample.7z for the 7-Zip checks, made with the bundled 7za from <archives>\fixture. The names are built from
@@ -606,6 +618,8 @@ try {
     Write-Host 'UI runtime smoke scenarios passed.'
     $report.results | Where-Object { $_.scenario -eq 'large-folder' } | Format-Table -AutoSize | Out-Host
     $report.results | Where-Object { $_.scenario -eq 'thumbnails' } | Format-Table -AutoSize | Out-Host
+    # Video thumbnails through the new path (the service's video process) and the old one (in the app).
+    $report.results | Where-Object { $_.scenario -eq 'video-thumbnails' } | Format-List | Out-Host
     Write-Host ("Completed scenarios: " + (($report.results | ForEach-Object { $_.scenario } | Group-Object | ForEach-Object { "$($_.Name)=$($_.Count)" }) -join ', '))
     $report.uiHeartbeat | Format-List | Out-Host
     $smokeCompleted = $true
@@ -667,7 +681,7 @@ if ($KeepResults) {
 } elseif (-not $shotsCopied) {
     Write-Warning "Kept the run folder, which holds the screenshots that could not be copied: $testRoot"
 } else {
-    $helperExecutables = @(@($installDir, $service, $media, $sevenZa, $remoteServerExe, $pluginRoots) | Where-Object { $_ })
+    $helperExecutables = @(@($installDir, $service, $media, $video, $sevenZa, $remoteServerExe, $pluginRoots) | Where-Object { $_ })
     $helperRoots = @(@($appProcessId, $serverProcessId) | Where-Object { $null -ne $_ })
     if (-not (Wait-UiSmokeHelperProcessesGone -RootProcessIds $helperRoots -Since $launchedAt -Executables $helperExecutables -RunRoot $testRoot)) {
         Write-Warning "Kept the run folder while helper processes may still use it: $testRoot"

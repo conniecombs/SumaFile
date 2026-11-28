@@ -152,6 +152,12 @@ public sealed partial class MainWindow
             var photos = Path.Combine(root, "photos");
             if (Directory.Exists(photos)) await SmokeThumbnailsAsync(workspace, root, photos, results);
 
+            // Video thumbnails of generated videos: through the file service's video process, through the old
+            // in-app extractor for comparison, and again from the cache.
+            await CheckpointAsync("video-thumbnails");
+            var videos = Path.Combine(root, "videos");
+            if (Directory.Exists(videos)) await SmokeVideoThumbnailsAsync(workspace, root, videos, results);
+
             // Exercise narrow panes and repeated changes between virtualizing panel types.
             await CheckpointAsync("layout");
             var sample = folders[0];

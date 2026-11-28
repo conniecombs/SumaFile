@@ -29,6 +29,23 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
   "design" icon card.
 - Windows' own thumbnail remains the fallback for every format, and the only
   source for HEIC, AVIF and JPEG 2000.
+- Video thumbnails are decoded by the graphics card, where Windows has a
+  hardware decoder for the video's format, and scaled there. They are made
+  in a separate program, `sumafile-video.exe`, so a video that hangs a
+  decoder or crashes a graphics driver costs only its own thumbnail.
+- Video thumbnails are kept in the thumbnail cache. They used to be made
+  again after every restart.
+- Settings, Storage & Cache: **Use the graphics card for video thumbnails**,
+  on by default. Under it, SumaFile says how many video thumbnails the
+  graphics card and the processor decoded since it started, and why the
+  processor was last used. An old AVI, or a format Windows has no hardware
+  decoder for, is counted under the processor even on a PC with a good
+  graphics card.
+- Videos on a network drive load their thumbnails one at a time, in a queue
+  of their own, so a slow share does not hold up the videos on local drives.
+  A thumbnail still queued when its folder is left is not made.
+- A Windows without Media Foundation (the "N" editions) keeps Windows' own
+  video thumbnails; the picture formats above are not affected.
 
 ### Window
 

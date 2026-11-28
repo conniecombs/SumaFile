@@ -54,8 +54,9 @@ Function .onInit
   nsExec::ExecToLog 'taskkill /F /IM SimpleFile.exe'
   nsExec::ExecToLog 'taskkill /F /IM SimpleFile.App.exe'
   nsExec::ExecToLog 'taskkill /F /IM simplefile-service.exe'
-  ; The service's media process. It ends with the service; this is for one that outlived it.
+  ; The service's media and video processes. They end with the service; this is for one that outlived it.
   nsExec::ExecToLog 'taskkill /F /IM sumafile-media.exe'
+  nsExec::ExecToLog 'taskkill /F /IM sumafile-video.exe'
   nsExec::ExecToLog 'taskkill /F /IM simplefile.exe'
   ; The bundled 7-Zip plugin's backend. Never kill 7za.exe: it could be the user's own job.
   nsExec::ExecToLog 'taskkill /F /IM sumafile-sevenzip-backend.exe'
@@ -109,6 +110,7 @@ Section "Uninstall"
   nsExec::ExecToLog 'taskkill /F /IM SimpleFile.exe'
   nsExec::ExecToLog 'taskkill /F /IM simplefile-service.exe'
   nsExec::ExecToLog 'taskkill /F /IM sumafile-media.exe'
+  nsExec::ExecToLog 'taskkill /F /IM sumafile-video.exe'
   nsExec::ExecToLog 'taskkill /F /IM sumafile-sevenzip-backend.exe'
   nsExec::ExecToLog 'taskkill /F /IM sumafile-remote-backend.exe'
   ; Never git.exe, as in .onInit.

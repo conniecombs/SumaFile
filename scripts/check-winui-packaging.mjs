@@ -47,6 +47,8 @@ const requiredFiles = [
   // The media process: decoders for image formats Windows may have no codec for. It ships beside the service.
   'crates/sumafile-media/Cargo.toml',
   'crates/sumafile-media-client/Cargo.toml',
+  // The video process: video thumbnails through Windows' own decoders. It ships beside the service too.
+  'crates/sumafile-video/Cargo.toml',
   'crates/sumafile-imaging/Cargo.toml',
   // Decoders ported from Oculante carry its MIT licence, and the text ships in the payload.
   'crates/sumafile-media/LICENSE-oculante.txt',
@@ -111,6 +113,7 @@ const nsisSnippets = [
   'simplefile-service.exe',
   // The service's media process. It ends with the service, but an installer must not find it holding its file.
   'taskkill /F /IM sumafile-media.exe',
+  'taskkill /F /IM sumafile-video.exe',
   'SumaFile.exe',
   'InstallDir "$LOCALAPPDATA\\Programs\\SumaFile-WinUI"',
   'RequestExecutionLevel user',
@@ -196,6 +199,7 @@ for (const [name, source] of [
   ['scripts/smoke-winui-nsis.ps1', readText('scripts/smoke-winui-nsis.ps1')],
 ]) {
   requireSnippet(source, name, 'sumafile-media.exe');
+  requireSnippet(source, name, 'sumafile-video.exe');
 }
 
 const buildSnippets = [
@@ -203,6 +207,9 @@ const buildSnippets = [
   // Built, copied beside the service, required in the payload, and stopped before files are replaced.
   '"-p", "sumafile-media"',
   '"sumafile-media.exe"',
+  // The video process gets everything the media process gets.
+  '"-p", "sumafile-video"',
+  '"sumafile-video.exe"',
   'LICENSE-oculante.txt',
   'dotnet publish',
   'SumaFile.exe',
