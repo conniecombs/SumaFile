@@ -9,6 +9,13 @@
 //!   name makes the reply a PNG.
 //!
 //! Each request runs on its own thread, so replies come in any order.
+//!
+//! Arguments script how it starts:
+//!
+//! - `--die-while-exists <path>`: while that file exists, the process exits
+//!   with code 5 before it says it is running.
+//! - `--mute`: it never says it is running.
+//! - `--deaf`: it says it is running and then never reads a request.
 
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
@@ -18,6 +25,27 @@ use sumafile_media_client::protocol::{
 };
 
 fn main() {
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    let has = |flag: &str| arguments.iter().any(|argument| argument == flag);
+    let broken = arguments
+        .iter()
+        .position(|argument| argument == "--die-while-exists")
+        .and_then(|at| arguments.get(at + 1));
+    if broken.is_some_and(|marker| std::path::Path::new(marker).exists()) {
+        std::process::exit(5);
+    }
+    if has("--mute") {
+        sleep_for_good();
+    }
+    {
+        let mut output = io::stdout();
+        let _ = write_message(&mut output, &ResponseHeader::ready(), &[]);
+        let _ = output.flush();
+    }
+    if has("--deaf") {
+        sleep_for_good();
+    }
+
     let output = Arc::new(Mutex::new(io::stdout()));
     let mut input = io::stdin().lock();
     while let Ok(Some((header, _body))) = read_message(&mut input) {
@@ -26,6 +54,12 @@ fn main() {
         };
         let output = Arc::clone(&output);
         std::thread::spawn(move || answer(&request, &output));
+    }
+}
+
+fn sleep_for_good() -> ! {
+    loop {
+        std::thread::sleep(Duration::from_secs(3600));
     }
 }
 
@@ -39,9 +73,7 @@ fn answer(request: &Request, output: &Mutex<io::Stdout>) {
         std::process::exit(3);
     }
     if name.contains("hang") {
-        loop {
-            std::thread::sleep(Duration::from_secs(3600));
-        }
+        sleep_for_good();
     }
     if let Some(rest) = name.split("slow").nth(1) {
         let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();

@@ -10,13 +10,40 @@ pub(crate) struct Spawned {
     pub(crate) child: Child,
     pub(crate) stdin: ChildStdin,
     pub(crate) stdout: ChildStdout,
-    /// Held for as long as the process may run: closing it ends the process.
-    pub(crate) job: Option<Job>,
+    pub(crate) job: Held,
 }
 
-pub(crate) fn spawn(helper: &Path, memory_limit_bytes: u64) -> io::Result<Spawned> {
+/// Whether the process runs inside a job object. Each system makes only
+/// some of these.
+#[allow(dead_code)]
+pub(crate) enum Held {
+    /// It does. The job is kept for as long as the process may run: closing
+    /// it ends the process.
+    Job(Job),
+    /// Windows refused the job: the process runs without the memory limit,
+    /// and ends when its input closes instead of with the job.
+    Refused,
+    /// This system has no job objects.
+    NotOffered,
+}
+
+impl Held {
+    pub(crate) fn into_job(self) -> Option<Job> {
+        match self {
+            Self::Job(job) => Some(job),
+            Self::Refused | Self::NotOffered => None,
+        }
+    }
+}
+
+pub(crate) fn spawn(
+    helper: &Path,
+    arguments: &[String],
+    memory_limit_bytes: u64,
+) -> io::Result<Spawned> {
     let mut command = Command::new(helper);
     command
+        .args(arguments)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -61,10 +88,9 @@ unsafe impl Send for Job {}
 
 impl Job {
     /// A job that holds `child`, limits its memory and ends it when the job
-    /// is closed. `None` when the job cannot be made: the process then runs
-    /// without the limit, and still ends when its input closes.
+    /// is closed.
     #[cfg(windows)]
-    fn holding(child: &Child, memory_limit_bytes: u64) -> Option<Self> {
+    fn holding(child: &Child, memory_limit_bytes: u64) -> Held {
         use std::os::windows::io::AsRawHandle;
         use windows_sys::Win32::Foundation::CloseHandle;
         use windows_sys::Win32::System::JobObjects::{
@@ -76,7 +102,7 @@ impl Job {
         // SAFETY: a new, unnamed job object with default security.
         let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
         if handle.is_null() {
-            return None;
+            return Held::Refused;
         }
         let job = Self { handle };
 
@@ -105,14 +131,14 @@ impl Job {
             // a job the process did not join ends nothing.
             unsafe { CloseHandle(job.handle) };
             std::mem::forget(job);
-            return None;
+            return Held::Refused;
         }
-        Some(job)
+        Held::Job(job)
     }
 
     #[cfg(not(windows))]
-    fn holding(_child: &Child, _memory_limit_bytes: u64) -> Option<Self> {
-        None
+    fn holding(_child: &Child, _memory_limit_bytes: u64) -> Held {
+        Held::NotOffered
     }
 }
 

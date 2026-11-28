@@ -17,10 +17,15 @@
 //! - **Idle.** A process with nothing to do for `idle_exit` is ended. The
 //!   client does this, not the process: only the client knows that no request
 //!   is on its way.
+//! - **A process that never starts.** The process says that it is running
+//!   before it reads a request. One that ends, or stays silent for
+//!   `ready_timeout`, before saying so was never sent a file: none is
+//!   recorded as bad, and starting waits `spawn_retry_interval` before it is
+//!   tried again.
 
 use crate::process::{self, Job};
 use crate::protocol::{
-    read_message, write_message, FailureKind, ImageKind, Method, Request, ResponseHeader,
+    read_message, write_message, FailureKind, ImageKind, Method, Request, ResponseHeader, READY_ID,
 };
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -56,6 +61,10 @@ pub fn default_helper_path() -> PathBuf {
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
     pub helper_path: PathBuf,
+    /// Arguments the process is started with. SumaFile passes none.
+    pub helper_args: Vec<String>,
+    /// How long a started process may take to say that it is running.
+    pub ready_timeout: Duration,
     /// How long one thumbnail may take to decode.
     pub thumbnail_timeout: Duration,
     /// How long one preview may take to decode.
@@ -76,6 +85,8 @@ impl ClientConfig {
     pub fn for_helper(helper_path: impl Into<PathBuf>) -> Self {
         Self {
             helper_path: helper_path.into(),
+            helper_args: Vec::new(),
+            ready_timeout: Duration::from_secs(15),
             thumbnail_timeout: Duration::from_secs(20),
             preview_timeout: Duration::from_secs(60),
             idle_exit: Duration::from_secs(120),
@@ -132,8 +143,12 @@ impl std::error::Error for MediaError {}
 pub struct ClientStats {
     /// How many times the process was started.
     pub starts: u64,
-    /// How many times starting it failed.
+    /// How many times starting it failed: it could not be run, or it ended
+    /// or stayed silent before it said it was running.
     pub spawn_failures: u64,
+    /// How many of the starts run without the memory limit and without being
+    /// tied to this program's life, because Windows refused the job object.
+    pub starts_without_limits: u64,
     /// Whether a process is running now.
     pub running: bool,
     pub process_id: Option<u32>,
@@ -154,6 +169,7 @@ struct Inner {
     next_id: AtomicU64,
     starts: AtomicU64,
     spawn_failures: AtomicU64,
+    starts_without_limits: AtomicU64,
 }
 
 struct State {
@@ -165,7 +181,10 @@ struct State {
 
 struct Helper {
     child: Child,
-    stdin: ChildStdin,
+    /// Locked for one whole message at a time. It is never held together
+    /// with the client's state: a write into a full pipe waits, and ending
+    /// the process, which is what releases that write, needs the state.
+    stdin: Arc<Mutex<ChildStdin>>,
     shared: Arc<HelperShared>,
     _job: Option<Job>,
 }
@@ -173,6 +192,8 @@ struct Helper {
 /// What a running process shares with the thread that reads its replies.
 struct HelperShared {
     waiting: Mutex<Waiting>,
+    /// Signalled when the process says it is running, and when its output ends.
+    started: Condvar,
     /// Set, before the process is ended, by a client that ends it on purpose:
     /// the requests still in flight are then nobody's fault.
     ended: AtomicBool,
@@ -181,6 +202,8 @@ struct HelperShared {
 
 struct Waiting {
     replies: HashMap<u64, mpsc::Sender<Reply>>,
+    /// The process has said that it is running.
+    ready: bool,
     /// The process's output has ended; no reply will come.
     gone: bool,
 }
@@ -323,6 +346,7 @@ impl MediaClient {
                 next_id: AtomicU64::new(1),
                 starts: AtomicU64::new(0),
                 spawn_failures: AtomicU64::new(0),
+                starts_without_limits: AtomicU64::new(0),
                 config,
             }),
         }
@@ -347,6 +371,7 @@ impl MediaClient {
         ClientStats {
             starts: self.inner.starts.load(Ordering::Relaxed),
             spawn_failures: self.inner.spawn_failures.load(Ordering::Relaxed),
+            starts_without_limits: self.inner.starts_without_limits.load(Ordering::Relaxed),
             running: running.is_some(),
             process_id: running.map(|helper| helper.child.id()),
         }
@@ -394,6 +419,10 @@ impl MediaClient {
 }
 
 const STOPPED: &str = "The media process stopped while decoding this file.";
+const NOT_STARTED: &str = "The media process could not be started.";
+/// How long a request that timed out waits for a reply the reader had
+/// already picked up for it.
+const LATE_REPLY_WAIT: Duration = Duration::from_millis(250);
 const TOO_LONG: &str = "The media process took too long to decode this file.";
 
 impl Inner {
@@ -422,7 +451,31 @@ impl Inner {
             Err(outcome) => return outcome,
         };
 
-        match replies.recv_timeout(timeout) {
+        let reply = match replies.recv_timeout(timeout) {
+            Err(RecvTimeoutError::Timeout) => {
+                // Take the request back. From here the process ends because
+                // of this request, so nothing else in flight is to blame:
+                // that is settled under the lock the reader assigns blame
+                // under. If the reader took the request first, its reply is
+                // on the way and counts.
+                let took_back = {
+                    let mut waiting = lock(&shared.waiting);
+                    let took_back = waiting.replies.remove(&id).is_some();
+                    if took_back {
+                        shared.ended.store(true, Ordering::SeqCst);
+                    }
+                    took_back
+                };
+                if took_back {
+                    Err(RecvTimeoutError::Timeout)
+                } else {
+                    replies.recv_timeout(LATE_REPLY_WAIT)
+                }
+            }
+            reply => reply,
+        };
+
+        match reply {
             Ok(Reply::Answer(header, body)) => Outcome::Done(rendered(header, body)),
             Ok(Reply::Stopped { alone: true }) => {
                 Outcome::Done(Err(inner.record_bad(file, STOPPED)))
@@ -431,7 +484,6 @@ impl Inner {
                 Outcome::Interrupted
             }
             Err(RecvTimeoutError::Timeout) => {
-                lock(&shared.waiting).replies.remove(&id);
                 let mut state = lock(&inner.state);
                 if state
                     .helper
@@ -452,78 +504,111 @@ impl Inner {
         inner: &Arc<Self>,
         request: &Request,
     ) -> Result<(Arc<HelperShared>, mpsc::Receiver<Reply>), Outcome> {
-        let mut state = lock(&inner.state);
-        if state
-            .helper
-            .as_ref()
-            .is_some_and(|helper| lock(&helper.shared.waiting).gone)
-        {
-            end(state.helper.take());
-        }
-        if state.helper.is_none() {
-            state.helper = Some(Self::start(inner, &mut state)?);
-        }
-        let Some(helper) = state.helper.as_mut() else {
-            return Err(Outcome::Interrupted);
+        let (sender, replies) = mpsc::channel();
+        let (shared, stdin) = {
+            let mut state = lock(&inner.state);
+            if state
+                .helper
+                .as_ref()
+                .is_some_and(|helper| lock(&helper.shared.waiting).gone)
+            {
+                end(state.helper.take());
+            }
+            if state.helper.is_none() {
+                state.helper = Some(Self::start(inner, &mut state)?);
+            }
+            let Some(helper) = state.helper.as_ref() else {
+                return Err(Outcome::Interrupted);
+            };
+
+            {
+                let mut waiting = lock(&helper.shared.waiting);
+                if waiting.gone {
+                    return Err(Outcome::Interrupted);
+                }
+                waiting.replies.insert(request.id, sender);
+            }
+            *lock(&helper.shared.last_activity) = Instant::now();
+            (Arc::clone(&helper.shared), Arc::clone(&helper.stdin))
         };
 
-        let (sender, replies) = mpsc::channel();
-        {
-            let mut waiting = lock(&helper.shared.waiting);
-            if waiting.gone {
-                return Err(Outcome::Interrupted);
-            }
-            waiting.replies.insert(request.id, sender);
-        }
-        *lock(&helper.shared.last_activity) = Instant::now();
-        if write_message(&mut helper.stdin, request, &[]).is_err() {
+        // The state is free again here: see `Helper::stdin`.
+        if write_message(&mut *lock(&stdin), request, &[]).is_err() {
             // The process is going or gone. If its reader has not told this
             // request yet, take the request back.
-            lock(&helper.shared.waiting).replies.remove(&request.id);
+            lock(&shared.waiting).replies.remove(&request.id);
             return Err(Outcome::Interrupted);
         }
-        Ok((Arc::clone(&helper.shared), replies))
+        Ok((shared, replies))
     }
 
+    /// Start the process and wait until it says that it is running. The
+    /// caller holds the state, so every other request waits for this start
+    /// instead of making one of its own.
     fn start(inner: &Arc<Self>, state: &mut State) -> Result<Helper, Outcome> {
         let failed = |message: String| Outcome::Done(Err(MediaError::Failed(message)));
         if state
             .last_spawn_failure
             .is_some_and(|at| at.elapsed() < inner.config.spawn_retry_interval)
         {
-            return Err(failed(
-                "The media process could not be started.".to_string(),
-            ));
+            return Err(failed(NOT_STARTED.to_string()));
         }
+        let not_started = |state: &mut State, why: &dyn std::fmt::Display| {
+            state.last_spawn_failure = Some(Instant::now());
+            inner.spawn_failures.fetch_add(1, Ordering::Relaxed);
+            failed(format!("{NOT_STARTED} {why}"))
+        };
 
-        let spawned =
-            match process::spawn(&inner.config.helper_path, inner.config.memory_limit_bytes) {
-                Ok(spawned) => spawned,
-                Err(error) => {
-                    state.last_spawn_failure = Some(Instant::now());
-                    inner.spawn_failures.fetch_add(1, Ordering::Relaxed);
-                    return Err(failed(format!(
-                        "The media process could not be started: {error}"
-                    )));
-                }
-            };
-        state.last_spawn_failure = None;
-        inner.starts.fetch_add(1, Ordering::Relaxed);
+        let mut spawned = match process::spawn(
+            &inner.config.helper_path,
+            &inner.config.helper_args,
+            inner.config.memory_limit_bytes,
+        ) {
+            Ok(spawned) => spawned,
+            Err(error) => return Err(not_started(state, &error)),
+        };
 
         let shared = Arc::new(HelperShared {
             waiting: Mutex::new(Waiting {
                 replies: HashMap::new(),
+                ready: false,
                 gone: false,
             }),
+            started: Condvar::new(),
             ended: AtomicBool::new(false),
             last_activity: Mutex::new(Instant::now()),
         });
         let reader_shared = Arc::clone(&shared);
         let output = spawned.stdout;
-        std::thread::Builder::new()
+        let reader = std::thread::Builder::new()
             .name("media-replies".to_string())
-            .spawn(move || read_replies(output, &reader_shared))
-            .map_err(|error| failed(format!("The media process could not be started: {error}")))?;
+            .spawn(move || read_replies(output, &reader_shared));
+
+        let running = reader.is_ok() && {
+            let waiting = lock(&shared.waiting);
+            let (waiting, _) = shared
+                .started
+                .wait_timeout_while(waiting, inner.config.ready_timeout, |waiting| {
+                    !waiting.ready && !waiting.gone
+                })
+                .unwrap_or_else(PoisonError::into_inner);
+            waiting.ready && !waiting.gone
+        };
+        if !running {
+            // It was sent no request, so no file is to blame.
+            let _ = spawned.child.kill();
+            let _ = spawned.child.wait();
+            let why = match reader {
+                Err(error) => error.to_string(),
+                Ok(_) => "It ended or stayed silent as it started.".to_string(),
+            };
+            return Err(not_started(state, &why));
+        }
+        state.last_spawn_failure = None;
+        inner.starts.fetch_add(1, Ordering::Relaxed);
+        if matches!(spawned.job, process::Held::Refused) {
+            inner.starts_without_limits.fetch_add(1, Ordering::Relaxed);
+        }
 
         if !state.idle_watch_running {
             let watched = Arc::downgrade(inner);
@@ -535,9 +620,9 @@ impl Inner {
 
         Ok(Helper {
             child: spawned.child,
-            stdin: spawned.stdin,
+            stdin: Arc::new(Mutex::new(spawned.stdin)),
             shared,
-            _job: spawned.job,
+            _job: spawned.job.into_job(),
         })
     }
 }
@@ -588,6 +673,11 @@ fn read_replies(mut output: ChildStdout, shared: &HelperShared) {
             continue;
         };
         *lock(&shared.last_activity) = Instant::now();
+        if header.id == READY_ID {
+            lock(&shared.waiting).ready = true;
+            shared.started.notify_all();
+            continue;
+        }
         let waiter = lock(&shared.waiting).replies.remove(&header.id);
         if let Some(waiter) = waiter {
             let _ = waiter.send(Reply::Answer(header, body));
@@ -596,6 +686,7 @@ fn read_replies(mut output: ChildStdout, shared: &HelperShared) {
 
     let mut waiting = lock(&shared.waiting);
     waiting.gone = true;
+    shared.started.notify_all();
     let alone = waiting.replies.len() == 1 && !shared.ended.load(Ordering::SeqCst);
     for (_, waiter) in waiting.replies.drain() {
         let _ = waiter.send(Reply::Stopped { alone });

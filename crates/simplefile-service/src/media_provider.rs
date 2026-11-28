@@ -3,6 +3,7 @@
 
 use simplefile_core::media::{EncodedImage, MediaProvider};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use sumafile_media_client::{
     default_helper_path, ClientConfig, ClientStats, MediaClient, MediaError,
@@ -10,6 +11,8 @@ use sumafile_media_client::{
 
 pub struct ClientProvider {
     client: MediaClient,
+    /// How many starts without limits have been logged.
+    unlimited_starts_logged: AtomicU64,
 }
 
 impl ClientProvider {
@@ -17,25 +20,42 @@ impl ClientProvider {
     pub fn new(config: ClientConfig) -> Self {
         Self {
             client: MediaClient::new(config),
+            unlimited_starts_logged: AtomicU64::new(0),
         }
     }
 
     pub fn stats(&self) -> ClientStats {
         self.client.stats()
     }
+
+    /// Log each start of the media process that Windows refused a job object
+    /// for. Such a process decodes as usual, but its memory is not capped.
+    fn log_unlimited_starts(&self) {
+        let unlimited = self.client.stats().starts_without_limits;
+        let logged = self
+            .unlimited_starts_logged
+            .fetch_max(unlimited, Ordering::Relaxed);
+        if unlimited > logged {
+            log::warn!(
+                "media process: running without its memory limit: Windows refused the job object"
+            );
+        }
+    }
 }
 
 impl MediaProvider for ClientProvider {
     fn thumbnail(&self, path: &Path, size: u32) -> Result<Vec<u8>, String> {
-        self.client
-            .thumbnail(path, size)
+        let result = self.client.thumbnail(path, size);
+        self.log_unlimited_starts();
+        result
             .map(|rendered| rendered.bytes)
             .map_err(|error| reported(path, &error))
     }
 
     fn preview(&self, path: &Path, max_dimension: u32) -> Result<EncodedImage, String> {
-        self.client
-            .preview(path, max_dimension)
+        let result = self.client.preview(path, max_dimension);
+        self.log_unlimited_starts();
+        result
             .map(|rendered| EncodedImage {
                 format: rendered.kind.as_str().to_string(),
                 width: rendered.width,

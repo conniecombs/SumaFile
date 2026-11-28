@@ -341,6 +341,121 @@ fn a_helper_that_cannot_start_is_not_retried_in_a_loop() {
     );
 }
 
+/// A media process that cannot run (a missing library, a security tool that
+/// ends it) is gone before it reads anything. No file is to blame for that,
+/// and starting it again for every file would only repeat it.
+#[test]
+fn a_helper_that_dies_at_start_blames_no_file_and_is_not_started_in_a_loop() {
+    let folder = Folder::new("dies-at-start");
+    let broken = folder.file("broken.marker");
+    let mut config = config();
+    config.helper_args = vec![
+        "--die-while-exists".to_string(),
+        broken.to_string_lossy().into_owned(),
+    ];
+    config.spawn_retry_interval = Duration::from_millis(300);
+    let client = client(config);
+    let first = folder.file("ok-a.x");
+    let second = folder.file("ok-b.x");
+
+    let first_reply = client.thumbnail(&first, 64);
+    let second_reply = client.thumbnail(&second, 64);
+
+    assert!(
+        matches!(first_reply, Err(MediaError::Failed(_))),
+        "{first_reply:?}"
+    );
+    assert!(
+        matches!(second_reply, Err(MediaError::Failed(_))),
+        "{second_reply:?}"
+    );
+    let stats = client.stats();
+    assert_eq!(
+        (stats.starts, stats.spawn_failures),
+        (0, 1),
+        "one start was tried, it failed, and the second call did not try again"
+    );
+
+    // Repaired. After the interval the process starts, and the first file
+    // answers: it was never recorded as bad.
+    std::fs::remove_file(&broken).unwrap();
+    std::thread::sleep(Duration::from_millis(350));
+    let repaired = client.thumbnail(&first, 64);
+
+    assert_eq!(repaired.unwrap().bytes, body(&first));
+    assert_eq!(client.stats().starts, 1);
+}
+
+#[test]
+fn a_helper_that_never_says_it_is_running_is_a_failed_start() {
+    let folder = Folder::new("mute");
+    let mut config = config();
+    config.helper_args = vec!["--mute".to_string()];
+    config.ready_timeout = Duration::from_millis(300);
+    let client = client(config);
+    let file = folder.file("ok-a.x");
+
+    let started = Instant::now();
+    let reply = client.thumbnail(&file, 64);
+    let took = started.elapsed();
+
+    assert!(matches!(reply, Err(MediaError::Failed(_))), "{reply:?}");
+    assert!(
+        took < Duration::from_millis(1200),
+        "the start was given up after its own limit, not the request's 1500 ms: {took:?}"
+    );
+    let stats = client.stats();
+    assert_eq!((stats.starts, stats.spawn_failures), (0, 1));
+    assert!(!stats.running, "the silent process was ended");
+}
+
+/// A request is written to the process's input pipe. If the process has
+/// stopped reading and the pipe is full, that write waits. It must not wait
+/// while holding what a timed-out request needs to end the process: then
+/// nothing would ever end it. A Linux pipe holds 64 KiB, so twenty requests
+/// with paths of about 3,800 bytes fill it.
+#[cfg(unix)]
+#[test]
+fn a_helper_that_stops_reading_cannot_block_the_client() {
+    let folder = Folder::new("deaf");
+    let mut deep = folder.0.clone();
+    for _ in 0..15 {
+        deep.push("d".repeat(250));
+    }
+    std::fs::create_dir_all(&deep).unwrap();
+    let mut config = config();
+    config.helper_args = vec!["--deaf".to_string()];
+    config.thumbnail_timeout = Duration::from_millis(100);
+    config.max_thumbnails = 20;
+    let client = client(config);
+
+    let (done, results) = std::sync::mpsc::channel();
+    for index in 0..20 {
+        let path = deep.join(format!("ok-{index}.x"));
+        std::fs::write(&path, b"picture").unwrap();
+        let (client, done) = (Arc::clone(&client), done.clone());
+        std::thread::spawn(move || {
+            let _ = done.send(client.thumbnail(&path, 64));
+        });
+    }
+    drop(done);
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut answered = 0;
+    while answered < 20 {
+        let left = deadline.saturating_duration_since(Instant::now());
+        match results.recv_timeout(left) {
+            Ok(reply) => {
+                assert!(matches!(reply, Err(MediaError::Failed(_))), "{reply:?}");
+                answered += 1;
+            }
+            Err(_) => break,
+        }
+    }
+
+    assert_eq!(answered, 20, "every call came back");
+}
+
 #[test]
 fn a_failure_kind_maps_to_its_error() {
     let folder = Folder::new("kinds");

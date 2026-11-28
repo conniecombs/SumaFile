@@ -7,6 +7,10 @@
 //!
 //! A request has an empty body. A successful reply carries the encoded
 //! picture as its body.
+//!
+//! Before it reads its first request, the media process sends one message
+//! with the id 0 and no body: it is running. A process that ends before that
+//! never started, and no file is to blame.
 
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read, Write};
@@ -84,7 +88,24 @@ pub struct ResponseHeader {
     pub error: Option<String>,
 }
 
+/// The `id` of the message the media process sends once, before it reads any
+/// request, to say that it is running. No request has this id.
+pub const READY_ID: u64 = 0;
+
 impl ResponseHeader {
+    /// The message that says the process is running.
+    pub fn ready() -> Self {
+        Self {
+            id: READY_ID,
+            ok: true,
+            format: None,
+            width: None,
+            height: None,
+            kind: None,
+            error: None,
+        }
+    }
+
     pub fn success(id: u64, format: ImageKind, width: u32, height: u32) -> Self {
         Self {
             id,
@@ -179,6 +200,16 @@ fn read_block<R: Read>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The first message of a media process. An older file service has no
+    /// request with the id 0, so it reads past it.
+    #[test]
+    fn the_ready_message_is_id_zero_and_nothing_else() {
+        let json = serde_json::to_string(&ResponseHeader::ready()).unwrap();
+
+        assert_eq!(json, r#"{"id":0,"ok":true}"#);
+        assert_eq!(READY_ID, 0);
+    }
 
     fn request() -> Request {
         Request {
