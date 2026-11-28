@@ -57,6 +57,8 @@ broken.
 - A half-written archive, or stray part files, left under the archive's name after a failure or Stop during create.
   For a crash, see design section 2.
 - A password written anywhere: settings, logs, the operation journal, progress text, error messages, crash reports.
+- What a protected archive holds left readable on disk after it was opened: a thumbnail of one of its entries in the
+  disk thumbnail cache, or one of its folders in the saved tabs and recent places.
 - A password prompt popping up from background work (thumbnails, the preview pane, lazy columns, search, folder
   sizes) instead of from something the user did.
 - RAR files no longer opening because the plugin is turned off or failed to start.
@@ -172,6 +174,13 @@ checks rars's output independently. The cost is that the C++ code stays.
   - `forget_archive_password { archivePath }` → `null`
 
   Forgetting overwrites the stored bytes. The store is never written to disk, and a service restart empties it.
+- **A protected archive's contents stay off disk too** (the user's decision, 2026-11-28). An archive is protected
+  when a password is stored for it, or when it asked for one. For such an archive:
+  - Thumbnails of its entries are made and shown as usual, and are kept in memory only: none is written to the disk
+    thumbnail cache.
+  - Its folders are not written to the saved tabs or the recent places. A tab inside it is restored as the folder
+    that holds the archive.
+  - The temporary copy made to open or preview an entry is deleted as it is today.
 - **Every built-in RAR read uses the stored password** when one is set: listing (`list.rs`), extraction (`extract.rs`,
   both paths), reading one entry, materializing an entry to a temp file, and copying or moving out through
   `copy_entry_resolved` and `move_entry_resolved`. They use `unrar::Archive::with_password` instead of
@@ -265,6 +274,9 @@ checks rars's output independently. The cost is that the C++ code stays.
   7-Zip plugin still creates.
 - Password store: required, wrong and correct passwords for protected entries, for hidden names, for split sets keyed
   by any part, and for a RAR 4 archive. Forget clears it. Values never appear in error text.
+- Contents off disk: after thumbnails of a protected archive's entries were made, the disk thumbnail cache holds none
+  of them; the saved tabs and recent places hold no path inside it; an unprotected archive is cached and saved as
+  today.
 - Options validation in the service: unknown key, wrong type, out of range, enum not in the list, `dependsOn` not met,
   and options sent to ZIP.
 - Manifest reader: valid and invalid `createOptions`.
