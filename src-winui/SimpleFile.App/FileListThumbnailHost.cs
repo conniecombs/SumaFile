@@ -24,11 +24,20 @@ internal static class FileListThumbnailHost
     private static readonly SemaphoreSlim LoadGate = new(4, 4);
     private static readonly SemaphoreSlim VideoLoadGate = new(2, 2);
 
+    // Videos on a network drive load one at a time, through a slot of their own: a slow share must never take
+    // one of the two slots local videos load through.
+    private static readonly SemaphoreSlim NetworkVideoLoadGate = new(1, 1);
+
+    // Who still waits for each queued video thumbnail. One that reaches the front of its queue with nobody
+    // waiting (the folder was left, the row scrolled away) is dropped before the file service is asked.
+    private static readonly WantedRequests Wanted = new();
+
     // Formats the file service's media process decodes. They can be slow (a large Photoshop file, a hung
     // decoder that is ended after its timeout), and must never hold a slot JPG thumbnails load through.
     private static readonly SemaphoreSlim MediaLoadGate = new(2, 2);
 
     private static Func<string, uint, CancellationToken, Task<byte[]>>? _loadImageThumbnailAsync;
+    private static Func<string, uint, int, CancellationToken, Task<byte[]>>? _loadVideoThumbnailAsync;
     private static bool _primaryEnabled;
     private static bool _secondaryEnabled;
 
@@ -38,9 +47,16 @@ internal static class FileListThumbnailHost
 
     public static BoundedLruCacheStats VideoCacheStats => VideoCache.SnapshotStats();
 
-    public static void Configure(Func<string, uint, CancellationToken, Task<byte[]>>? loadImageThumbnailAsync)
+    /// <param name="loadImageThumbnailAsync">The file service's thumbnail of a picture: path, size.</param>
+    /// <param name="loadVideoThumbnailAsync">
+    /// The file service's thumbnail of a video: path, size, and how far into the video the frame is, in percent.
+    /// </param>
+    public static void Configure(
+        Func<string, uint, CancellationToken, Task<byte[]>>? loadImageThumbnailAsync,
+        Func<string, uint, int, CancellationToken, Task<byte[]>>? loadVideoThumbnailAsync = null)
     {
         _loadImageThumbnailAsync = loadImageThumbnailAsync;
+        _loadVideoThumbnailAsync = loadVideoThumbnailAsync;
         if (loadImageThumbnailAsync is null)
         {
             _primaryEnabled = false;
@@ -183,6 +199,9 @@ internal static class FileListThumbnailHost
             }
         }
 
+        // Counted before the load is started: the load checks it when it reaches the front of its queue, which
+        // can be at once.
+        using var wanted = isVideo ? Wanted.Want(key) : null;
         var task = InFlight.GetOrAdd(
             key,
             _ => LoadAndCacheThumbnailAsync(cache, key, path, extension, requestSize, videoFrame, isVideo));
@@ -204,11 +223,17 @@ internal static class FileListThumbnailHost
         try
         {
             var gate = isVideo
-                ? VideoLoadGate
+                ? NetworkPaths.Shared.IsNetwork(path) ? NetworkVideoLoadGate : VideoLoadGate
                 : ThumbnailRouting.UsesMediaProcess(extension) ? MediaLoadGate : LoadGate;
             await gate.WaitAsync();
             try
             {
+                if (isVideo && !Wanted.IsWanted(key))
+                {
+                    // Nobody waits for it any more. It is asked for again if its row comes back.
+                    return null;
+                }
+
                 if (isVideo && ForegroundTaskScheduler.Shared.IsForegroundActive)
                 {
                     await ForegroundTaskScheduler.Shared.YieldOrThrottleAsync(CancellationToken.None);
@@ -247,12 +272,24 @@ internal static class FileListThumbnailHost
         int requestSize,
         VideoThumbnailFrame videoFrame)
     {
-        if (IsVideoThumbnail(extension))
+        if (IsVideoThumbnail(extension) && _loadVideoThumbnailAsync is not null)
         {
-            var source = await VideoThumbnailExtractor.LoadAsync(path, requestSize, videoFrame);
-            if (source is not null)
+            try
             {
-                return (source, 0);
+                var bytes = await _loadVideoThumbnailAsync(path, (uint)requestSize, videoFrame.Percent, CancellationToken.None);
+                if (bytes is not null && bytes.Length > 0)
+                {
+                    var source = await PreviewImageSourceFactory.FromBytesAsync(bytes, path, requestSize);
+                    if (source is not null)
+                    {
+                        return (source, bytes.Length);
+                    }
+                }
+            }
+            catch
+            {
+                // The file service has no frame for this video: no decoder for it, the video process is missing,
+                // or it took too long. Windows' own thumbnail gets the next chance.
             }
         }
 

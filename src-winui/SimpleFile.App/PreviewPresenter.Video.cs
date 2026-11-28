@@ -43,7 +43,17 @@ internal sealed partial class PreviewPresenter
         var frameToken = Interlocked.Increment(ref _videoFrameToken);
         try
         {
-            var source = await VideoThumbnailExtractor.LoadAsync(path, 144, frame);
+            if (_workspace()?.FileOps is not { } fileOps)
+            {
+                return;
+            }
+
+            // The same request the file list makes, so the picture here is the thumbnail the list will show. It
+            // does not wait in the list's queues: the file service keeps a slot free for it.
+            var bytes = await fileOps.GenerateVideoThumbnailAsync(path, 144, frame.Percent, cancellationToken);
+            var source = bytes.Length > 0
+                ? await PreviewImageSourceFactory.FromBytesAsync(bytes, path, 144)
+                : null;
             if (source is null || !IsCurrentVideoFrame(path, previewToken, frame, frameToken, cancellationToken))
             {
                 return;
@@ -51,8 +61,9 @@ internal sealed partial class PreviewPresenter
 
             _videoFrameImage.Source = source;
         }
-        catch (OperationCanceledException)
+        catch
         {
+            // The file service has no frame for this video, or the selection moved on: the icon stays.
         }
     }
 

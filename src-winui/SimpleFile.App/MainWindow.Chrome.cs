@@ -799,6 +799,13 @@ public sealed partial class MainWindow
         return fileOps.GenerateThumbnailAsync(path, size, cancellationToken);
     }
 
+    private Task<byte[]> LoadFileListVideoThumbnailAsync(string path, uint size, int positionPercent, CancellationToken cancellationToken)
+    {
+        var fileOps = _workspace?.FileOps
+            ?? throw new InvalidOperationException("File operations are not available.");
+        return fileOps.GenerateVideoThumbnailAsync(path, size, positionPercent, cancellationToken);
+    }
+
     private static void SelectRow(
         ListView list,
         ObservableCollection<FileRow> rows,

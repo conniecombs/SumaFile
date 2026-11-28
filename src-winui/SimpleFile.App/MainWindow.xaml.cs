@@ -237,7 +237,7 @@ public sealed partial class MainWindow : Window
             _transfer = AppServices.GetRequired<TransferManagerViewModel>();
             _toolbar = AppServices.GetRequired<ToolbarViewModel>();
             AttachViewModels();
-            FileListThumbnailHost.Configure(LoadFileListImageThumbnailAsync);
+            FileListThumbnailHost.Configure(LoadFileListImageThumbnailAsync, LoadFileListVideoThumbnailAsync);
             ColumnLayoutHost.Attach(_workspace.PrimaryColumns, _workspace.SecondaryColumns);
             ConfigureLazyColumns(_workspace);
             _workspace.Changed += OnWorkspaceChanged;
