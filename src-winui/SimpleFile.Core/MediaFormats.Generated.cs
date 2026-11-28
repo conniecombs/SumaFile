@@ -5,7 +5,10 @@
 
 namespace SimpleFile.Core;
 
-/// <summary>The image formats SumaFile's media process decodes for thumbnails and previews.</summary>
+/// <summary>
+/// The image formats SumaFile's media process decodes for thumbnails and previews, and the video extensions its
+/// video process makes thumbnails of.
+/// </summary>
 public static class MediaFormats
 {
     private static readonly string[] SortedExtensions =
@@ -56,4 +59,47 @@ public static class MediaFormats
     /// <summary>True for an extension (with or without its dot), a file name or a path of one of these formats.</summary>
     public static bool IsMediaProcessFormat(string? pathOrExtension) =>
         ExtensionCatalog.Contains(ExtensionSet, pathOrExtension);
+
+    private static readonly string[] SortedVideoExtensions =
+    [
+        "3g2",
+        "3gp",
+        "asf",
+        "avi",
+        "divx",
+        "f4v",
+        "flv",
+        "h264",
+        "h265",
+        "hevc",
+        "m2ts",
+        "m2v",
+        "m4v",
+        "mk3d",
+        "mkv",
+        "mov",
+        "mp4",
+        "mpe",
+        "mpeg",
+        "mpg",
+        "mts",
+        "mxf",
+        "ogv",
+        "qt",
+        "rm",
+        "rmvb",
+        "vob",
+        "webm",
+        "wmv",
+        "y4m",
+    ];
+
+    private static readonly HashSet<string> VideoExtensionSet = new(SortedVideoExtensions, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The video extensions, lowercase, without a dot, in ordinal order.</summary>
+    public static IReadOnlyList<string> VideoExtensions => SortedVideoExtensions;
+
+    /// <summary>True for an extension (with or without its dot), a file name or a path of a video.</summary>
+    public static bool IsVideoFormat(string? pathOrExtension) =>
+        ExtensionCatalog.Contains(VideoExtensionSet, pathOrExtension);
 }

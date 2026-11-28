@@ -207,13 +207,6 @@ public static class PhotoFolder
 
 public static class MediaFolder
 {
-    private static readonly HashSet<string> VideoExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "mp4", "m4v", "mov", "qt", "webm", "mkv", "mk3d", "avi", "wmv", "asf",
-        "mpg", "mpeg", "mpe", "m2v", "m2ts", "mts", "vob", "flv", "f4v",
-        "3gp", "3g2", "ogv", "divx", "mxf", "rm", "rmvb", "h264", "h265", "hevc", "y4m",
-    };
-
     public static bool IsMediaFolder(IEnumerable<FileEntry> entries, int thresholdPercent = 70)
     {
         var files = entries.Where(entry => !entry.IsDir).ToList();
@@ -230,9 +223,10 @@ public static class MediaFolder
     public static bool IsVisualMedia(string? nameOrExtension) =>
         PhotoFolder.IsImage(nameOrExtension) || IsVideo(nameOrExtension);
 
+    /// <summary>True for a video. The list is <see cref="MediaFormats.VideoExtensions"/>, which the file service shares.</summary>
     public static bool IsVideo(string? nameOrExtension)
     {
-        return ExtensionCatalog.Contains(VideoExtensions, nameOrExtension);
+        return MediaFormats.IsVideoFormat(nameOrExtension);
     }
 }
 

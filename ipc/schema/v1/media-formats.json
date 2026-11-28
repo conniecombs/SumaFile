@@ -1,6 +1,11 @@
 {
   "version": 1,
-  "description": "Image formats the media process (sumafile-media) decodes for thumbnails and previews.",
+  "description": "Image formats the media process (sumafile-media) decodes for thumbnails and previews, and the video extensions the video process (sumafile-video) makes thumbnails of.",
+  "video": [
+    "mp4", "m4v", "mov", "qt", "webm", "mkv", "mk3d", "avi", "wmv", "asf",
+    "mpg", "mpeg", "mpe", "m2v", "m2ts", "mts", "vob", "flv", "f4v",
+    "3gp", "3g2", "ogv", "divx", "mxf", "rm", "rmvb", "h264", "h265", "hevc", "y4m"
+  ],
   "formats": [
     { "name": "Photoshop", "extensions": ["psd", "psb"] },
     { "name": "OpenEXR", "extensions": ["exr"] },
