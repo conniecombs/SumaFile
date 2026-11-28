@@ -1,0 +1,88 @@
+//! A stand-in for the media process, for the client's tests only. What it
+//! does with a request is scripted by the requested file's name:
+//!
+//! - `crash`: the process exits at once, with code 3.
+//! - `hang`: it never answers.
+//! - `slow<ms>`: it answers after that many milliseconds (300 without a number).
+//! - `toolarge`, `undecodable`, `unsupported`, `ioerror`: that failure.
+//! - anything else: success, with the body `OK:<file name>`; `png` in the
+//!   name makes the reply a PNG.
+//!
+//! Each request runs on its own thread, so replies come in any order.
+
+use std::io::{self, Write};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use sumafile_media_client::protocol::{
+    read_message, write_message, FailureKind, ImageKind, Method, Request, ResponseHeader,
+};
+
+fn main() {
+    let output = Arc::new(Mutex::new(io::stdout()));
+    let mut input = io::stdin().lock();
+    while let Ok(Some((header, _body))) = read_message(&mut input) {
+        let Ok(request) = serde_json::from_slice::<Request>(&header) else {
+            continue;
+        };
+        let output = Arc::clone(&output);
+        std::thread::spawn(move || answer(&request, &output));
+    }
+}
+
+fn answer(request: &Request, output: &Mutex<io::Stdout>) {
+    let name = std::path::Path::new(&request.path)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    if name.contains("crash") {
+        std::process::exit(3);
+    }
+    if name.contains("hang") {
+        loop {
+            std::thread::sleep(Duration::from_secs(3600));
+        }
+    }
+    if let Some(rest) = name.split("slow").nth(1) {
+        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        std::thread::sleep(Duration::from_millis(digits.parse().unwrap_or(300)));
+    }
+
+    let failure = [
+        ("toolarge", FailureKind::TooLarge, "too large"),
+        ("undecodable", FailureKind::Decode, "bad data"),
+        ("unsupported", FailureKind::Unsupported, "no decoder"),
+        ("ioerror", FailureKind::Io, "cannot read"),
+    ]
+    .into_iter()
+    .find(|(marker, _, _)| name.contains(marker));
+
+    let (header, body) = match failure {
+        Some((_, kind, message)) => (
+            ResponseHeader::failure(request.id, kind, message),
+            Vec::new(),
+        ),
+        None => {
+            let side = match request.method {
+                Method::Thumbnail => request.size,
+                Method::Preview => request.max_dimension,
+            }
+            .unwrap_or(0);
+            let kind = if name.contains("png") {
+                ImageKind::Png
+            } else {
+                ImageKind::Jpeg
+            };
+            (
+                ResponseHeader::success(request.id, kind, side, side),
+                format!("OK:{name}").into_bytes(),
+            )
+        }
+    };
+
+    let mut output = output
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _ = write_message(&mut *output, &header, &body);
+    let _ = output.flush();
+}

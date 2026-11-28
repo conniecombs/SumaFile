@@ -16,6 +16,8 @@ dist/
 build/
 **/bin/
 **/obj/
+# `bin/` above is .NET build output. Cargo keeps a crate's extra programs in `src/bin/`: those are source.
+!**/src/bin/
 .eslintcache
 *.tsbuildinfo
 
